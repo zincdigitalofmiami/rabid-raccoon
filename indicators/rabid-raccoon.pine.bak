@@ -29,12 +29,12 @@ fibShowPrices       = input.bool(true,  "Show Prices",              group="Fibon
 fibShowLevels       = input.bool(true,  "Show Levels",              group="Fibonacci")
 fibShowExtensions   = input.bool(true,  "Show Extensions",          group="Fibonacci")
 fibBgTransparency   = input.int(85,     "Background Transparency",  minval=0, maxval=100, group="Fibonacci")
-fibEntryLabels      = input.bool(false, "Show Entry Labels",        group="Fibonacci")
+fibEntryLabels      = input.bool(true,  "Show Entry Labels",        group="Fibonacci")
 
 // --- Break-Hook-Go Settings ---
 bhgSensitivity      = input.int(3,      "BHG Sensitivity",          minval=1, maxval=10, group="Break-Hook-Go")
 bhgPullbackFib      = input.float(0.5,  "Pullback Fib Threshold",   minval=0.3, maxval=0.786, step=0.01, group="Break-Hook-Go")
-bhgShowLabels       = input.bool(false, "Show BHG Labels",          group="Break-Hook-Go")
+bhgShowLabels       = input.bool(true,  "Show BHG Labels",          group="Break-Hook-Go")
 
 // --- Correlation Settings ---
 corrSymbol1         = input.symbol("VIX",    "Correlation Symbol 1", group="Correlation")
@@ -177,84 +177,126 @@ if showMeasuredMoves
 
 //#region === AUTO-FIBONACCI ENGINE ===
 
-// ZigZag-based Auto Fibonacci (David Hasley / TradingView methodology)
-var int  fibSignalCount = 0
-var bool fibIsBullish   = true
+// --- Persistent Fib Drawing Objects ---
+var line[]  fibLines  = array.new<line>()
+var label[] fibLabels = array.new<label>()
+var box[]   fibBoxes  = array.new<box>()
 
-// --- ZigZag Pivot Detection ---
-fibZzUpdate() =>
-    var fibSettings = zigzag.Settings.new(fibDeviation, fibDepth, color(na), false, false, false, false, "Absolute", true)
-    var zigzag.ZigZag fibZZ = zigzag.newInstance(fibSettings)
-    var zigzag.Pivot lastPvt = na
-    var float sPrice = na
-    var float h = na
-    fibSettings.devThreshold := ta.atr(10) / close * 100 * fibDeviation
-    if fibZZ.update()
-        lastPvt := fibZZ.lastPivot()
-        if not na(lastPvt)
-            sPrice := fibReverse ? lastPvt.start.price : lastPvt.end.price
-            float ePrice = fibReverse ? lastPvt.end.price : lastPvt.start.price
-            h := (sPrice > ePrice ? -1 : 1) * math.abs(sPrice - ePrice)
-    [lastPvt, sPrice, h]
+// --- Fib State ---
+var float fibAnchorHigh     = na
+var float fibAnchorLow      = na
+var int   fibAnchorHighBar  = int(na)
+var int   fibAnchorLowBar   = int(na)
+var bool  fibIsBullish      = true
+var int   fibSignalCount    = 0
 
-[fibPivot, fibSP, fibH] = fibZzUpdate()
-fibIsBullish := not na(fibH) ? fibH > 0 : fibIsBullish
-fibExtend = fibExtendRight ? extend.right : extend.none
+if showAutoFib
+    // Determine fib anchor from most recent swing pair
+    bool haveSwings = array.size(swingHighs) >= 1 and array.size(swingLows) >= 1
 
-// --- Drawing Helpers ---
-_fibLine(float price, color col) =>
-    var id = line.new(time, close, time, close, xloc=xloc.bar_time, color=color(na), width=1)
-    if not na(fibPivot) and not na(price)
-        line.set_xy1(id, fibPivot.start.time, price)
-        line.set_xy2(id, fibExtendRight ? time : fibPivot.end.time, price)
-        line.set_color(id, col)
-        line.set_extend(id, fibExtend)
-    else
-        line.set_color(id, color(na))
-    id
+    if haveSwings
+        SwingPoint sh = array.get(swingHighs, 0)
+        SwingPoint sl = array.get(swingLows, 0)
 
-_fibLbl(float price, string txt, color col) =>
-    var id = label.new(x=time, y=close, xloc=xloc.bar_time, text="", textcolor=color(na), style=label.style_label_left, textalign=text.align_left, color=#00000000, size=size.small)
-    if not na(fibPivot) and not na(price)
-        label.set_xy(id, fibExtendRight ? time : fibPivot.end.time, price)
-        label.set_text(id, txt)
-        label.set_textcolor(id, col)
-    else
-        label.set_textcolor(id, color(na))
+        // Determine trend: if swing low is more recent → bullish retracement
+        //                   if swing high is more recent → bearish retracement
+        bool newBull = sl.barIdx > sh.barIdx
+        float newHigh = sh.price
+        float newLow  = sl.price
+        int   newHBar = sh.barIdx
+        int   newLBar = sl.barIdx
 
-_fibTxt(float ratio, float price) =>
-    string lv = fibShowLevels ? str.tostring(ratio) : ""
-    string pr = fibShowPrices ? " (" + str.tostring(price, format.mintick) + ")" : ""
-    lv + pr
+        // Only redraw when anchors change
+        bool anchorsChanged = newHigh != fibAnchorHigh or newLow != fibAnchorLow
 
-_fibLevel(bool show, float ratio, color col, line prev) =>
-    float price = fibSP + fibH * ratio
-    bool vis = show and showAutoFib and not na(fibPivot)
-    lineId = _fibLine(price, vis ? col : color(na))
-    _fibLbl(price, vis ? _fibTxt(ratio, price) : "", vis ? col : color(na))
-    if vis
-        if not na(prev)
-            linefill.new(lineId, prev, color=color.new(col, fibBgTransparency))
-        lineId
-    else
-        prev
+        if anchorsChanged
+            fibAnchorHigh    := newHigh
+            fibAnchorLow     := newLow
+            fibAnchorHighBar := newHBar
+            fibAnchorLowBar  := newLBar
+            fibIsBullish     := newBull
 
-// --- Process Fib Levels ---
-ln0    = _fibLevel(true,              0.0,   #787b86, line(na))
-ln236  = _fibLevel(true,              0.236, #f44336, ln0)
-ln382  = _fibLevel(true,              0.382, #81c784, ln236)
-ln5    = _fibLevel(true,              0.5,   #4caf50, ln382)
-ln618  = _fibLevel(true,              0.618, #009688, ln5)
-ln786  = _fibLevel(true,              0.786, #64b5f6, ln618)
-ln1    = _fibLevel(true,              1.0,   #787b86, ln786)
-ln1272 = _fibLevel(fibShowExtensions, 1.272, #81c784, ln1)
-ln1618 = _fibLevel(fibShowExtensions, 1.618, #2962ff, ln1272)
+            // Clear previous drawings
+            for ln in fibLines
+                line.delete(ln)
+            array.clear(fibLines)
+            for lb in fibLabels
+                label.delete(lb)
+            array.clear(fibLabels)
+            for bx in fibBoxes
+                box.delete(bx)
+            array.clear(fibBoxes)
 
-// --- Entry / Target Labels (.618 entry, .236 TP) --- DISABLED: use var persistent labels only
-// Entry labels are off by default. Enable via settings if desired.
+            float fibRange = fibAnchorHigh - fibAnchorLow
+            int   fibStartBar = math.min(fibAnchorHighBar, fibAnchorLowBar)
+            int   fibEndBar   = bar_index + 20
 
-if showAutoFib and debugMode
-    log.info("Auto-Fibonacci active — signals: " + str.tostring(fibSignalCount))
+            // Fib ratios and their labels
+            float[] ratios = array.from(0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0)
+            string[] names = array.from("0", ".236", ".382", ".5", ".618", ".786", "1")
+
+            // Calculate levels (bullish: retrace up from low; bearish: retrace down from high)
+            if fibShowLevels
+                for i = 0 to array.size(ratios) - 1
+                    float r   = array.get(ratios, i)
+                    string n  = array.get(names, i)
+                    float lvl = fibIsBullish ? fibAnchorLow + fibRange * r : fibAnchorHigh - fibRange * r
+                    color lc  = fibIsBullish ? fibColorUp : fibColorDn
+
+                    // Highlight .236 and .618 as target zones
+                    bool isTarget = r == 0.236 or r == 0.618
+                    int  lw = isTarget ? 2 : 1
+
+                    line newLine = line.new(fibStartBar, lvl, fibEndBar, lvl, color=lc, width=lw, style=isTarget ? line.style_solid : line.style_dotted)
+                    array.push(fibLines, newLine)
+
+                    // Level label
+                    string labelTxt = n + " (" + str.tostring(lvl, format.mintick) + ")"
+                    label newLabel = label.new(fibEndBar, lvl, labelTxt, style=label.style_none, textcolor=lc, size=size.tiny)
+                    array.push(fibLabels, newLabel)
+
+                    // .236 and .618 target boxes (shaded zone ±0.25% of range)
+                    if isTarget
+                        float zoneHalf = fibRange * 0.005
+                        box newBox = box.new(fibStartBar, lvl + zoneHalf, fibEndBar, lvl - zoneHalf, border_color=color.new(lc, 60), bgcolor=color.new(lc, 85))
+                        array.push(fibBoxes, newBox)
+
+            // Extension levels
+            if fibShowExtensions
+                float[] extRatios = array.from(1.272, 1.618)
+                string[] extNames = array.from("1.272", "1.618")
+                for i = 0 to array.size(extRatios) - 1
+                    float r   = array.get(extRatios, i)
+                    string n  = array.get(extNames, i)
+                    float lvl = fibIsBullish ? fibAnchorLow + fibRange * r : fibAnchorHigh - fibRange * r
+                    color lc  = color.new(color.orange, 30)
+                    line newLine = line.new(fibStartBar, lvl, fibEndBar, lvl, color=lc, width=1, style=line.style_dashed)
+                    array.push(fibLines, newLine)
+                    label newLabel = label.new(fibEndBar, lvl, n + " (" + str.tostring(lvl, format.mintick) + ")", style=label.style_none, textcolor=lc, size=size.tiny)
+                    array.push(fibLabels, newLabel)
+
+    // --- Entry Labels at .236 and .618 ---
+    if fibEntryLabels and not na(fibAnchorHigh) and not na(fibAnchorLow)
+        float fibRange2 = fibAnchorHigh - fibAnchorLow
+        float fib236 = fibIsBullish ? fibAnchorLow + fibRange2 * 0.236 : fibAnchorHigh - fibRange2 * 0.236
+        float fib618 = fibIsBullish ? fibAnchorLow + fibRange2 * 0.618 : fibAnchorHigh - fibRange2 * 0.618
+        float zoneTol = fibRange2 * 0.008
+
+        // Price touches .618 zone → entry signal (primary)
+        bool at618 = math.abs(close - fib618) <= zoneTol
+        if at618
+            fibSignalCount += 1
+            string dir = fibIsBullish ? "LONG" : "SHORT"
+            label.new(bar_index, fibIsBullish ? low - zoneTol : high + zoneTol, "⬥ .618 " + dir, style=fibIsBullish ? label.style_label_up : label.style_label_down, color=fibIsBullish ? fibColorUp : fibColorDn, textcolor=color.white, size=size.small)
+
+        // Price touches .236 zone → target / partial TP signal
+        bool at236 = math.abs(close - fib236) <= zoneTol
+        if at236
+            fibSignalCount += 1
+            label.new(bar_index, fibIsBullish ? high + zoneTol : low - zoneTol, "🎯 .236 TP", style=fibIsBullish ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 20), textcolor=color.white, size=size.small)
+
+    if debugMode
+        log.info("Auto-Fibonacci module active — signals: " + str.tostring(fibSignalCount))
 
 //#endregion
 
@@ -287,6 +329,8 @@ if showBreakHookGo
             bhgBreakBull  := true
             bhgHookDone   := false
             bhgSignalCount += 1
+            if bhgShowLabels
+                label.new(bar_index, low, "🔨 BREAK", style=label.style_label_up, color=color.new(color.teal, 10), textcolor=color.white, size=size.small)
 
         if bearBreak
             bhgBreakBar   := bar_index
@@ -294,6 +338,8 @@ if showBreakHookGo
             bhgBreakBull  := false
             bhgHookDone   := false
             bhgSignalCount += 1
+            if bhgShowLabels
+                label.new(bar_index, high, "🔨 BREAK", style=label.style_label_down, color=color.new(color.red, 10), textcolor=color.white, size=size.small)
 
         // =====================
         // HOOK (Pullback) Detection
@@ -312,6 +358,11 @@ if showBreakHookGo
             if pullbackToLevel
                 bhgHookDone := true
                 bhgPullbackCount += 1
+                if bhgShowLabels
+                    if bhgBreakBull
+                        label.new(bar_index, low, "🪝 HOOK", style=label.style_label_up, color=color.new(color.blue, 10), textcolor=color.white, size=size.small)
+                    else
+                        label.new(bar_index, high, "🪝 HOOK", style=label.style_label_down, color=color.new(color.blue, 10), textcolor=color.white, size=size.small)
 
         // =====================
         // GO (Continuation Confirmation)
@@ -321,19 +372,22 @@ if showBreakHookGo
 
         if goWindow
             bool goSignal = false
-            float bodySize = math.abs(close - open)
-            float avgBody  = ta.sma(math.abs(close - open), 10)
             if bhgBreakBull
-                // Bullish go: strong close above break level with above-average body
-                goSignal := close > bhgBreakLevel and close > open and close > high[1] and bodySize > avgBody * 0.8
+                // Bullish go: close makes new high above the break level with momentum
+                goSignal := close > bhgBreakLevel and close > open and close > high[1]
             else
-                // Bearish go: strong close below break level with above-average body
-                goSignal := close < bhgBreakLevel and close < open and close < low[1] and bodySize > avgBody * 0.8
+                // Bearish go: close makes new low below the break level with momentum
+                goSignal := close < bhgBreakLevel and close < open and close < low[1]
 
             if goSignal
                 bhgSignalCount += 1
                 bhgHookDone := false  // Reset so we don't fire multiple GOs
                 bhgBreakBar := int(na)
+                if bhgShowLabels
+                    if bhgBreakBull
+                        label.new(bar_index, low, "🚀 GO", style=label.style_label_up, color=color.new(color.lime, 10), textcolor=color.black, size=size.normal)
+                    else
+                        label.new(bar_index, high, "🚀 GO", style=label.style_label_down, color=color.new(color.fuchsia, 10), textcolor=color.white, size=size.normal)
 
     if debugMode
         log.info("Break-Hook-Go module active — signals: " + str.tostring(bhgSignalCount) + " pullbacks: " + str.tostring(bhgPullbackCount))

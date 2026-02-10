@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --tv-bg-primary: #131722;
+  --tv-bg-secondary: #1e222d;
+  --tv-text-primary: #d1d4dc;
+  --tv-text-secondary: #787b86;
+  --tv-bull: #26a69a;
+  --tv-bear: #ef5350;
+  --tv-blue: #2962ff;
+}
+
+body {
+  background: #0a0a0a;
+  color: #d1d4dc;
+}
+
+/* Hide scrollbar but allow scrolling */
+.overflow-x-auto::-webkit-scrollbar {
+  display: none;
+}
+.overflow-x-auto {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

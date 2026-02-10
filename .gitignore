@@ -8,6 +8,16 @@ Thumbs.db
 *.swp
 *.swo
 
+# Next.js
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.production
+
 # Misc
 *.log
 node_modules/
+.vercel
