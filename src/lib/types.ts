@@ -58,3 +58,68 @@ export interface MarketDataResponse {
     dataset: string
   }
 }
+
+// --- V2 Types: Measured Move, Signals, Forecast ---
+
+export interface MeasuredMove {
+  direction: 'BULLISH' | 'BEARISH'
+  pointA: SwingPoint
+  pointB: SwingPoint
+  pointC: SwingPoint
+  projectedD: number
+  retracementRatio: number
+  entry: number
+  stop: number
+  target: number
+  quality: number
+  status: 'FORMING' | 'ACTIVE' | 'TARGET_HIT' | 'STOPPED_OUT'
+}
+
+export interface TradeSignal {
+  symbol: string
+  direction: 'BULLISH' | 'BEARISH'
+  confidence: number
+  confluenceFactors: string[]
+  entry?: number
+  stop?: number
+  target?: number
+  measuredMove?: MeasuredMove
+}
+
+export interface CompositeSignal {
+  direction: 'BULLISH' | 'BEARISH'
+  confidence: number
+  primarySignal: TradeSignal
+  symbolSignals: TradeSignal[]
+  confluenceSummary: string[]
+  timestamp: string
+}
+
+export interface MarketSummary {
+  symbol: string
+  displayName: string
+  price: number
+  change: number
+  changePercent: number
+  sparklineData: number[]
+  direction: 'BULLISH' | 'BEARISH'
+  signal: TradeSignal
+}
+
+export interface ForecastResponse {
+  window: 'morning' | 'premarket' | 'midday'
+  direction: 'BULLISH' | 'BEARISH'
+  confidence: number
+  analysis: string
+  symbolForecasts: SymbolForecast[]
+  keyLevels: { support: number[]; resistance: number[] }
+  measuredMoves: MeasuredMove[]
+  intermarketNotes: string[]
+  generatedAt: string
+}
+
+export interface SymbolForecast {
+  symbol: string
+  direction: 'BULLISH' | 'BEARISH'
+  confidence: number
+}

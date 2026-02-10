@@ -1,46 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { fetchOhlcv, toCandles, getCurrentSessionTimes } from '@/lib/databento'
-import { fetchVixCandles, fetchDollarCandles, getFredDateRange } from '@/lib/fred'
+import { fetchCandlesForSymbol } from '@/lib/fetch-candles'
 import { detectSwings } from '@/lib/swing-detection'
 import { calculateFibonacci } from '@/lib/fibonacci'
 import { SYMBOLS } from '@/lib/symbols'
-import { CandleData, MarketDataResponse } from '@/lib/types'
-
-async function fetchCandlesForSymbol(
-  symbol: string,
-  start?: string,
-  end?: string
-): Promise<CandleData[]> {
-  const config = SYMBOLS[symbol]
-
-  if (config.dataSource === 'fred') {
-    const fredRange = getFredDateRange()
-    const fredStart = start?.slice(0, 10) || fredRange.start
-    const fredEnd = end?.slice(0, 10) || fredRange.end
-
-    if (symbol === 'VX') {
-      return fetchVixCandles(fredStart, fredEnd)
-    } else if (symbol === 'DX') {
-      return fetchDollarCandles(fredStart, fredEnd)
-    }
-    throw new Error(`Unknown FRED symbol: ${symbol}`)
-  }
-
-  // Databento source
-  const session = getCurrentSessionTimes()
-  const queryStart = start || session.start
-  const queryEnd = end || session.end
-
-  const records = await fetchOhlcv({
-    dataset: config.dataset!,
-    symbol: config.databentoSymbol!,
-    stypeIn: config.stypeIn!,
-    start: queryStart,
-    end: queryEnd,
-  })
-
-  return toCandles(records)
-}
+import { MarketDataResponse } from '@/lib/types'
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,7 +14,6 @@ export async function POST(request: NextRequest) {
       end?: string
     }
 
-    // Validate symbol against whitelist
     const config = SYMBOLS[symbol]
     if (!config) {
       return NextResponse.json(
@@ -62,14 +24,11 @@ export async function POST(request: NextRequest) {
 
     const candles = await fetchCandlesForSymbol(symbol, start, end)
 
-    // Run swing detection
     const { highs, lows } = detectSwings(candles)
     const allSwings = [...highs, ...lows].sort((a, b) => a.barIndex - b.barIndex)
 
-    // Calculate Fibonacci levels
     const fibLevels = calculateFibonacci(highs, lows)
 
-    // Compute latest price and percent change
     let latestPrice: number | null = null
     let percentChange: number | null = null
     if (candles.length > 0) {
