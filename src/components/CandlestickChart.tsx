@@ -7,7 +7,6 @@ import {
   CandlestickSeries,
   ColorType,
   IChartApi,
-  ISeriesApi,
   CandlestickData,
   Time,
   LineStyle,
@@ -29,11 +28,14 @@ export default function CandlestickChart({
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
 
-  // Initialize chart
   useEffect(() => {
-    if (!containerRef.current) return
+    if (!containerRef.current || candles.length === 0) return
+
+    // Destroy previous chart (V15 pattern: recreate from scratch each render)
+    if (chartRef.current) {
+      chartRef.current.remove()
+    }
 
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
@@ -62,6 +64,9 @@ export default function CandlestickChart({
       },
     })
 
+    chartRef.current = chart
+
+    // Add candlestick series
     const series = chart.addSeries(CandlestickSeries, {
       upColor: '#26a69a',
       downColor: '#ef5350',
@@ -70,29 +75,7 @@ export default function CandlestickChart({
       borderVisible: false,
     })
 
-    chartRef.current = chart
-    seriesRef.current = series
-
-    // Resize observer
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        chart.applyOptions({ width: entry.contentRect.width })
-      }
-    })
-    resizeObserver.observe(containerRef.current)
-
-    return () => {
-      resizeObserver.disconnect()
-      chart.remove()
-      chartRef.current = null
-      seriesRef.current = null
-    }
-  }, [height])
-
-  // Update data
-  useEffect(() => {
-    if (!seriesRef.current || candles.length === 0) return
-
+    // Set candle data
     const chartData: CandlestickData<Time>[] = candles.map((c) => ({
       time: c.time as Time,
       open: c.open,
@@ -100,14 +83,13 @@ export default function CandlestickChart({
       low: c.low,
       close: c.close,
     }))
-
-    seriesRef.current.setData(chartData)
+    series.setData(chartData)
 
     // Draw Fibonacci levels as price lines
     if (fibLevels) {
       for (const level of fibLevels) {
         const isTarget = level.ratio === 0.236 || level.ratio === 0.618
-        seriesRef.current.createPriceLine({
+        series.createPriceLine({
           price: level.price,
           color: level.color,
           lineWidth: isTarget ? 2 : 1,
@@ -118,7 +100,7 @@ export default function CandlestickChart({
       }
     }
 
-    // Draw swing markers using v5 createSeriesMarkers API
+    // Draw swing markers
     if (swingPoints.length > 0) {
       const markers = swingPoints
         .map((sp) => ({
@@ -129,14 +111,24 @@ export default function CandlestickChart({
           size: 0.5,
         }))
         .sort((a, b) => (a.time as number) - (b.time as number))
-      createSeriesMarkers(seriesRef.current, markers)
+      createSeriesMarkers(series, markers)
     }
 
     // Fit content
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent()
+    chart.timeScale().fitContent()
+
+    // Resize observer
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (entries.length === 0 || !entries[0].target) return
+      chart.applyOptions({ width: entries[0].contentRect.width })
+    })
+    resizeObserver.observe(containerRef.current)
+
+    return () => {
+      resizeObserver.disconnect()
+      chart.remove()
     }
-  }, [candles, fibLevels, swingPoints])
+  }, [candles, fibLevels, swingPoints, height])
 
   return <div ref={containerRef} className="w-full" />
 }
