@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import {
   createChart,
+  createSeriesMarkers,
   CandlestickSeries,
   ColorType,
   IChartApi,
@@ -117,17 +118,18 @@ export default function CandlestickChart({
       }
     }
 
-    // Draw swing markers (cast needed for lightweight-charts v5 type compat)
+    // Draw swing markers using v5 createSeriesMarkers API
     if (swingPoints.length > 0) {
-      const markers = swingPoints.map((sp) => ({
-        time: sp.time as Time,
-        position: sp.isHigh ? ('aboveBar' as const) : ('belowBar' as const),
-        color: sp.isHigh ? '#ef5350' : '#26a69a',
-        shape: sp.isHigh ? ('arrowDown' as const) : ('arrowUp' as const),
-        size: 0.5,
-      }));
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (seriesRef.current as any).setMarkers(markers.sort((a, b) => (a.time as number) - (b.time as number)))
+      const markers = swingPoints
+        .map((sp) => ({
+          time: sp.time as Time,
+          position: sp.isHigh ? ('aboveBar' as const) : ('belowBar' as const),
+          color: sp.isHigh ? '#ef5350' : '#26a69a',
+          shape: sp.isHigh ? ('arrowDown' as const) : ('arrowUp' as const),
+          size: 0.5,
+        }))
+        .sort((a, b) => (a.time as number) - (b.time as number))
+      createSeriesMarkers(seriesRef.current, markers)
     }
 
     // Fit content
