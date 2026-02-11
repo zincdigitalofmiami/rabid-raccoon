@@ -463,6 +463,7 @@ interface SymbolSignalSnapshot {
   symbol: string
   displayName: string
   price: number
+  candles15m: CandleData[]
   breakdown: { tf: string; tfLabel: '15M' | '1H' | '4H'; signals: SignalSummary }[]
 }
 
@@ -502,10 +503,85 @@ interface MesLevels {
   source: 'MEASURED_MOVE' | 'DETERMINISTIC_FALLBACK'
 }
 
+type VixRegime = 'LOW' | 'MODERATE' | 'HIGH'
+
+interface DirectionBias {
+  direction: 'BUY' | 'SELL'
+  confidence: number
+  note: string | null
+}
+
 const EMPTY_MES_TIMEFRAMES: MesTimeframes = {
   '15M': { candles: [], measuredMoves: [] },
   '1H': { candles: [], measuredMoves: [] },
   '4H': { candles: [], measuredMoves: [] },
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function classifyVixRegime(vixLevel: number | null): VixRegime {
+  if (vixLevel != null && vixLevel >= 20) return 'HIGH'
+  if (vixLevel != null && vixLevel < 16) return 'LOW'
+  return 'MODERATE'
+}
+
+function vixLevelFromSignalData(signalData: SymbolSignalSnapshot[]): number | null {
+  const vx = signalData.find((s) => s.symbol === 'VX')
+  const v = vx?.price
+  return v != null && Number.isFinite(v) && v > 0 ? v : null
+}
+
+function formatVixSnapshot(vixLevel: number | null): string {
+  if (vixLevel == null) return 'VIX data unavailable'
+  const regime = classifyVixRegime(vixLevel)
+  return `VIX ${vixLevel.toFixed(2)} (${regime}; LOW<16, ELEVATED>=18, HIGH>=20)`
+}
+
+function applyVixBias(
+  direction: 'BUY' | 'SELL',
+  confidence: number,
+  vixLevel: number | null
+): DirectionBias {
+  const baseConfidence = clampNumber(Math.round(confidence), 50, 95)
+  if (vixLevel == null) {
+    return { direction, confidence: baseConfidence, note: null }
+  }
+
+  if (vixLevel >= 20 && direction === 'BUY') {
+    return {
+      direction: 'SELL',
+      confidence: clampNumber(Math.max(baseConfidence, 70), 50, 95),
+      note: `VIX ${vixLevel.toFixed(2)} >= 20.00 hard short filter applied.`,
+    }
+  }
+
+  if (vixLevel >= 18 && direction === 'BUY') {
+    return {
+      direction,
+      confidence: clampNumber(baseConfidence - 6, 50, 95),
+      note: `VIX ${vixLevel.toFixed(2)} is elevated; long confidence damped.`,
+    }
+  }
+
+  if (vixLevel < 16 && direction === 'BUY') {
+    return {
+      direction,
+      confidence: clampNumber(baseConfidence + 5, 50, 95),
+      note: `VIX ${vixLevel.toFixed(2)} is low; long confidence accelerated.`,
+    }
+  }
+
+  if (vixLevel < 16 && direction === 'SELL') {
+    return {
+      direction,
+      confidence: clampNumber(baseConfidence - 5, 50, 95),
+      note: `VIX ${vixLevel.toFixed(2)} is low; short confidence reduced.`,
+    }
+  }
+
+  return { direction, confidence: baseConfidence, note: null }
 }
 
 function selectMesMeasuredMove(
@@ -527,7 +603,8 @@ function computeMesLevels(
   timeframe: TimeframeLabel,
   mesTimeframe: MesTimeframeSnapshot,
   mesPrice: number,
-  direction: 'BUY' | 'SELL'
+  direction: 'BUY' | 'SELL',
+  vixLevel: number | null
 ): MesLevels {
   const mesMove = selectMesMeasuredMove(mesTimeframe.measuredMoves, direction)
   if (
@@ -559,22 +636,290 @@ function computeMesLevels(
     '1H': 2.0,
     '4H': 2.2,
   }
+  const vixRegime = classifyVixRegime(vixLevel)
+  const riskMultiplierByVix: Record<VixRegime, number> = {
+    LOW: 0.9,
+    MODERATE: 1.0,
+    HIGH: 1.25,
+  }
+  const rewardMultiplierByVix: Record<VixRegime, number> = {
+    LOW: 1.08,
+    MODERATE: 1.0,
+    HIGH: 0.92,
+  }
+  const entryOffsetByVix: Record<VixRegime, number> = {
+    LOW: 0.9,
+    MODERATE: 1.0,
+    HIGH: 1.3,
+  }
 
-  const risk = baseRisk * riskMultiplierByTf[timeframe]
-  const reward = risk * rewardMultiplierByTf[timeframe]
+  const risk = baseRisk * riskMultiplierByTf[timeframe] * riskMultiplierByVix[vixRegime]
+  const reward = risk * rewardMultiplierByTf[timeframe] * rewardMultiplierByVix[vixRegime]
+  const entryOffsetMultiplierByTf: Record<TimeframeLabel, number> = {
+    '15M': 0.2,
+    '1H': 0.28,
+    '4H': 0.38,
+  }
+  const entryOffset = Math.max(
+    risk * entryOffsetMultiplierByTf[timeframe] * entryOffsetByVix[vixRegime],
+    mesPrice * 0.00004,
+    0.25
+  )
+
   if (direction === 'BUY') {
+    const entry = mesPrice - entryOffset
     return {
-      entry: mesPrice,
-      stop: mesPrice - risk,
-      target: mesPrice + reward,
+      entry,
+      stop: entry - risk,
+      target: entry + reward,
       source: 'DETERMINISTIC_FALLBACK',
     }
   }
+  const entry = mesPrice + entryOffset
   return {
-    entry: mesPrice,
-    stop: mesPrice + risk,
-    target: mesPrice - reward,
+    entry,
+    stop: entry + risk,
+    target: entry - reward,
     source: 'DETERMINISTIC_FALLBACK',
+  }
+}
+
+function calcRiskReward(entry: number, stop: number, target: number): number {
+  const risk = Math.abs(entry - stop)
+  if (risk <= 0) return 0
+  const reward = Math.abs(target - entry)
+  return Number((reward / risk).toFixed(2))
+}
+
+function computeAtrSymbolLevels(
+  candles: CandleData[],
+  symbolPrice: number,
+  verdict: 'BUY' | 'SELL',
+  vixLevel: number | null
+): { entry: number; stop: number; target1: number; target2: number; riskReward: number } {
+  const atrValue = atr(candles, 14)
+  const vixRegime = classifyVixRegime(vixLevel)
+  const baseRisk =
+    atrValue != null && Number.isFinite(atrValue) && atrValue > 0
+      ? Math.max(atrValue * 0.85, symbolPrice * 0.0008, 0.2)
+      : Math.max(symbolPrice * 0.0012, 0.2)
+
+  const riskMultiplierByVix: Record<VixRegime, number> = {
+    LOW: 0.9,
+    MODERATE: 1.0,
+    HIGH: 1.2,
+  }
+  const rewardMultiplierByVix: Record<VixRegime, number> = {
+    LOW: 2.1,
+    MODERATE: 2.0,
+    HIGH: 1.85,
+  }
+  const entryOffsetByVix: Record<VixRegime, number> = {
+    LOW: 0.9,
+    MODERATE: 1.0,
+    HIGH: 1.25,
+  }
+
+  const risk = baseRisk * riskMultiplierByVix[vixRegime]
+  const reward1 = risk * rewardMultiplierByVix[vixRegime]
+  const entryOffset = Math.max(
+    risk * 0.22 * entryOffsetByVix[vixRegime],
+    symbolPrice * 0.00006,
+    0.2
+  )
+
+  if (verdict === 'BUY') {
+    const entry = symbolPrice - entryOffset
+    const stop = entry - risk
+    const target1 = entry + reward1
+    const target2 = target1 + reward1 * 0.45
+    return {
+      entry,
+      stop,
+      target1,
+      target2,
+      riskReward: calcRiskReward(entry, stop, target1),
+    }
+  }
+
+  const entry = symbolPrice + entryOffset
+  const stop = entry + risk
+  const target1 = entry - reward1
+  const target2 = target1 - reward1 * 0.45
+  return {
+    entry,
+    stop,
+    target1,
+    target2,
+    riskReward: calcRiskReward(entry, stop, target1),
+  }
+}
+
+function getMesReasonPrefix(
+  timeframe: TimeframeLabel,
+  source: MesLevels['source']
+): string {
+  return source === 'MEASURED_MOVE'
+    ? `Deterministic ${timeframe} MES measured move`
+    : `Deterministic ${timeframe} MES ATR levels`
+}
+
+function formatMesLevelsReason(timeframe: TimeframeLabel, levels: MesLevels): string {
+  return `${getMesReasonPrefix(timeframe, levels.source)}: entry ${levels.entry.toFixed(2)}, stop ${levels.stop.toFixed(2)}, target ${levels.target.toFixed(2)}.`
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function isDirectionalLevelOrder(
+  direction: 'BUY' | 'SELL',
+  entry: number,
+  stop: number,
+  target: number
+): boolean {
+  if (direction === 'BUY') return stop < entry && entry < target
+  return target < entry && entry < stop
+}
+
+function normalizeAiGaugeLevels(
+  raw: RawGaugeSnapshot,
+  aiGauge: AnalysisAiResponse['timeframeGauges'][number] | undefined,
+  mesTimeframes: MesTimeframes,
+  mesPrice: number,
+  vixLevel: number | null
+): { entry: number; stop: number; target: number; reasoning: string } {
+  const fallback = computeMesLevels(
+    raw.timeframe,
+    mesTimeframes[raw.timeframe],
+    mesPrice,
+    raw.direction,
+    vixLevel
+  )
+  const fallbackReason = formatMesLevelsReason(raw.timeframe, fallback)
+
+  const entry = toFiniteNumber(aiGauge?.entry)
+  const stop = toFiniteNumber(aiGauge?.stop)
+  const target = toFiniteNumber(aiGauge?.target)
+
+  if (entry == null || stop == null || target == null) {
+    return {
+      entry: fallback.entry,
+      stop: fallback.stop,
+      target: fallback.target,
+      reasoning: fallbackReason,
+    }
+  }
+
+  if (!isDirectionalLevelOrder(raw.direction, entry, stop, target)) {
+    return {
+      entry: fallback.entry,
+      stop: fallback.stop,
+      target: fallback.target,
+      reasoning: fallbackReason,
+    }
+  }
+
+  const directionalBuffer = Math.max(
+    Math.abs(fallback.entry - mesPrice) * 0.5,
+    mesPrice * 0.00008,
+    0.5
+  )
+  const violatesDirectionalSide =
+    (raw.direction === 'BUY' && entry >= mesPrice - directionalBuffer) ||
+    (raw.direction === 'SELL' && entry <= mesPrice + directionalBuffer)
+
+  if (violatesDirectionalSide) {
+    return {
+      entry: fallback.entry,
+      stop: fallback.stop,
+      target: fallback.target,
+      reasoning: fallbackReason,
+    }
+  }
+
+  return {
+    entry,
+    stop,
+    target,
+    reasoning: aiGauge?.reasoning?.trim() || fallbackReason,
+  }
+}
+
+function normalizeVerdict(value: unknown, fallback: 'BUY' | 'SELL'): 'BUY' | 'SELL' {
+  if (value === 'BUY' || value === 'SELL') return value
+  return fallback
+}
+
+function normalizeAiSymbol(
+  aiSymbol: AnalysisAiResponse['symbols'][number] | undefined,
+  fallback: InstantSymbolResult,
+  symbolPrice: number,
+  vixLevel: number | null
+): InstantSymbolResult {
+  if (!aiSymbol) return fallback
+
+  const verdict = normalizeVerdict(aiSymbol.verdict, normalizeVerdict(fallback.verdict, 'BUY'))
+  const confidenceRaw = toFiniteNumber(aiSymbol.confidence)
+  const confidence = confidenceRaw == null
+    ? fallback.confidence
+    : Math.max(50, Math.min(95, Math.round(confidenceRaw)))
+
+  const entry = toFiniteNumber(aiSymbol.entry)
+  const stop = toFiniteNumber(aiSymbol.stop)
+  const target1 = toFiniteNumber(aiSymbol.target1)
+  const target2 = toFiniteNumber(aiSymbol.target2)
+
+  const hasDirectionalOrder =
+    entry != null &&
+    stop != null &&
+    target1 != null &&
+    isDirectionalLevelOrder(verdict, entry, stop, target1)
+
+  const directionalBuffer = Math.max(symbolPrice * 0.00008, 0.5)
+  const validDirectionalSide =
+    entry != null &&
+    ((verdict === 'BUY' && entry < symbolPrice - directionalBuffer) ||
+      (verdict === 'SELL' && entry > symbolPrice + directionalBuffer))
+
+  const mesVixHardShort =
+    fallback.symbol === 'MES' &&
+    vixLevel != null &&
+    vixLevel >= 20 &&
+    verdict === 'BUY'
+  if (mesVixHardShort) {
+    return {
+      ...fallback,
+      reasoning: `VIX ${vixLevel.toFixed(2)} >= 20.00 hard short filter applied. ${fallback.reasoning}`,
+    }
+  }
+
+  if (!hasDirectionalOrder || !validDirectionalSide) {
+    return {
+      ...fallback,
+      reasoning: fallback.reasoning,
+    }
+  }
+
+  const normalizedTarget2 = target2 != null
+    ? (verdict === 'BUY' ? Math.max(target2, target1) : Math.min(target2, target1))
+    : target1
+
+  const risk = Math.abs(entry - stop)
+  const reward = Math.abs(target1 - entry)
+  const rr = risk > 0 ? reward / risk : 0
+
+  return {
+    symbol: aiSymbol.symbol || fallback.symbol,
+    verdict,
+    confidence,
+    entry,
+    stop,
+    target1,
+    target2: normalizedTarget2,
+    riskReward: Number.isFinite(rr) ? Number(rr.toFixed(2)) : fallback.riskReward,
+    reasoning: aiSymbol.reasoning?.trim() || fallback.reasoning,
+    signalBreakdown: fallback.signalBreakdown,
   }
 }
 
@@ -610,6 +955,7 @@ function buildAnalysisCore(
       symbol,
       displayName: symbolNames.get(symbol) || symbol,
       price: data.price,
+      candles15m: data.candles15m,
       breakdown,
     })
   }
@@ -678,32 +1024,37 @@ function buildAnalysisCore(
 function buildDeterministicTimeframeGauges(
   rawGauges: RawGaugeSnapshot[],
   mesTimeframes: MesTimeframes,
-  mesPrice: number
+  mesPrice: number,
+  vixLevel: number | null
 ): TimeframeGauge[] {
   return rawGauges.map(raw => {
-    const levels = computeMesLevels(
-      raw.timeframe,
-      mesTimeframes[raw.timeframe],
-      mesPrice,
-      raw.direction
-    )
-    const reasonPrefix =
-      levels.source === 'MEASURED_MOVE'
-        ? `Deterministic ${raw.timeframe} MES measured move`
-        : `Deterministic ${raw.timeframe} MES ATR levels`
-    return {
+    const bias = applyVixBias(raw.direction, raw.confidence, vixLevel)
+    const adjustedRaw: RawGaugeSnapshot = {
       ...raw,
+      direction: bias.direction,
+      confidence: bias.confidence,
+    }
+    const levels = computeMesLevels(
+      adjustedRaw.timeframe,
+      mesTimeframes[adjustedRaw.timeframe],
+      mesPrice,
+      adjustedRaw.direction,
+      vixLevel
+    )
+    return {
+      ...adjustedRaw,
       entry: levels.entry,
       stop: levels.stop,
       target: levels.target,
-      reasoning: `${reasonPrefix}: entry ${levels.entry.toFixed(2)}, stop ${levels.stop.toFixed(2)}, target ${levels.target.toFixed(2)}.`,
+      reasoning: `${bias.note ? `${bias.note} ` : ''}${formatMesLevelsReason(adjustedRaw.timeframe, levels)}`,
     }
   })
 }
 
 function buildDeterministicSymbols(
   signalData: SymbolSignalSnapshot[],
-  mesTimeframes: MesTimeframes
+  mesTimeframes: MesTimeframes,
+  vixLevel: number | null
 ): InstantSymbolResult[] {
   const mes = signalData.find((s) => s.symbol === 'MES')
   const mesPrice = mes?.price || 0
@@ -725,30 +1076,55 @@ function buildDeterministicSymbols(
     }
 
     const voting = primary.signals.buy + primary.signals.sell
-    const verdict = primary.signals.buy >= primary.signals.sell ? 'BUY' : 'SELL'
-    const confidence = voting > 0
+    let verdict: 'BUY' | 'SELL' =
+      primary.signals.buy >= primary.signals.sell ? 'BUY' : 'SELL'
+    let confidence = voting > 0
       ? Math.round((Math.max(primary.signals.buy, primary.signals.sell) / voting) * 100)
       : 50
+    const mesBias = s.symbol === 'MES' ? applyVixBias(verdict, confidence, vixLevel) : null
+    if (mesBias) {
+      verdict = mesBias.direction
+      confidence = mesBias.confidence
+    }
     const rationale = verdict === 'BUY'
       ? (primary.signals.buySignals.slice(0, 2).join(' | ') || 'Buy votes exceeded sell votes.')
       : (primary.signals.sellSignals.slice(0, 2).join(' | ') || 'Sell votes exceeded buy votes.')
     const mesLevels = s.symbol === 'MES'
-      ? computeMesLevels('15M', mesTimeframes['15M'], mesPrice || s.price, verdict)
+      ? computeMesLevels('15M', mesTimeframes['15M'], mesPrice || s.price, verdict, vixLevel)
       : null
+    const fallbackLevels = s.symbol === 'MES' && mesLevels
+      ? (() => {
+        const target2 =
+          verdict === 'BUY'
+            ? mesLevels.target + Math.abs(mesLevels.target - mesLevels.entry) * 0.45
+            : mesLevels.target - Math.abs(mesLevels.target - mesLevels.entry) * 0.45
+        return {
+          entry: mesLevels.entry,
+          stop: mesLevels.stop,
+          target1: mesLevels.target,
+          target2,
+          riskReward: calcRiskReward(mesLevels.entry, mesLevels.stop, mesLevels.target),
+        }
+      })()
+      : computeAtrSymbolLevels(s.candles15m, s.price, verdict, vixLevel)
+    const levelReason =
+      s.symbol === 'MES' && mesLevels
+        ? `MES ${mesLevels.source === 'MEASURED_MOVE' ? 'measured move' : 'fallback'} levels applied.`
+        : 'ATR-derived deterministic levels applied.'
 
     return {
       symbol: s.symbol,
       verdict,
       confidence,
-      entry: s.symbol === 'MES' && mesLevels ? mesLevels.entry : s.price,
-      stop: s.symbol === 'MES' && mesLevels ? mesLevels.stop : 0,
-      target1: s.symbol === 'MES' && mesLevels ? mesLevels.target : 0,
-      target2: s.symbol === 'MES' && mesLevels ? mesLevels.target : 0,
-      riskReward: 0,
+      entry: fallbackLevels.entry,
+      stop: fallbackLevels.stop,
+      target1: fallbackLevels.target1,
+      target2: fallbackLevels.target2,
+      riskReward: fallbackLevels.riskReward,
       reasoning:
-        s.symbol === 'MES' && mesLevels
-          ? `Deterministic ${primary.tfLabel} vote: ${primary.signals.buy}B/${primary.signals.sell}S/${primary.signals.neutral}N. MES ${mesLevels.source === 'MEASURED_MOVE' ? 'measured move' : 'fallback'} levels applied.`
-          : `Deterministic ${primary.tfLabel} vote: ${primary.signals.buy}B/${primary.signals.sell}S/${primary.signals.neutral}N. ${rationale}`,
+        `${mesBias?.note ? `${mesBias.note} ` : ''}Deterministic ${primary.tfLabel} vote: ` +
+        `${primary.signals.buy}B/${primary.signals.sell}S/${primary.signals.neutral}N. ` +
+        `${levelReason} ${rationale}`,
       signalBreakdown: s.breakdown.map((b) => ({
         tf: b.tf,
         buy: b.signals.buy,
@@ -766,20 +1142,23 @@ export function runDeterministicAnalysis(
   marketContext: MarketContext,
 ): InstantAnalysisResult {
   const core = buildAnalysisCore(allData, symbolNames)
+  const vixLevel = vixLevelFromSignalData(core.signalData)
   const mesPrice = core.signalData.find((s) => s.symbol === 'MES')?.price || 0
   const timeframeGauges = buildDeterministicTimeframeGauges(
     core.rawGauges,
     core.mesTimeframes,
-    mesPrice
+    mesPrice,
+    vixLevel
   )
-  const symbols = buildDeterministicSymbols(core.signalData, core.mesTimeframes)
-  const leadGauge = core.rawGauges.find((g) => g.timeframe === '15M') || core.rawGauges[0]
+  const symbols = buildDeterministicSymbols(core.signalData, core.mesTimeframes, vixLevel)
+  const leadGauge = timeframeGauges.find((g) => g.timeframe === '15M') || timeframeGauges[0]
 
   const overallVerdict = leadGauge?.direction || 'BUY'
   const overallConfidence = leadGauge?.confidence ?? 50
   const narrative =
     `Deterministic signal-only mode. MES ${leadGauge?.timeframe || 'N/A'} vote is ` +
     `${leadGauge?.direction || 'NEUTRAL'} at ${overallConfidence}% confidence. ` +
+    `${formatVixSnapshot(vixLevel)}. ` +
     `Regime: ${marketContext.regime}. ${marketContext.regimeFactors.slice(0, 2).join(' ')}`
 
   return {
@@ -814,6 +1193,8 @@ export async function runInstantAnalysis(
 ): Promise<InstantAnalysisResult> {
   const core = buildAnalysisCore(allData, symbolNames)
   const { signalData, rawGauges, grandTotal, chartData, mesTimeframes } = core
+  const vixLevel = vixLevelFromSignalData(signalData)
+  const vixSnapshot = formatVixSnapshot(vixLevel)
 
   // Step 3: Build the FULL macro analysis prompt
   const signalLines = signalData.map(s => {
@@ -877,6 +1258,9 @@ ${signalLines}
 == MES RAW SIGNAL GAUGES (direction from pure math) ==
 ${gaugeLines}
 
+== VIX REGIME FILTER ==
+${vixSnapshot}
+
 == CROSS-ASSET CORRELATIONS (rolling 15-min returns) ==
 ${corrLines || '  No correlation data available'}
 
@@ -922,23 +1306,23 @@ RESPOND WITH JSON ONLY (no markdown):
   "timeframeGauges": [
     {
       "timeframe": "15M",
-      "entry": exact_MES_price,
-      "stop": exact_MES_price,
-      "target": exact_MES_price,
+      "entry": numeric_trigger_price,
+      "stop": numeric_invalidation_price,
+      "target": numeric_take_profit_price,
       "reasoning": "1-2 short sentences. Include numeric technical factors and VIX/10Y confirmation/conflict."
     },
     {
       "timeframe": "1H",
-      "entry": exact_MES_price,
-      "stop": exact_MES_price,
-      "target": exact_MES_price,
+      "entry": numeric_trigger_price,
+      "stop": numeric_invalidation_price,
+      "target": numeric_take_profit_price,
       "reasoning": "2-4 sentences."
     },
     {
       "timeframe": "4H",
-      "entry": exact_MES_price,
-      "stop": exact_MES_price,
-      "target": exact_MES_price,
+      "entry": numeric_trigger_price,
+      "stop": numeric_invalidation_price,
+      "target": numeric_take_profit_price,
       "reasoning": "2-4 sentences."
     }
   ],
@@ -947,10 +1331,10 @@ RESPOND WITH JSON ONLY (no markdown):
       "symbol": "MES",
       "verdict": "BUY" or "SELL",
       "confidence": number,
-      "entry": exact_price,
-      "stop": exact_price,
-      "target1": exact_price,
-      "target2": exact_price,
+      "entry": numeric_trigger_price,
+      "stop": numeric_invalidation_price,
+      "target1": numeric_take_profit_price,
+      "target2": numeric_extended_take_profit_price,
       "riskReward": number,
       "reasoning": "1-3 sentences with at least one numeric reference"
     }
@@ -960,6 +1344,9 @@ RESPOND WITH JSON ONLY (no markdown):
 CRITICAL:
 - Include at least MES, NQ, VX, US10Y, DX, GC, CL in symbols array.
 - Keep all numbers realistic to the provided prices.
+- Directional level consistency is mandatory: BUY => stop < entry < target and entry below current MES; SELL => target < entry < stop and entry above current MES.
+- Do not use identical entry prices for opposing BUY/SELL setups.
+- Apply VIX filter: VIX >= 20.00 means timeframe gauges must be SELL; 18.00-19.99 dampens long aggressiveness; VIX < 16.00 allows slightly tighter long risk.
 - Do not output any text outside the JSON object.`
 
   let parsed: AnalysisAiResponse | null = null
@@ -988,37 +1375,55 @@ CRITICAL:
   }
 
   // Step 4: Merge raw signal data with AI levels
+  const mesPrice = signalData.find((s) => s.symbol === 'MES')?.price || 0
   const timeframeGauges: TimeframeGauge[] = rawGauges.map(raw => {
-    const aiGauge = parsed.timeframeGauges?.find(g => g.timeframe === raw.timeframe)
-    return {
+    const bias = applyVixBias(raw.direction, raw.confidence, vixLevel)
+    const adjustedRaw: RawGaugeSnapshot = {
       ...raw,
-      entry: aiGauge?.entry || 0,
-      stop: aiGauge?.stop || 0,
-      target: aiGauge?.target || 0,
-      reasoning: aiGauge?.reasoning || '',
+      direction: bias.direction,
+      confidence: bias.confidence,
+    }
+    const aiGauge = parsed.timeframeGauges?.find(g => g.timeframe === raw.timeframe)
+    const normalized = normalizeAiGaugeLevels(
+      adjustedRaw,
+      aiGauge,
+      mesTimeframes,
+      mesPrice,
+      vixLevel
+    )
+    return {
+      ...adjustedRaw,
+      entry: normalized.entry,
+      stop: normalized.stop,
+      target: normalized.target,
+      reasoning: `${bias.note ? `${bias.note} ` : ''}${normalized.reasoning}`,
     }
   })
 
-  const fallbackSymbols = buildDeterministicSymbols(signalData, mesTimeframes)
+  const fallbackSymbols = buildDeterministicSymbols(signalData, mesTimeframes, vixLevel)
+  const signalBySymbol = new Map(signalData.map((s) => [s.symbol, s]))
   const parsedSymbols = Array.isArray(parsed.symbols) ? parsed.symbols : []
-  const mergedSymbols = parsedSymbols.length > 0
-    ? parsedSymbols.map(s => ({
-      ...s,
-      signalBreakdown: signalData.find(d => d.symbol === s.symbol)?.breakdown.map(b => ({
-        tf: b.tf,
-        buy: b.signals.buy,
-        sell: b.signals.sell,
-        neutral: b.signals.neutral,
-        total: b.signals.total,
-      })) || [],
-    }))
-    : fallbackSymbols
+  const parsedBySymbol = new Map(parsedSymbols.map((s) => [s.symbol, s]))
+  const mergedSymbols = fallbackSymbols.map((fallback) => {
+    const signalSnapshot = signalBySymbol.get(fallback.symbol)
+    const symbolPrice = signalSnapshot?.price || fallback.entry || 0
+    return normalizeAiSymbol(parsedBySymbol.get(fallback.symbol), fallback, symbolPrice, vixLevel)
+  })
+
+  const overallBias = applyVixBias(
+    normalizeVerdict(parsed.overallVerdict, 'BUY'),
+    toFiniteNumber(parsed.overallConfidence) ?? 50,
+    vixLevel
+  )
+  const overallVerdict = overallBias.direction
+  const overallConfidence = overallBias.confidence
+  const narrative = `${overallBias.note ? `${overallBias.note} ` : ''}${parsed.narrative}`
 
   return {
     timestamp: new Date().toISOString(),
-    overallVerdict: parsed.overallVerdict,
-    overallConfidence: parsed.overallConfidence,
-    narrative: parsed.narrative,
+    overallVerdict,
+    overallConfidence,
+    narrative,
     timeframeGauges,
     symbols: mergedSymbols,
     totalSignalsAnalysed: grandTotal,

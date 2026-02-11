@@ -21,3 +21,6 @@ out/
 *.log
 node_modules/
 .vercel
+mes_hft_halsey/*.csv
+**/__pycache__/
+*.pyc

@@ -1,0 +1,17 @@
+# Data sources
+databento>=0.44.0
+fredapi>=0.5.2
+yfinance>=0.2.52
+
+# Core compute
+numpy>=1.26.0
+pandas>=2.2.0
+scipy>=1.11.0
+python-dotenv>=1.0.0
+scikit-learn>=1.4.0
+
+# Optional API wrapper
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+openai>=1.102.0
+anthropic>=0.40.0

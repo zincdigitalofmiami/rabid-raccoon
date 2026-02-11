@@ -62,3 +62,19 @@ For the Next.js dashboard analysis overlay (`/api/analyse/ai`), set:
 - `OPENAI_FORECAST_MODEL` (optional; defaults to `OPENAI_ANALYSIS_MODEL`)
 
 Copy `.env.example` to `.env.local` and fill the keys.
+
+## MES HFT Halsey Module
+
+Standalone Python intraday module (Databento + FRED + Yahoo only, no Polygon):
+
+- Path: `mes_hft_halsey/`
+- Scanner: `mes_hft_halsey/mes_intraday_halsey.py`
+- Optional API: `mes_hft_halsey/mes_api.py`
+- Docs: `mes_hft_halsey/README.md`
+
+Quick start:
+
+```bash
+pip install -r mes_hft_halsey/requirements.txt
+python mes_hft_halsey/mes_intraday_halsey.py --days-back 90 --swing-order 5 --min-rr 2.0
+```
