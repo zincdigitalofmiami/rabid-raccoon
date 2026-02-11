@@ -3,6 +3,7 @@
 import Header from './Header'
 import SignalBar from './SignalBar'
 import MarketsGrid from './MarketsGrid'
+import AnalysePanel from './AnalysePanel'
 import ForecastPanel from './ForecastPanel'
 import { useMarketBatch } from '@/hooks/useMarketBatch'
 import { useForecast } from '@/hooks/useForecast'
@@ -15,7 +16,7 @@ export default function MarketsPage() {
 
   return (
     <div className="min-h-screen bg-[#0d1117]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <Header />
 
         {marketsError && (
@@ -25,7 +26,7 @@ export default function MarketsPage() {
         )}
 
         {/* Signal Bar */}
-        <div className="mb-6">
+        <div className="mb-8">
           <SignalBar
             signal={compositeSignal}
             mesPrice={mesData?.price}
@@ -34,7 +35,7 @@ export default function MarketsPage() {
         </div>
 
         {/* Markets Grid */}
-        <div className="mb-8">
+        <div className="mb-10">
           {marketsLoading && symbols.length === 0 ? (
             <div className="flex items-center justify-center py-20">
               <div className="flex items-center gap-3">
@@ -47,8 +48,13 @@ export default function MarketsPage() {
           )}
         </div>
 
+        {/* Analyse Now */}
+        <div className="mb-10">
+          <AnalysePanel />
+        </div>
+
         {/* AI Forecast */}
-        <div className="mb-8">
+        <div className="mb-10">
           <ForecastPanel
             forecast={forecast}
             loading={forecastLoading}

@@ -13,16 +13,8 @@ const SECTIONS = [
     keys: ['MES', 'NQ', 'YM', 'RTY'],
   },
   {
-    title: 'VOLATILITY',
-    keys: ['VX'],
-  },
-  {
-    title: 'TREASURIES',
-    keys: ['ZN', 'ZB'],
-  },
-  {
-    title: 'DOLLAR',
-    keys: ['DX'],
+    title: 'MACRO',
+    keys: ['VX', 'ZN', 'ZB', 'DX'],
   },
 ]
 
@@ -30,7 +22,7 @@ export default function MarketsGrid({ symbols }: MarketsGridProps) {
   const symbolMap = new Map(symbols.map((s) => [s.symbol, s]))
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       {SECTIONS.map((section) => {
         const sectionSymbols = section.keys
           .map((k) => symbolMap.get(k))
@@ -40,18 +32,10 @@ export default function MarketsGrid({ symbols }: MarketsGridProps) {
 
         return (
           <div key={section.title}>
-            <h3 className="text-[10px] font-bold text-white/30 uppercase tracking-[0.15em] mb-3 px-1">
+            <h3 className="text-xs font-bold text-white/25 uppercase tracking-[0.2em] mb-4 px-1">
               {section.title}
             </h3>
-            <div
-              className={`grid gap-3 ${
-                section.keys.length === 4
-                  ? 'grid-cols-2 lg:grid-cols-4'
-                  : section.keys.length === 2
-                  ? 'grid-cols-2'
-                  : 'grid-cols-1 max-w-xs'
-              }`}
-            >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               {sectionSymbols.map((s) => (
                 <MarketTile key={s.symbol} data={s} />
               ))}
