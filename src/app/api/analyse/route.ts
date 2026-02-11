@@ -2,14 +2,15 @@ import { NextResponse } from 'next/server'
 import { fetchOhlcv, toCandles, getCurrentSessionTimes } from '@/lib/databento'
 import { fetchVixCandles, fetchDollarCandles, getFredDateRange } from '@/lib/fred'
 import { runInstantAnalysis } from '@/lib/instant-analysis'
+import { buildMarketContext } from '@/lib/market-context'
 import { SYMBOLS } from '@/lib/symbols'
 import { CandleData } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-// Key symbols to analyse: MES, NQ, VIX, DXY
-const ANALYSE_SYMBOLS = ['MES', 'NQ', 'VX', 'DX']
+// All instruments for full macro analysis — equities, vol, bonds, dollar, gold, oil
+const ANALYSE_SYMBOLS = ['MES', 'NQ', 'VX', 'DX', 'GC', 'CL']
 
 async function fetchMultiTimeframe(symbol: string): Promise<{
   candles15m: CandleData[]
@@ -25,7 +26,6 @@ async function fetchMultiTimeframe(symbol: string): Promise<{
     if (symbol === 'VX') candles = await fetchVixCandles(fredRange.start, fredRange.end)
     else candles = await fetchDollarCandles(fredRange.start, fredRange.end)
     const price = candles.length > 0 ? candles[candles.length - 1].close : 0
-    // FRED only has daily data — use as 4H proxy (best we have)
     return { candles15m: [], candles1h: [], candles4h: candles, price }
   }
 
@@ -42,13 +42,8 @@ async function fetchMultiTimeframe(symbol: string): Promise<{
   const candles1m = toCandles(records1m)
   const price = candles1m.length > 0 ? candles1m[candles1m.length - 1].close : 0
 
-  // Aggregate 1m → 15m
   const candles15m = aggregateCandles(candles1m, 15)
-
-  // Aggregate 1m → 1h
   const candles1h = aggregateCandles(candles1m, 60)
-
-  // Aggregate 1m → 4h
   const candles4h = aggregateCandles(candles1m, 240)
 
   return { candles15m, candles1h, candles4h, price }
@@ -102,7 +97,25 @@ export async function POST() {
       return NextResponse.json({ error: 'No market data available' }, { status: 503 })
     }
 
-    const analysis = await runInstantAnalysis(allData, symbolNames)
+    // Build candle map for correlations + price changes for regime detection
+    const candles15mMap = new Map<string, CandleData[]>()
+    const priceChanges = new Map<string, number>()
+
+    for (const [symbol, data] of allData.entries()) {
+      const candles = data.candles15m.length > 0 ? data.candles15m : data.candles4h
+      if (candles.length > 0) {
+        candles15mMap.set(symbol, candles)
+        const first = candles[0].close
+        const last = candles[candles.length - 1].close
+        priceChanges.set(symbol, first > 0 ? ((last - first) / first) * 100 : 0)
+      }
+    }
+
+    // Build full market context: correlations, regime, headlines, commodities
+    const marketContext = await buildMarketContext(candles15mMap, priceChanges)
+
+    // Run the full macro analysis
+    const analysis = await runInstantAnalysis(allData, symbolNames, marketContext)
 
     return NextResponse.json(analysis)
   } catch (error) {

@@ -87,6 +87,26 @@ export const SYMBOLS: Record<string, SymbolConfig> = {
     tickSize: 0.01,
     description: 'US Dollar Index (via FRED)',
   },
+  GC: {
+    displayName: 'GC',
+    shortName: 'Gold',
+    dataSource: 'databento',
+    databentoSymbol: 'GC.c.0',
+    dataset: 'GLBX.MDP3',
+    stypeIn: 'continuous',
+    tickSize: 0.1,
+    description: 'Gold Futures (COMEX)',
+  },
+  CL: {
+    displayName: 'CL',
+    shortName: 'Crude Oil',
+    dataSource: 'databento',
+    databentoSymbol: 'CL.c.0',
+    dataset: 'GLBX.MDP3',
+    stypeIn: 'continuous',
+    tickSize: 0.01,
+    description: 'Crude Oil Futures (NYMEX)',
+  },
 }
 
 export const SYMBOL_KEYS = Object.keys(SYMBOLS)

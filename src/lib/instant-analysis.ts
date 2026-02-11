@@ -10,7 +10,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
-import { CandleData } from './types'
+import { CandleData, FibLevel, SwingPoint, MeasuredMove } from './types'
 import { detectSwings } from './swing-detection'
 import { calculateFibonacci } from './fibonacci'
 import { detectMeasuredMoves } from './measured-move'
@@ -298,6 +298,15 @@ export interface InstantSymbolResult {
   signalBreakdown: { tf: string; buy: number; sell: number; neutral: number; total: number }[]
 }
 
+export interface ChartData {
+  candles: CandleData[]
+  fibLevels: FibLevel[]
+  isBullish: boolean
+  swingHighs: SwingPoint[]
+  swingLows: SwingPoint[]
+  measuredMoves: MeasuredMove[]
+}
+
 export interface InstantAnalysisResult {
   timestamp: string
   overallVerdict: string
@@ -306,13 +315,25 @@ export interface InstantAnalysisResult {
   timeframeGauges: TimeframeGauge[]
   symbols: InstantSymbolResult[]
   totalSignalsAnalysed: number
+  chartData: ChartData | null
+  marketContext: {
+    regime: string
+    regimeFactors: string[]
+    correlations: { pair: string; value: number; interpretation: string }[]
+    headlines: string[]
+    goldContext: { price: number; change: number; changePercent: number; signal: string } | null
+    oilContext: { price: number; change: number; changePercent: number; signal: string } | null
+  }
 }
 
 // --- Main entry ---
 
+import { MarketContext } from './market-context'
+
 export async function runInstantAnalysis(
   allData: Map<string, { candles15m: CandleData[]; candles1h: CandleData[]; candles4h: CandleData[]; price: number }>,
   symbolNames: Map<string, string>,
+  marketContext: MarketContext,
 ): Promise<InstantAnalysisResult> {
   // Step 1: Compute raw signals for every symbol x timeframe
   const signalData: {
@@ -323,7 +344,6 @@ export async function runInstantAnalysis(
   }[] = []
   let grandTotal = 0
 
-  // Track MES signals per timeframe for the 3 gauges
   const mesGaugeData: { tf: '15M' | '1H' | '4H'; signals: SignalSummary }[] = []
 
   for (const [symbol, data] of allData.entries()) {
@@ -361,57 +381,94 @@ export async function runInstantAnalysis(
     sellSignals: g.signals.sellSignals,
   }))
 
-  // Step 3: Build Claude prompt — ask for levels + reasoning that references SPECIFIC signals
+  // Step 3: Build the FULL macro analysis prompt
   const signalLines = signalData.map(s => {
     const bdown = s.breakdown.map(b =>
       `  ${b.tf.toUpperCase()}: ${b.signals.buy}B / ${b.signals.sell}S / ${b.signals.neutral}N = ${b.signals.total} signals\n` +
-      `    BUY signals: ${b.signals.buySignals.join(' | ')}\n` +
-      `    SELL signals: ${b.signals.sellSignals.join(' | ')}`
+      `    BUY: ${b.signals.buySignals.join(' | ')}\n` +
+      `    SELL: ${b.signals.sellSignals.join(' | ')}`
     ).join('\n')
     return `${s.displayName} @ ${s.price.toFixed(2)}:\n${bdown}`
   }).join('\n\n')
 
   const gaugeLines = rawGauges.map(g =>
-    `  ${g.timeframe}: ${g.direction} — ${g.buyCount} buy vs ${g.sellCount} sell = ${g.confidence}% confidence`
+    `  ${g.timeframe}: ${g.direction} — ${g.buyCount}B vs ${g.sellCount}S = ${g.confidence}%`
   ).join('\n')
 
-  const prompt = `You are an elite futures day trader. I hit "ANALYSE NOW" — give me an INSTANT, no-bullshit verdict.
+  const corrLines = marketContext.correlations.map(c =>
+    `  ${c.pair}: ${c.value} — ${c.interpretation}`
+  ).join('\n')
 
-${grandTotal} TECHNICAL SIGNALS computed across 15M / 1H / 4H for MES, NQ, VIX, DXY:
+  const headlineBlock = marketContext.headlines.length > 0
+    ? `\n== CURRENT MARKET HEADLINES ==\n${marketContext.headlines.map(h => `  - ${h}`).join('\n')}`
+    : '\n== NO LIVE HEADLINES AVAILABLE — reason from cross-asset data =='
+
+  const goldBlock = marketContext.goldContext
+    ? `GOLD @ ${marketContext.goldContext.price.toFixed(2)} (${marketContext.goldContext.changePercent >= 0 ? '+' : ''}${marketContext.goldContext.changePercent.toFixed(2)}%) — ${marketContext.goldContext.signal}`
+    : 'GOLD: data unavailable'
+
+  const oilBlock = marketContext.oilContext
+    ? `OIL @ ${marketContext.oilContext.price.toFixed(2)} (${marketContext.oilContext.changePercent >= 0 ? '+' : ''}${marketContext.oilContext.changePercent.toFixed(2)}%) — ${marketContext.oilContext.signal}`
+    : 'OIL: data unavailable'
+
+  const prompt = `You are a senior macro strategist at a top hedge fund. Not an indicator reader — a REAL TRADER who reads the entire market.
+
+== TECHNICAL SIGNALS (${grandTotal} computed across 15M/1H/4H) ==
 
 ${signalLines}
 
-RAW SIGNAL GAUGES (MES — direction from pure math):
+== MES RAW SIGNAL GAUGES (direction from pure math) ==
 ${gaugeLines}
 
-YOUR TASK: Based on these EXACT signals, provide entry/stop/target levels for each timeframe. Reference the SPECIFIC signals by name.
+== CROSS-ASSET CORRELATIONS (rolling 15-min returns) ==
+${corrLines || '  No correlation data available'}
+
+== MARKET REGIME: ${marketContext.regime} ==
+${marketContext.regimeFactors.map(f => `  - ${f}`).join('\n')}
+
+== COMMODITIES ==
+${goldBlock}
+${oilBlock}
+${headlineBlock}
+
+== YOUR ANALYSIS ==
+Think like a macro strategist, not a textbook. Consider ALL of the following:
+
+1. CROSS-ASSET STORY: What are bonds, VIX, gold, oil, and dollar TELLING US about risk sentiment? Do they CONFIRM or CONTRADICT the equity direction?
+2. CORRELATION ANALYSIS: Are the normal relationships (VIX inverse, bonds inverse, gold safe-haven) holding? Any divergences signaling regime change?
+3. GEOPOLITICAL & POLICY CONTEXT: Based on the headlines and current environment — how do tariffs, trade policy, central bank actions, China tensions, and fiscal policy affect the trade?
+4. SECTOR LEADERSHIP: Is tech (NQ) leading or lagging broad market (MES)? What does relative strength tell us about institutional positioning?
+5. VOLATILITY REGIME: Is VIX complacent or pricing tail risk? What does the vol surface imply?
+6. COMMODITY SIGNALS: Gold bid = fear. Gold offered = confidence. Oil up = demand/inflation. Oil down = slowdown. What's the read?
+7. WHERE IS THE MONEY FLOWING? Which asset classes are seeing inflows? What's the rotation story?
+8. WHAT COULD BREAK THE THESIS? Name the specific risk that could flip this trade.
 
 RESPOND WITH JSON ONLY (no markdown, no code fences):
 {
   "overallVerdict": "BUY" or "SELL",
   "overallConfidence": number 55-95,
-  "narrative": "3-4 sentences. Reference SPECIFIC indicator values (e.g. 'RSI(14)=62 confirms bullish momentum', 'SMA(20) at 5832 acting as support'). Explain the confluence. Talk like a trader.",
+  "narrative": "5-7 sentences of REAL macro analysis. Start with the cross-asset story. Reference specific prices, correlations, regime signals. Mention geopolitics/policy if relevant headlines exist. End with the risk. Talk like a trader at a Bloomberg terminal, not an AI chatbot.",
   "timeframeGauges": [
     {
       "timeframe": "15M",
       "entry": exact_MES_price,
       "stop": exact_MES_price,
       "target": exact_MES_price,
-      "reasoning": "2 sentences max. Name the SPECIFIC indicators that drive this timeframe: which MAs, what RSI value, what fib level, what measured move."
+      "reasoning": "2-3 sentences. Technical levels + macro confirmation. Name specific MAs, fib levels, AND how cross-asset signals confirm or conflict."
     },
     {
       "timeframe": "1H",
       "entry": exact_MES_price,
       "stop": exact_MES_price,
       "target": exact_MES_price,
-      "reasoning": "2 sentences. Name specific indicators."
+      "reasoning": "2-3 sentences. Technical + macro."
     },
     {
       "timeframe": "4H",
       "entry": exact_MES_price,
       "stop": exact_MES_price,
       "target": exact_MES_price,
-      "reasoning": "2 sentences. Name specific indicators."
+      "reasoning": "2-3 sentences. Bigger picture positioning."
     }
   ],
   "symbols": [
@@ -424,16 +481,16 @@ RESPOND WITH JSON ONLY (no markdown, no code fences):
       "target1": exact_price,
       "target2": exact_price,
       "riskReward": number,
-      "reasoning": "1 sentence referencing specific signals"
+      "reasoning": "2 sentences — technical + macro context"
     }
   ]
 }
 
-CRITICAL: Only include MES, NQ, VX, DX in symbols array. Entry/stop/target must be realistic price levels based on the signal data provided.`
+CRITICAL: Include MES, NQ, VX, DX, GC, CL in symbols array. Entry/stop/target must be realistic price levels. The narrative must reference cross-asset correlations and macro context, not just technical indicators.`
 
   const message = await client.messages.create({
     model: 'claude-sonnet-4-5-20250929',
-    max_tokens: 2000,
+    max_tokens: 3000,
     messages: [{ role: 'user', content: prompt }],
   })
 
@@ -458,7 +515,24 @@ CRITICAL: Only include MES, NQ, VX, DX in symbols array. Entry/stop/target must 
     else throw new Error('Failed to parse AI response')
   }
 
-  // Step 4: Merge raw signal data with Claude's levels
+  // Step 4: Compute chart data for MES 15m
+  let chartData: ChartData | null = null
+  const mesData = allData.get('MES')
+  if (mesData && mesData.candles15m.length > 5) {
+    const { highs: chHighs, lows: chLows } = detectSwings(mesData.candles15m, 5, 5, 20)
+    const chFib = calculateFibonacci(chHighs, chLows)
+    const chMM = detectMeasuredMoves(chHighs, chLows, mesData.price)
+    chartData = {
+      candles: mesData.candles15m,
+      fibLevels: chFib?.levels || [],
+      isBullish: chFib?.isBullish ?? true,
+      swingHighs: chHighs,
+      swingLows: chLows,
+      measuredMoves: chMM,
+    }
+  }
+
+  // Step 5: Merge raw signal data with Claude's levels
   const timeframeGauges: TimeframeGauge[] = rawGauges.map(raw => {
     const claudeGauge = parsed.timeframeGauges?.find(g => g.timeframe === raw.timeframe)
     return {
@@ -483,5 +557,14 @@ CRITICAL: Only include MES, NQ, VX, DX in symbols array. Entry/stop/target must 
       })) || [],
     })),
     totalSignalsAnalysed: grandTotal,
+    chartData,
+    marketContext: {
+      regime: marketContext.regime,
+      regimeFactors: marketContext.regimeFactors,
+      correlations: marketContext.correlations,
+      headlines: marketContext.headlines,
+      goldContext: marketContext.goldContext,
+      oilContext: marketContext.oilContext,
+    },
   }
 }

@@ -13,6 +13,10 @@ const SECTIONS = [
     keys: ['MES', 'NQ', 'YM', 'RTY'],
   },
   {
+    title: 'COMMODITIES',
+    keys: ['GC', 'CL'],
+  },
+  {
     title: 'MACRO',
     keys: ['VX', 'ZN', 'ZB', 'DX'],
   },
