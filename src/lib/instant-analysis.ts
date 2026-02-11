@@ -483,7 +483,17 @@ interface AnalysisCoreSnapshot {
   rawGauges: RawGaugeSnapshot[]
   grandTotal: number
   chartData: ChartData | null
+  mesTimeframes: MesTimeframes
 }
+
+type TimeframeLabel = '15M' | '1H' | '4H'
+
+interface MesTimeframeSnapshot {
+  candles: CandleData[]
+  measuredMoves: MeasuredMove[]
+}
+
+type MesTimeframes = Record<TimeframeLabel, MesTimeframeSnapshot>
 
 interface MesLevels {
   entry: number
@@ -492,22 +502,39 @@ interface MesLevels {
   source: 'MEASURED_MOVE' | 'DETERMINISTIC_FALLBACK'
 }
 
-function selectMesMeasuredMove(chartData: ChartData | null): MeasuredMove | null {
-  if (!chartData || chartData.measuredMoves.length === 0) return null
+const EMPTY_MES_TIMEFRAMES: MesTimeframes = {
+  '15M': { candles: [], measuredMoves: [] },
+  '1H': { candles: [], measuredMoves: [] },
+  '4H': { candles: [], measuredMoves: [] },
+}
+
+function selectMesMeasuredMove(
+  measuredMoves: MeasuredMove[],
+  direction: 'BUY' | 'SELL'
+): MeasuredMove | null {
+  if (measuredMoves.length === 0) return null
+  const wantedDirection = direction === 'BUY' ? 'BULLISH' : 'BEARISH'
   return (
-    chartData.measuredMoves.find((m) => m.status === 'ACTIVE') ||
-    chartData.measuredMoves[0] ||
+    measuredMoves.find((m) => m.status === 'ACTIVE' && m.direction === wantedDirection) ||
+    measuredMoves.find((m) => m.direction === wantedDirection) ||
+    measuredMoves.find((m) => m.status === 'ACTIVE') ||
+    measuredMoves[0] ||
     null
   )
 }
 
 function computeMesLevels(
-  chartData: ChartData | null,
+  timeframe: TimeframeLabel,
+  mesTimeframe: MesTimeframeSnapshot,
   mesPrice: number,
   direction: 'BUY' | 'SELL'
 ): MesLevels {
-  const mesMove = selectMesMeasuredMove(chartData)
-  if (mesMove) {
+  const mesMove = selectMesMeasuredMove(mesTimeframe.measuredMoves, direction)
+  if (
+    mesMove &&
+    ((direction === 'BUY' && mesMove.direction === 'BULLISH') ||
+      (direction === 'SELL' && mesMove.direction === 'BEARISH'))
+  ) {
     return {
       entry: mesMove.entry,
       stop: mesMove.stop,
@@ -516,8 +543,25 @@ function computeMesLevels(
     }
   }
 
-  const risk = Math.max(mesPrice * 0.0008, 1.5)
-  const reward = risk * 1.8
+  const atrValue = atr(mesTimeframe.candles, 14)
+  const baseRisk =
+    atrValue != null && Number.isFinite(atrValue) && atrValue > 0
+      ? Math.max(atrValue * 0.85, mesPrice * 0.0008, 1.5)
+      : Math.max(mesPrice * 0.0012, 1.5)
+
+  const riskMultiplierByTf: Record<TimeframeLabel, number> = {
+    '15M': 1,
+    '1H': 1.5,
+    '4H': 2.2,
+  }
+  const rewardMultiplierByTf: Record<TimeframeLabel, number> = {
+    '15M': 1.8,
+    '1H': 2.0,
+    '4H': 2.2,
+  }
+
+  const risk = baseRisk * riskMultiplierByTf[timeframe]
+  const reward = risk * rewardMultiplierByTf[timeframe]
   if (direction === 'BUY') {
     return {
       entry: mesPrice,
@@ -584,36 +628,69 @@ function buildAnalysisCore(
     sellSignals: g.signals.sellSignals,
   }))
 
+  let mesTimeframes: MesTimeframes = {
+    '15M': { candles: [], measuredMoves: [] },
+    '1H': { candles: [], measuredMoves: [] },
+    '4H': { candles: [], measuredMoves: [] },
+  }
+
   let chartData: ChartData | null = null
   const mesData = allData.get('MES')
+  if (mesData) {
+    const buildMesTimeframe = (candles: CandleData[]): MesTimeframeSnapshot => {
+      if (candles.length < 5) {
+        return { candles, measuredMoves: [] }
+      }
+      const { highs, lows } = detectSwings(candles, 5, 5, 20)
+      const measuredMoves = detectMeasuredMoves(highs, lows, candles[candles.length - 1].close)
+      return { candles, measuredMoves }
+    }
+
+    mesTimeframes = {
+      '15M': buildMesTimeframe(mesData.candles15m),
+      '1H': buildMesTimeframe(mesData.candles1h),
+      '4H': buildMesTimeframe(mesData.candles4h),
+    }
+  }
+
   if (mesData && mesData.candles15m.length > 5) {
     const { highs: chHighs, lows: chLows } = detectSwings(mesData.candles15m, 5, 5, 20)
     const chFib = calculateFibonacci(chHighs, chLows)
-    const chMM = detectMeasuredMoves(chHighs, chLows, mesData.price)
     chartData = {
       candles: mesData.candles15m,
       fibLevels: chFib?.levels || [],
       isBullish: chFib?.isBullish ?? true,
       swingHighs: chHighs,
       swingLows: chLows,
-      measuredMoves: chMM,
+      measuredMoves: mesTimeframes['15M'].measuredMoves,
     }
   }
 
-  return { signalData, rawGauges, grandTotal, chartData }
+  return {
+    signalData,
+    rawGauges,
+    grandTotal,
+    chartData,
+    mesTimeframes: mesData ? mesTimeframes : EMPTY_MES_TIMEFRAMES,
+  }
 }
 
 function buildDeterministicTimeframeGauges(
   rawGauges: RawGaugeSnapshot[],
-  chartData: ChartData | null,
+  mesTimeframes: MesTimeframes,
   mesPrice: number
 ): TimeframeGauge[] {
   return rawGauges.map(raw => {
-    const levels = computeMesLevels(chartData, mesPrice, raw.direction)
+    const levels = computeMesLevels(
+      raw.timeframe,
+      mesTimeframes[raw.timeframe],
+      mesPrice,
+      raw.direction
+    )
     const reasonPrefix =
       levels.source === 'MEASURED_MOVE'
-        ? 'Deterministic MES measured move'
-        : 'Deterministic MES levels'
+        ? `Deterministic ${raw.timeframe} MES measured move`
+        : `Deterministic ${raw.timeframe} MES ATR levels`
     return {
       ...raw,
       entry: levels.entry,
@@ -626,7 +703,7 @@ function buildDeterministicTimeframeGauges(
 
 function buildDeterministicSymbols(
   signalData: SymbolSignalSnapshot[],
-  chartData: ChartData | null
+  mesTimeframes: MesTimeframes
 ): InstantSymbolResult[] {
   const mes = signalData.find((s) => s.symbol === 'MES')
   const mesPrice = mes?.price || 0
@@ -655,7 +732,9 @@ function buildDeterministicSymbols(
     const rationale = verdict === 'BUY'
       ? (primary.signals.buySignals.slice(0, 2).join(' | ') || 'Buy votes exceeded sell votes.')
       : (primary.signals.sellSignals.slice(0, 2).join(' | ') || 'Sell votes exceeded buy votes.')
-    const mesLevels = s.symbol === 'MES' ? computeMesLevels(chartData, mesPrice || s.price, verdict) : null
+    const mesLevels = s.symbol === 'MES'
+      ? computeMesLevels('15M', mesTimeframes['15M'], mesPrice || s.price, verdict)
+      : null
 
     return {
       symbol: s.symbol,
@@ -688,8 +767,12 @@ export function runDeterministicAnalysis(
 ): InstantAnalysisResult {
   const core = buildAnalysisCore(allData, symbolNames)
   const mesPrice = core.signalData.find((s) => s.symbol === 'MES')?.price || 0
-  const timeframeGauges = buildDeterministicTimeframeGauges(core.rawGauges, core.chartData, mesPrice)
-  const symbols = buildDeterministicSymbols(core.signalData, core.chartData)
+  const timeframeGauges = buildDeterministicTimeframeGauges(
+    core.rawGauges,
+    core.mesTimeframes,
+    mesPrice
+  )
+  const symbols = buildDeterministicSymbols(core.signalData, core.mesTimeframes)
   const leadGauge = core.rawGauges.find((g) => g.timeframe === '15M') || core.rawGauges[0]
 
   const overallVerdict = leadGauge?.direction || 'BUY'
@@ -730,7 +813,7 @@ export async function runInstantAnalysis(
   marketContext: MarketContext,
 ): Promise<InstantAnalysisResult> {
   const core = buildAnalysisCore(allData, symbolNames)
-  const { signalData, rawGauges, grandTotal, chartData } = core
+  const { signalData, rawGauges, grandTotal, chartData, mesTimeframes } = core
 
   // Step 3: Build the FULL macro analysis prompt
   const signalLines = signalData.map(s => {
@@ -916,7 +999,7 @@ CRITICAL:
     }
   })
 
-  const fallbackSymbols = buildDeterministicSymbols(signalData, chartData)
+  const fallbackSymbols = buildDeterministicSymbols(signalData, mesTimeframes)
   const parsedSymbols = Array.isArray(parsed.symbols) ? parsed.symbols : []
   const mergedSymbols = parsedSymbols.length > 0
     ? parsedSymbols.map(s => ({
