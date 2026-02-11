@@ -52,6 +52,17 @@ function uniqueSorted(nums: number[]): number[] {
   return [...new Set(nums.map((n) => Number(n.toFixed(2))))].sort((a, b) => a - b)
 }
 
+function getMesMeasuredMoves(symbols: MarketSummary[]): MeasuredMove[] {
+  const mes = symbols.find((s) => s.symbol === 'MES')
+  if (!mes?.signal?.measuredMove) return []
+  return [mes.signal.measuredMove]
+}
+
+function userFacingFallbackNote(reason?: string): string {
+  if (!reason) return 'Deterministic mode active.'
+  return 'Deterministic mode active.'
+}
+
 function inferKeyLevels(symbols: MarketSummary[]): { support: number[]; resistance: number[] } {
   const mes = symbols.find((s) => s.symbol === 'MES') || symbols[0]
   if (!mes) return { support: [], resistance: [] }
@@ -78,25 +89,24 @@ function inferKeyLevels(symbols: MarketSummary[]): { support: number[]; resistan
 
 function deterministicForecast(input: ForecastInput, reason?: string): ForecastResponse {
   const { symbols, compositeSignal, window, marketContext } = input
-  const allMeasuredMoves: MeasuredMove[] = symbols
-    .map((s) => s.signal.measuredMove)
-    .filter((m): m is MeasuredMove => Boolean(m))
+  const mesMeasuredMoves = getMesMeasuredMoves(symbols)
 
   const mes = symbols.find((s) => s.symbol === 'MES') || symbols[0]
   const mesLine = mes
     ? `MES ${mes.direction} ${mes.signal.confidence}% at ${mes.price.toFixed(2)} (${mes.changePercent >= 0 ? '+' : ''}${mes.changePercent.toFixed(2)}%).`
     : 'MES data unavailable.'
 
-  const activeMoves = allMeasuredMoves.filter((m) => m.status === 'ACTIVE').length
+  const activeMoves = mesMeasuredMoves.filter((m) => m.status === 'ACTIVE').length
+  const fallbackNote = userFacingFallbackNote(reason)
   const analysis =
     `TL;DR: ${compositeSignal.direction} bias at ${compositeSignal.confidence}% confidence from deterministic signals only. ` +
     `${mesLine} ` +
-    `Active measured moves: ${activeMoves}. ` +
+    `MES active measured moves: ${activeMoves}. ` +
     `Confluence: ${compositeSignal.confluenceSummary.slice(0, 4).join(' | ') || 'none'}. ` +
     `${marketContext?.yieldContext ? `US10Y ${marketContext.yieldContext.tenYearYield.toFixed(2)}% (${marketContext.yieldContext.tenYearChangeBp >= 0 ? '+' : ''}${marketContext.yieldContext.tenYearChangeBp.toFixed(1)} bp). ` : ''}` +
     `${marketContext?.breakout7000 ? `SPX 7,000: ${marketContext.breakout7000.status}. ` : ''}` +
     `Window: ${window}. ` +
-    `${reason ? `AI overlay unavailable (${reason}); using deterministic fallback.` : 'AI overlay not used.'}`
+    fallbackNote
 
   const keyLevels = inferKeyLevels(symbols)
   const symbolForecasts: SymbolForecast[] = compositeSignal.symbolSignals.map((s) => ({
@@ -112,7 +122,7 @@ function deterministicForecast(input: ForecastInput, reason?: string): ForecastR
     analysis,
     symbolForecasts,
     keyLevels,
-    measuredMoves: allMeasuredMoves,
+    measuredMoves: mesMeasuredMoves,
     intermarketNotes: compositeSignal.confluenceSummary.slice(0, 8),
     generatedAt: new Date().toISOString(),
   }
@@ -158,9 +168,7 @@ function sanitizeForecast(
 export async function generateForecast(input: ForecastInput): Promise<ForecastResponse> {
   const { symbols, compositeSignal, window, marketContext } = input
 
-  const allMeasuredMoves: MeasuredMove[] = symbols
-    .map((s) => s.signal.measuredMove)
-    .filter((m): m is MeasuredMove => Boolean(m))
+  const mesMeasuredMoves = getMesMeasuredMoves(symbols)
 
   const marketDataLines = symbols.map((s) => {
     const dir = s.direction === 'BULLISH' ? '▲' : '▼'
@@ -169,7 +177,7 @@ export async function generateForecast(input: ForecastInput): Promise<ForecastRe
     return `${s.displayName}: ${s.price.toFixed(2)} (${chgSign}${s.changePercent.toFixed(2)}%) ${dir} ${s.signal.confidence}% | ${factors}`
   })
 
-  const measuredMoveLines = allMeasuredMoves.map((m) => {
+  const measuredMoveLines = mesMeasuredMoves.map((m) => {
     const sym = symbols.find((s) => s.signal.measuredMove === m)?.displayName || '?'
     return `${sym} ${m.direction} AB=CD: A=${m.pointA.price.toFixed(2)} B=${m.pointB.price.toFixed(2)} C=${m.pointC.price.toFixed(2)} -> D=${m.projectedD.toFixed(2)} | Entry ${m.entry.toFixed(2)} Stop ${m.stop.toFixed(2)} Target ${m.target.toFixed(2)} | Quality ${m.quality}/100 Status ${m.status}`
   })
@@ -278,7 +286,7 @@ Hard constraints:
       return {
         window,
         ...cleaned,
-        measuredMoves: allMeasuredMoves,
+        measuredMoves: mesMeasuredMoves,
         generatedAt: new Date().toISOString(),
       }
     } catch (error) {

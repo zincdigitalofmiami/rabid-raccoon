@@ -76,7 +76,10 @@ export default function AnalysePanel({ onResult }: AnalysePanelProps) {
         onResult?.(merged)
       } catch (aiErr) {
         const msg = aiErr instanceof Error ? aiErr.message : 'AI overlay failed'
-        setError(`Deterministic analysis loaded. AI overlay unavailable: ${msg}`)
+        const userMsg = /openai_api_key|api key|not set/i.test(msg)
+          ? 'AI overlay is disabled in this environment.'
+          : 'AI overlay is currently unavailable.'
+        setError(`Deterministic analysis loaded. ${userMsg}`)
       } finally {
         setAiLoading(false)
       }

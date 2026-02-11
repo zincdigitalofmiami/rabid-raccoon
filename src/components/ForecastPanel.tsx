@@ -58,6 +58,7 @@ export default function ForecastPanel({ forecast, loading, error }: ForecastPane
 
   const overallPressure = spxPressureForSymbol('MES', forecast.direction)
   const overallColor = pressureColor(overallPressure)
+  const mesMove = forecast.measuredMoves[0] || null
 
   return (
     <div className="rounded-2xl border border-white/10 bg-[#131722] overflow-hidden">
@@ -138,21 +139,25 @@ export default function ForecastPanel({ forecast, loading, error }: ForecastPane
         </div>
 
         <div>
-          <h4 className="text-xs font-bold text-white/35 uppercase tracking-[0.2em] mb-3">Measured Moves</h4>
-          <div className="space-y-2">
-            {forecast.measuredMoves.map((mm, i) => (
-              <div key={i} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
-                <div className="text-xs text-white/55">
-                  Entry <span className="tabular-nums text-white/85">{mm.entry.toFixed(2)}</span> · Stop{' '}
-                  <span className="tabular-nums text-white/85">{mm.stop.toFixed(2)}</span> · Target{' '}
-                  <span className="tabular-nums text-white/85">{mm.target.toFixed(2)}</span>
-                </div>
+          <h4 className="text-xs font-bold text-white/35 uppercase tracking-[0.2em] mb-3">MES Trade Plan</h4>
+          {mesMove ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-white/45">Entry</span>
+                <span className="font-black tabular-nums text-white">{mesMove.entry.toFixed(2)}</span>
               </div>
-            ))}
-            {forecast.measuredMoves.length === 0 && (
-              <div className="text-sm text-white/35">No active measured move</div>
-            )}
-          </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-white/45">Stop</span>
+                <span className="font-black tabular-nums text-[#ef5350]">{mesMove.stop.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-white/45">Target</span>
+                <span className="font-black tabular-nums text-[#26a69a]">{mesMove.target.toFixed(2)}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-white/35">No active MES measured move</div>
+          )}
         </div>
       </div>
 

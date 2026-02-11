@@ -485,6 +485,55 @@ interface AnalysisCoreSnapshot {
   chartData: ChartData | null
 }
 
+interface MesLevels {
+  entry: number
+  stop: number
+  target: number
+  source: 'MEASURED_MOVE' | 'DETERMINISTIC_FALLBACK'
+}
+
+function selectMesMeasuredMove(chartData: ChartData | null): MeasuredMove | null {
+  if (!chartData || chartData.measuredMoves.length === 0) return null
+  return (
+    chartData.measuredMoves.find((m) => m.status === 'ACTIVE') ||
+    chartData.measuredMoves[0] ||
+    null
+  )
+}
+
+function computeMesLevels(
+  chartData: ChartData | null,
+  mesPrice: number,
+  direction: 'BUY' | 'SELL'
+): MesLevels {
+  const mesMove = selectMesMeasuredMove(chartData)
+  if (mesMove) {
+    return {
+      entry: mesMove.entry,
+      stop: mesMove.stop,
+      target: mesMove.target,
+      source: 'MEASURED_MOVE',
+    }
+  }
+
+  const risk = Math.max(mesPrice * 0.0008, 1.5)
+  const reward = risk * 1.8
+  if (direction === 'BUY') {
+    return {
+      entry: mesPrice,
+      stop: mesPrice - risk,
+      target: mesPrice + reward,
+      source: 'DETERMINISTIC_FALLBACK',
+    }
+  }
+  return {
+    entry: mesPrice,
+    stop: mesPrice + risk,
+    target: mesPrice - reward,
+    source: 'DETERMINISTIC_FALLBACK',
+  }
+}
+
 function buildAnalysisCore(
   allData: Map<string, { candles15m: CandleData[]; candles1h: CandleData[]; candles4h: CandleData[]; price: number }>,
   symbolNames: Map<string, string>,
@@ -554,17 +603,33 @@ function buildAnalysisCore(
   return { signalData, rawGauges, grandTotal, chartData }
 }
 
-function buildDeterministicTimeframeGauges(rawGauges: RawGaugeSnapshot[]): TimeframeGauge[] {
-  return rawGauges.map(raw => ({
-    ...raw,
-    entry: 0,
-    stop: 0,
-    target: 0,
-    reasoning: 'Deterministic-only mode: AI trade levels disabled.',
-  }))
+function buildDeterministicTimeframeGauges(
+  rawGauges: RawGaugeSnapshot[],
+  chartData: ChartData | null,
+  mesPrice: number
+): TimeframeGauge[] {
+  return rawGauges.map(raw => {
+    const levels = computeMesLevels(chartData, mesPrice, raw.direction)
+    const reasonPrefix =
+      levels.source === 'MEASURED_MOVE'
+        ? 'Deterministic MES measured move'
+        : 'Deterministic MES levels'
+    return {
+      ...raw,
+      entry: levels.entry,
+      stop: levels.stop,
+      target: levels.target,
+      reasoning: `${reasonPrefix}: entry ${levels.entry.toFixed(2)}, stop ${levels.stop.toFixed(2)}, target ${levels.target.toFixed(2)}.`,
+    }
+  })
 }
 
-function buildDeterministicSymbols(signalData: SymbolSignalSnapshot[]): InstantSymbolResult[] {
+function buildDeterministicSymbols(
+  signalData: SymbolSignalSnapshot[],
+  chartData: ChartData | null
+): InstantSymbolResult[] {
+  const mes = signalData.find((s) => s.symbol === 'MES')
+  const mesPrice = mes?.price || 0
   return signalData.map((s) => {
     const primary = s.breakdown.find((b) => b.tfLabel === '15M') || s.breakdown[0]
     if (!primary) {
@@ -590,17 +655,21 @@ function buildDeterministicSymbols(signalData: SymbolSignalSnapshot[]): InstantS
     const rationale = verdict === 'BUY'
       ? (primary.signals.buySignals.slice(0, 2).join(' | ') || 'Buy votes exceeded sell votes.')
       : (primary.signals.sellSignals.slice(0, 2).join(' | ') || 'Sell votes exceeded buy votes.')
+    const mesLevels = s.symbol === 'MES' ? computeMesLevels(chartData, mesPrice || s.price, verdict) : null
 
     return {
       symbol: s.symbol,
       verdict,
       confidence,
-      entry: s.price,
-      stop: 0,
-      target1: 0,
-      target2: 0,
+      entry: s.symbol === 'MES' && mesLevels ? mesLevels.entry : s.price,
+      stop: s.symbol === 'MES' && mesLevels ? mesLevels.stop : 0,
+      target1: s.symbol === 'MES' && mesLevels ? mesLevels.target : 0,
+      target2: s.symbol === 'MES' && mesLevels ? mesLevels.target : 0,
       riskReward: 0,
-      reasoning: `Deterministic ${primary.tfLabel} vote: ${primary.signals.buy}B/${primary.signals.sell}S/${primary.signals.neutral}N. ${rationale}`,
+      reasoning:
+        s.symbol === 'MES' && mesLevels
+          ? `Deterministic ${primary.tfLabel} vote: ${primary.signals.buy}B/${primary.signals.sell}S/${primary.signals.neutral}N. MES ${mesLevels.source === 'MEASURED_MOVE' ? 'measured move' : 'fallback'} levels applied.`
+          : `Deterministic ${primary.tfLabel} vote: ${primary.signals.buy}B/${primary.signals.sell}S/${primary.signals.neutral}N. ${rationale}`,
       signalBreakdown: s.breakdown.map((b) => ({
         tf: b.tf,
         buy: b.signals.buy,
@@ -618,8 +687,9 @@ export function runDeterministicAnalysis(
   marketContext: MarketContext,
 ): InstantAnalysisResult {
   const core = buildAnalysisCore(allData, symbolNames)
-  const timeframeGauges = buildDeterministicTimeframeGauges(core.rawGauges)
-  const symbols = buildDeterministicSymbols(core.signalData)
+  const mesPrice = core.signalData.find((s) => s.symbol === 'MES')?.price || 0
+  const timeframeGauges = buildDeterministicTimeframeGauges(core.rawGauges, core.chartData, mesPrice)
+  const symbols = buildDeterministicSymbols(core.signalData, core.chartData)
   const leadGauge = core.rawGauges.find((g) => g.timeframe === '15M') || core.rawGauges[0]
 
   const overallVerdict = leadGauge?.direction || 'BUY'
@@ -814,10 +884,13 @@ CRITICAL:
     parsed = await requestAnalysisOverlay(prompt)
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'AI overlay unavailable'
+    const publicMsg = /openai_api_key|api key|not set/i.test(msg)
+      ? 'AI overlay disabled in this environment.'
+      : 'AI overlay unavailable.'
     const deterministic = runDeterministicAnalysis(allData, symbolNames, marketContext)
     return {
       ...deterministic,
-      narrative: `${deterministic.narrative} AI overlay unavailable: ${msg}`,
+      narrative: `${deterministic.narrative} ${publicMsg}`,
       chartData,
       totalSignalsAnalysed: grandTotal,
     }
@@ -843,7 +916,7 @@ CRITICAL:
     }
   })
 
-  const fallbackSymbols = buildDeterministicSymbols(signalData)
+  const fallbackSymbols = buildDeterministicSymbols(signalData, chartData)
   const parsedSymbols = Array.isArray(parsed.symbols) ? parsed.symbols : []
   const mergedSymbols = parsedSymbols.length > 0
     ? parsedSymbols.map(s => ({
