@@ -14,7 +14,7 @@ const ANALYSE_SYMBOLS = ['MES', 'NQ', 'VX', 'DX']
 async function fetchMultiTimeframe(symbol: string): Promise<{
   candles15m: CandleData[]
   candles1h: CandleData[]
-  candles1d: CandleData[]
+  candles4h: CandleData[]
   price: number
 }> {
   const config = SYMBOLS[symbol]
@@ -25,15 +25,13 @@ async function fetchMultiTimeframe(symbol: string): Promise<{
     if (symbol === 'VX') candles = await fetchVixCandles(fredRange.start, fredRange.end)
     else candles = await fetchDollarCandles(fredRange.start, fredRange.end)
     const price = candles.length > 0 ? candles[candles.length - 1].close : 0
-    // FRED only has 1D data
-    return { candles15m: [], candles1h: [], candles1d: candles, price }
+    // FRED only has daily data — use as 4H proxy (best we have)
+    return { candles15m: [], candles1h: [], candles4h: candles, price }
   }
 
-  // Databento: fetch 15m (using 1m and aggregating), 1h (using 1m), 1d
+  // Databento: fetch 1-min bars, aggregate to 15m, 1h, 4h
   const session = getCurrentSessionTimes()
-  const now = new Date()
 
-  // 15-minute view: last 18 hours of 1-min bars (already what we have)
   const records1m = await fetchOhlcv({
     dataset: config.dataset!,
     symbol: config.databentoSymbol!,
@@ -50,26 +48,10 @@ async function fetchMultiTimeframe(symbol: string): Promise<{
   // Aggregate 1m → 1h
   const candles1h = aggregateCandles(candles1m, 60)
 
-  // 1D: fetch daily bars (last 90 days)
-  const start1d = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString()
-  const end1d = new Date(now.getTime() - 30 * 60 * 1000).toISOString()
-  let candles1d: CandleData[] = []
-  try {
-    const records1d = await fetchOhlcv({
-      dataset: config.dataset!,
-      symbol: config.databentoSymbol!,
-      stypeIn: config.stypeIn!,
-      start: start1d,
-      end: end1d,
-      schema: 'ohlcv-1d',
-    })
-    candles1d = toCandles(records1d)
-  } catch {
-    // If daily fails, aggregate from 1m (limited to session)
-    candles1d = aggregateCandles(candles1m, 1440)
-  }
+  // Aggregate 1m → 4h
+  const candles4h = aggregateCandles(candles1m, 240)
 
-  return { candles15m, candles1h, candles1d, price }
+  return { candles15m, candles1h, candles4h, price }
 }
 
 function aggregateCandles(candles: CandleData[], periodMinutes: number): CandleData[] {
@@ -106,7 +88,7 @@ export async function POST() {
       }))
     )
 
-    const allData = new Map<string, { candles15m: CandleData[]; candles1h: CandleData[]; candles1d: CandleData[]; price: number }>()
+    const allData = new Map<string, { candles15m: CandleData[]; candles1h: CandleData[]; candles4h: CandleData[]; price: number }>()
     const symbolNames = new Map<string, string>()
 
     for (const result of fetchResults) {

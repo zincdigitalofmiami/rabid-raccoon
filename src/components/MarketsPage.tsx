@@ -1,18 +1,15 @@
 'use client'
 
 import Header from './Header'
-import SignalBar from './SignalBar'
-import MarketsGrid from './MarketsGrid'
 import AnalysePanel from './AnalysePanel'
+import MarketsGrid from './MarketsGrid'
 import ForecastPanel from './ForecastPanel'
 import { useMarketBatch } from '@/hooks/useMarketBatch'
 import { useForecast } from '@/hooks/useForecast'
 
 export default function MarketsPage() {
-  const { symbols, compositeSignal, loading: marketsLoading, error: marketsError } = useMarketBatch()
+  const { symbols, loading: marketsLoading, error: marketsError } = useMarketBatch()
   const { forecast, loading: forecastLoading, error: forecastError } = useForecast()
-
-  const mesData = symbols.find((s) => s.symbol === 'MES')
 
   return (
     <div className="min-h-screen bg-[#0d1117]">
@@ -25,13 +22,9 @@ export default function MarketsPage() {
           </div>
         )}
 
-        {/* Signal Bar */}
-        <div className="mb-8">
-          <SignalBar
-            signal={compositeSignal}
-            mesPrice={mesData?.price}
-            mesChangePercent={mesData?.changePercent}
-          />
+        {/* Analyse — 3 Timeframe Gauges at the top */}
+        <div className="mb-10">
+          <AnalysePanel />
         </div>
 
         {/* Markets Grid */}
@@ -46,11 +39,6 @@ export default function MarketsPage() {
           ) : (
             <MarketsGrid symbols={symbols} />
           )}
-        </div>
-
-        {/* Analyse Now */}
-        <div className="mb-10">
-          <AnalysePanel />
         </div>
 
         {/* AI Forecast */}
