@@ -136,9 +136,10 @@ const SYMBOL_WEIGHTS: Record<string, { weight: number; invert: boolean }> = {
   YM: { weight: 0.10, invert: false },
   RTY: { weight: 0.10, invert: false },
   VX: { weight: 0.10, invert: true },
+  US10Y: { weight: 0.05, invert: true },
   ZN: { weight: 0.05, invert: true },
   ZB: { weight: 0.05, invert: true },
-  DX: { weight: 0.10, invert: true },
+  DX: { weight: 0.05, invert: true },
 }
 
 export function generateCompositeSignal(allSymbolData: SymbolData[]): CompositeSignal {
@@ -199,7 +200,11 @@ export function generateCompositeSignal(allSymbolData: SymbolData[]): CompositeS
   }
 
   const direction = compositeScore >= 0 ? 'BULLISH' : 'BEARISH'
-  const rawConfidence = Math.abs(compositeScore) / 95 // max possible weighted score
+  const maxWeightedScore = Object.values(SYMBOL_WEIGHTS).reduce(
+    (sum, cfg) => sum + cfg.weight * 95,
+    0
+  )
+  const rawConfidence = maxWeightedScore > 0 ? Math.abs(compositeScore) / maxWeightedScore : 0
   const confidence = Math.round(50 + rawConfidence * 45)
 
   return {

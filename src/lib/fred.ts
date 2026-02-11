@@ -46,17 +46,17 @@ async function fetchFredSeries(
   return data.observations.filter((obs) => obs.value !== '.')
 }
 
-/**
- * Fetch VIX candles from FRED using VIXCLS (daily close).
- * Only close values available — open/high/low set to close.
- */
-export async function fetchVixCandles(startDate: string, endDate?: string): Promise<CandleData[]> {
-  const observations = await fetchFredSeries('VIXCLS', startDate, endDate)
-
+async function fetchSeriesCandles(
+  seriesId: string,
+  startDate: string,
+  endDate?: string
+): Promise<CandleData[]> {
+  const observations = await fetchFredSeries(seriesId, startDate, endDate)
   const candles: CandleData[] = []
+
   for (const obs of observations) {
     const value = Number(obs.value)
-    if (isNaN(value) || value <= 0) continue
+    if (!Number.isFinite(value) || value <= 0) continue
 
     candles.push({
       time: Math.floor(new Date(`${obs.date}T16:00:00Z`).getTime() / 1000),
@@ -71,6 +71,14 @@ export async function fetchVixCandles(startDate: string, endDate?: string): Prom
 }
 
 /**
+ * Fetch VIX candles from FRED using VIXCLS (daily close).
+ * Only close values available — open/high/low set to close.
+ */
+export async function fetchVixCandles(startDate: string, endDate?: string): Promise<CandleData[]> {
+  return fetchSeriesCandles('VIXCLS', startDate, endDate)
+}
+
+/**
  * Fetch Dollar Index candles from FRED.
  * Uses DTWEXBGS (Trade Weighted US Dollar Index: Broad).
  * Only close values available — open/high/low set to close.
@@ -79,23 +87,29 @@ export async function fetchDollarCandles(
   startDate: string,
   endDate?: string
 ): Promise<CandleData[]> {
-  const observations = await fetchFredSeries('DTWEXBGS', startDate, endDate)
+  return fetchSeriesCandles('DTWEXBGS', startDate, endDate)
+}
 
-  const candles: CandleData[] = []
-  for (const obs of observations) {
-    const value = Number(obs.value)
-    if (isNaN(value) || value <= 0) continue
+/**
+ * Fetch US 10Y Treasury yield from FRED (DGS10).
+ * Values are in percent (e.g. 4.23).
+ */
+export async function fetchTenYearYieldCandles(
+  startDate: string,
+  endDate?: string
+): Promise<CandleData[]> {
+  return fetchSeriesCandles('DGS10', startDate, endDate)
+}
 
-    candles.push({
-      time: Math.floor(new Date(`${obs.date}T16:00:00Z`).getTime() / 1000),
-      open: value,
-      high: value,
-      low: value,
-      close: value,
-    })
-  }
-
-  return candles.sort((a, b) => a.time - b.time)
+/**
+ * Fetch Effective Federal Funds Rate (DFF) from FRED.
+ * Values are in percent.
+ */
+export async function fetchFedFundsCandles(
+  startDate: string,
+  endDate?: string
+): Promise<CandleData[]> {
+  return fetchSeriesCandles('DFF', startDate, endDate)
 }
 
 /**

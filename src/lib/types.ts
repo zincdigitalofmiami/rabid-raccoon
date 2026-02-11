@@ -107,7 +107,7 @@ export interface MarketSummary {
 }
 
 export interface ForecastResponse {
-  window: 'morning' | 'premarket' | 'midday'
+  window: 'morning' | 'premarket' | 'midday' | 'afterhours'
   direction: 'BULLISH' | 'BEARISH'
   confidence: number
   analysis: string

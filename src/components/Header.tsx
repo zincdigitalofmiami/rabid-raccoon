@@ -23,8 +23,8 @@ export default function Header() {
       )
 
       if (totalMinutes < 360) setWindow('Morning')
-      else if (totalMinutes < 555) setWindow('Premarket')
-      else if (totalMinutes < 720) setWindow('Midday')
+      else if (totalMinutes < 510) setWindow('Premarket')
+      else if (totalMinutes < 900) setWindow('Session')
       else setWindow('After Hours')
     }
 

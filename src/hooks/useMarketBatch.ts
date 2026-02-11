@@ -1,24 +1,21 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { MarketSummary, CompositeSignal } from '@/lib/types'
+import { MarketSummary } from '@/lib/types'
 
 interface BatchResponse {
   symbols: MarketSummary[]
-  compositeSignal: CompositeSignal | null
   timestamp: string
 }
 
 interface UseMarketBatchResult {
   symbols: MarketSummary[]
-  compositeSignal: CompositeSignal | null
   loading: boolean
   error: string | null
 }
 
 export function useMarketBatch(pollInterval = 60000): UseMarketBatchResult {
   const [symbols, setSymbols] = useState<MarketSummary[]>([])
-  const [compositeSignal, setCompositeSignal] = useState<CompositeSignal | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,7 +28,6 @@ export function useMarketBatch(pollInterval = 60000): UseMarketBatchResult {
       }
       const data: BatchResponse = await res.json()
       setSymbols(data.symbols)
-      setCompositeSignal(data.compositeSignal)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -46,5 +42,5 @@ export function useMarketBatch(pollInterval = 60000): UseMarketBatchResult {
     return () => clearInterval(interval)
   }, [fetchBatch, pollInterval])
 
-  return { symbols, compositeSignal, loading, error }
+  return { symbols, loading, error }
 }

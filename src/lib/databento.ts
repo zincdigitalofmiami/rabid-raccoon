@@ -18,69 +18,58 @@ export async function fetchOhlcv(params: {
 
   const basicAuth = Buffer.from(`${apiKey}:`).toString('base64')
 
-  const body = new URLSearchParams({
-    dataset: params.dataset,
-    symbols: params.symbol,
-    schema: params.schema || 'ohlcv-1m',
-    stype_in: params.stypeIn,
-    start: params.start,
-    end: params.end,
-    encoding: 'json',
-  })
+  let queryEnd = params.end
+  let lastErrorText = ''
+  let lastStatus = 500
+  let lastStatusText = 'Unknown'
 
-  const response = await fetch(`${DATABENTO_BASE}/timeseries.get_range`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${basicAuth}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: body.toString(),
-  })
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const body = new URLSearchParams({
+      dataset: params.dataset,
+      symbols: params.symbol,
+      schema: params.schema || 'ohlcv-1m',
+      stype_in: params.stypeIn,
+      start: params.start,
+      end: queryEnd,
+      encoding: 'json',
+    })
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '')
+    const response = await fetch(`${DATABENTO_BASE}/timeseries.get_range`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: body.toString(),
+    })
 
-    // If end time is after available data, retry with a shorter range
-    if (response.status === 422 && errorText.includes('data_end_after_available_end')) {
-      try {
-        const detail = JSON.parse(errorText)
-        const availableEnd = detail?.detail?.payload?.available_end
-        if (availableEnd) {
-          // Retry with the available end time
-          const retryBody = new URLSearchParams({
-            dataset: params.dataset,
-            symbols: params.symbol,
-            schema: params.schema || 'ohlcv-1m',
-            stype_in: params.stypeIn,
-            start: params.start,
-            end: availableEnd,
-            encoding: 'json',
-          })
-          const retryResponse = await fetch(`${DATABENTO_BASE}/timeseries.get_range`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Basic ${basicAuth}`,
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: retryBody.toString(),
-          })
-          if (retryResponse.ok) {
-            const retryText = await retryResponse.text()
-            return parseNdjson(retryText)
-          }
-        }
-      } catch {
-        // Fall through to error
-      }
+    if (response.ok) {
+      const text = await response.text()
+      return parseNdjson(text)
     }
 
-    throw new Error(
-      `Databento API error ${response.status}: ${response.statusText}. ${errorText.slice(0, 500)}`
-    )
+    lastStatus = response.status
+    lastStatusText = response.statusText
+    lastErrorText = await response.text().catch(() => '')
+
+    if (response.status !== 422) break
+
+    let availableEnd: string | null = null
+    try {
+      const detail = JSON.parse(lastErrorText)
+      availableEnd = detail?.detail?.payload?.available_end || null
+    } catch {
+      availableEnd = null
+    }
+
+    // Cannot recover 422 without a valid tighter end boundary.
+    if (!availableEnd || availableEnd === queryEnd) break
+    queryEnd = availableEnd
   }
 
-  const text = await response.text()
-  return parseNdjson(text)
+  throw new Error(
+    `Databento API error ${lastStatus}: ${lastStatusText}. ${lastErrorText.slice(0, 500)}`
+  )
 }
 
 function parseNdjson(text: string): DatabentoOhlcvRecord[] {

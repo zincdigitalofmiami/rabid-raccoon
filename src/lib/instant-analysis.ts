@@ -3,19 +3,97 @@
  *
  * Computes 200+ technical signals across 15M, 1H, 4H timeframes.
  * Signal directions come from RAW MATH — fully transparent.
- * Claude AI provides entry/stop/target levels and narrative.
+ * ChatGPT provides optional entry/stop/target levels and narrative overlay.
  *
  * Every signal is exposed: you see exactly WHY each timeframe
  * says BUY or SELL. No black boxes.
  */
 
-import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { CandleData, FibLevel, SwingPoint, MeasuredMove } from './types'
 import { detectSwings } from './swing-detection'
 import { calculateFibonacci } from './fibonacci'
 import { detectMeasuredMoves } from './measured-move'
 
-const client = new Anthropic()
+interface AnalysisAiResponse {
+  overallVerdict: string
+  overallConfidence: number
+  narrative: string
+  timeframeGauges: { timeframe: string; entry: number; stop: number; target: number; reasoning: string }[]
+  symbols: {
+    symbol: string
+    verdict: string
+    confidence: number
+    entry: number
+    stop: number
+    target1: number
+    target2: number
+    riskReward: number
+    reasoning: string
+  }[]
+}
+
+function getAnalysisModelCandidates(): string[] {
+  const fromEnv = (process.env.OPENAI_ANALYSIS_MODEL || '').trim()
+  const candidates = [
+    fromEnv,
+    'gpt-5.2-pro',
+    'gpt-5-pro',
+    'gpt-5.2',
+    'gpt-5.1',
+    'gpt-5',
+  ].filter(Boolean)
+  return [...new Set(candidates)]
+}
+
+async function requestAnalysisOverlay(prompt: string): Promise<AnalysisAiResponse> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is not set')
+  }
+
+  const client = new OpenAI({ apiKey })
+  const models = getAnalysisModelCandidates()
+  let lastError: unknown = null
+
+  for (const model of models) {
+    try {
+      const response = await client.responses.create({
+        model,
+        input: prompt,
+        max_output_tokens: 3000,
+      })
+
+      const text = response.output_text?.trim()
+      if (!text) {
+        throw new Error(`OpenAI returned empty text for model ${model}`)
+      }
+
+      try {
+        return JSON.parse(text) as AnalysisAiResponse
+      } catch {
+        const m = text.match(/\{[\s\S]*\}/)
+        if (!m) {
+          throw new Error(`Failed to parse JSON from model ${model}`)
+        }
+        return JSON.parse(m[0]) as AnalysisAiResponse
+      }
+    } catch (error) {
+      lastError = error
+      const msg = error instanceof Error ? error.message : String(error)
+      const isModelIssue =
+        /model|not found|does not exist|unsupported|permission|access/i.test(msg)
+      const isParseIssue = /parse json|failed to parse|expected .*json|unexpected token/i.test(msg)
+
+      if (!isModelIssue && !isParseIssue) {
+        throw error
+      }
+    }
+  }
+
+  const msg = lastError instanceof Error ? lastError.message : String(lastError)
+  throw new Error(`OpenAI analysis request failed for all candidate models: ${msg}`)
+}
 
 // --- Technical indicator helpers ---
 
@@ -109,7 +187,7 @@ function vwap(candles: CandleData[]): number | null {
 
 // --- Signal computation ---
 
-interface SignalSummary {
+export interface SignalSummary {
   buy: number
   sell: number
   neutral: number
@@ -118,7 +196,7 @@ interface SignalSummary {
   sellSignals: string[]
 }
 
-function computeSignals(candles: CandleData[]): SignalSummary {
+export function computeSignals(candles: CandleData[]): SignalSummary {
   const closes = candles.map(c => c.close)
   const price = closes[closes.length - 1]
   let buy = 0, sell = 0, neutral = 0
@@ -323,6 +401,57 @@ export interface InstantAnalysisResult {
     headlines: string[]
     goldContext: { price: number; change: number; changePercent: number; signal: string } | null
     oilContext: { price: number; change: number; changePercent: number; signal: string } | null
+    yieldContext: {
+      tenYearYield: number
+      tenYearChangeBp: number
+      fedFundsRate: number | null
+      spread10yMinusFedBp: number | null
+      signal: string
+    } | null
+    techLeaders: {
+      symbol: string
+      name: string
+      price: number
+      dayChangePercent: number
+      weekChangePercent: number
+      signal: string
+    }[]
+    themeScores: {
+      tariffs: number
+      rates: number
+      trump: number
+      analysts: number
+      aiTech: number
+      eventRisk: number
+    }
+    shockReactions: {
+      vixSpikeSample: number
+      vixSpikeAvgNextDayMesPct: number | null
+      vixSpikeMedianNextDayMesPct: number | null
+      yieldSpikeSample: number
+      yieldSpikeAvgNextDayMesPct: number | null
+      yieldSpikeMedianNextDayMesPct: number | null
+    }
+    breakout7000: {
+      level: number
+      status:
+        | 'CONFIRMED_BREAKOUT'
+        | 'UNCONFIRMED_BREAKOUT'
+        | 'REJECTED_AT_LEVEL'
+        | 'TESTING_7000'
+        | 'BELOW_7000'
+      latestClose: number
+      latestHigh: number
+      distanceFromLevel: number
+      lastTwoCloses: [number, number]
+      closesAboveLevelLast2: number
+      closesBelowLevelLast2: number
+      consecutiveClosesAboveLevel: number
+      consecutiveClosesBelowLevel: number
+      twoCloseConfirmation: boolean
+      signal: string
+      tradePlan: string
+    } | null
   }
 }
 
@@ -330,18 +459,37 @@ export interface InstantAnalysisResult {
 
 import { MarketContext } from './market-context'
 
-export async function runInstantAnalysis(
+interface SymbolSignalSnapshot {
+  symbol: string
+  displayName: string
+  price: number
+  breakdown: { tf: string; tfLabel: '15M' | '1H' | '4H'; signals: SignalSummary }[]
+}
+
+interface RawGaugeSnapshot {
+  timeframe: '15M' | '1H' | '4H'
+  direction: 'BUY' | 'SELL'
+  confidence: number
+  buyCount: number
+  sellCount: number
+  neutralCount: number
+  totalSignals: number
+  buySignals: string[]
+  sellSignals: string[]
+}
+
+interface AnalysisCoreSnapshot {
+  signalData: SymbolSignalSnapshot[]
+  rawGauges: RawGaugeSnapshot[]
+  grandTotal: number
+  chartData: ChartData | null
+}
+
+function buildAnalysisCore(
   allData: Map<string, { candles15m: CandleData[]; candles1h: CandleData[]; candles4h: CandleData[]; price: number }>,
   symbolNames: Map<string, string>,
-  marketContext: MarketContext,
-): Promise<InstantAnalysisResult> {
-  // Step 1: Compute raw signals for every symbol x timeframe
-  const signalData: {
-    symbol: string
-    displayName: string
-    price: number
-    breakdown: { tf: string; tfLabel: '15M' | '1H' | '4H'; signals: SignalSummary }[]
-  }[] = []
+): AnalysisCoreSnapshot {
+  const signalData: SymbolSignalSnapshot[] = []
   let grandTotal = 0
 
   const mesGaugeData: { tf: '15M' | '1H' | '4H'; signals: SignalSummary }[] = []
@@ -353,6 +501,7 @@ export async function runInstantAnalysis(
       { tf: '4h', tfLabel: '4H', candles: data.candles4h },
     ]
     const breakdown: { tf: string; tfLabel: '15M' | '1H' | '4H'; signals: SignalSummary }[] = []
+
     for (const { tf, tfLabel, candles } of tfs) {
       if (candles.length < 5) continue
       const result = computeSignals(candles)
@@ -363,11 +512,16 @@ export async function runInstantAnalysis(
         mesGaugeData.push({ tf: tfLabel, signals: result })
       }
     }
-    signalData.push({ symbol, displayName: symbolNames.get(symbol) || symbol, price: data.price, breakdown })
+
+    signalData.push({
+      symbol,
+      displayName: symbolNames.get(symbol) || symbol,
+      price: data.price,
+      breakdown,
+    })
   }
 
-  // Step 2: Build gauges from RAW signals — direction is pure math, not AI
-  const rawGauges = mesGaugeData.map(g => ({
+  const rawGauges: RawGaugeSnapshot[] = mesGaugeData.map(g => ({
     timeframe: g.tf,
     direction: (g.signals.buy > g.signals.sell ? 'BUY' : 'SELL') as 'BUY' | 'SELL',
     confidence: g.signals.buy + g.signals.sell > 0
@@ -380,6 +534,133 @@ export async function runInstantAnalysis(
     buySignals: g.signals.buySignals,
     sellSignals: g.signals.sellSignals,
   }))
+
+  let chartData: ChartData | null = null
+  const mesData = allData.get('MES')
+  if (mesData && mesData.candles15m.length > 5) {
+    const { highs: chHighs, lows: chLows } = detectSwings(mesData.candles15m, 5, 5, 20)
+    const chFib = calculateFibonacci(chHighs, chLows)
+    const chMM = detectMeasuredMoves(chHighs, chLows, mesData.price)
+    chartData = {
+      candles: mesData.candles15m,
+      fibLevels: chFib?.levels || [],
+      isBullish: chFib?.isBullish ?? true,
+      swingHighs: chHighs,
+      swingLows: chLows,
+      measuredMoves: chMM,
+    }
+  }
+
+  return { signalData, rawGauges, grandTotal, chartData }
+}
+
+function buildDeterministicTimeframeGauges(rawGauges: RawGaugeSnapshot[]): TimeframeGauge[] {
+  return rawGauges.map(raw => ({
+    ...raw,
+    entry: 0,
+    stop: 0,
+    target: 0,
+    reasoning: 'Deterministic-only mode: AI trade levels disabled.',
+  }))
+}
+
+function buildDeterministicSymbols(signalData: SymbolSignalSnapshot[]): InstantSymbolResult[] {
+  return signalData.map((s) => {
+    const primary = s.breakdown.find((b) => b.tfLabel === '15M') || s.breakdown[0]
+    if (!primary) {
+      return {
+        symbol: s.symbol,
+        verdict: 'BUY',
+        confidence: 50,
+        entry: s.price,
+        stop: 0,
+        target1: 0,
+        target2: 0,
+        riskReward: 0,
+        reasoning: 'Insufficient candles for deterministic signal breakdown.',
+        signalBreakdown: [],
+      }
+    }
+
+    const voting = primary.signals.buy + primary.signals.sell
+    const verdict = primary.signals.buy >= primary.signals.sell ? 'BUY' : 'SELL'
+    const confidence = voting > 0
+      ? Math.round((Math.max(primary.signals.buy, primary.signals.sell) / voting) * 100)
+      : 50
+    const rationale = verdict === 'BUY'
+      ? (primary.signals.buySignals.slice(0, 2).join(' | ') || 'Buy votes exceeded sell votes.')
+      : (primary.signals.sellSignals.slice(0, 2).join(' | ') || 'Sell votes exceeded buy votes.')
+
+    return {
+      symbol: s.symbol,
+      verdict,
+      confidence,
+      entry: s.price,
+      stop: 0,
+      target1: 0,
+      target2: 0,
+      riskReward: 0,
+      reasoning: `Deterministic ${primary.tfLabel} vote: ${primary.signals.buy}B/${primary.signals.sell}S/${primary.signals.neutral}N. ${rationale}`,
+      signalBreakdown: s.breakdown.map((b) => ({
+        tf: b.tf,
+        buy: b.signals.buy,
+        sell: b.signals.sell,
+        neutral: b.signals.neutral,
+        total: b.signals.total,
+      })),
+    }
+  })
+}
+
+export function runDeterministicAnalysis(
+  allData: Map<string, { candles15m: CandleData[]; candles1h: CandleData[]; candles4h: CandleData[]; price: number }>,
+  symbolNames: Map<string, string>,
+  marketContext: MarketContext,
+): InstantAnalysisResult {
+  const core = buildAnalysisCore(allData, symbolNames)
+  const timeframeGauges = buildDeterministicTimeframeGauges(core.rawGauges)
+  const symbols = buildDeterministicSymbols(core.signalData)
+  const leadGauge = core.rawGauges.find((g) => g.timeframe === '15M') || core.rawGauges[0]
+
+  const overallVerdict = leadGauge?.direction || 'BUY'
+  const overallConfidence = leadGauge?.confidence ?? 50
+  const narrative =
+    `Deterministic signal-only mode. MES ${leadGauge?.timeframe || 'N/A'} vote is ` +
+    `${leadGauge?.direction || 'NEUTRAL'} at ${overallConfidence}% confidence. ` +
+    `Regime: ${marketContext.regime}. ${marketContext.regimeFactors.slice(0, 2).join(' ')}`
+
+  return {
+    timestamp: new Date().toISOString(),
+    overallVerdict,
+    overallConfidence,
+    narrative,
+    timeframeGauges,
+    symbols,
+    totalSignalsAnalysed: core.grandTotal,
+    chartData: core.chartData,
+    marketContext: {
+      regime: marketContext.regime,
+      regimeFactors: marketContext.regimeFactors,
+      correlations: marketContext.correlations,
+      headlines: marketContext.headlines,
+      goldContext: marketContext.goldContext,
+      oilContext: marketContext.oilContext,
+      yieldContext: marketContext.yieldContext,
+      techLeaders: marketContext.techLeaders,
+      themeScores: marketContext.themeScores,
+      shockReactions: marketContext.shockReactions,
+      breakout7000: marketContext.breakout7000,
+    },
+  }
+}
+
+export async function runInstantAnalysis(
+  allData: Map<string, { candles15m: CandleData[]; candles1h: CandleData[]; candles4h: CandleData[]; price: number }>,
+  symbolNames: Map<string, string>,
+  marketContext: MarketContext,
+): Promise<InstantAnalysisResult> {
+  const core = buildAnalysisCore(allData, symbolNames)
+  const { signalData, rawGauges, grandTotal, chartData } = core
 
   // Step 3: Build the FULL macro analysis prompt
   const signalLines = signalData.map(s => {
@@ -411,7 +692,30 @@ export async function runInstantAnalysis(
     ? `OIL @ ${marketContext.oilContext.price.toFixed(2)} (${marketContext.oilContext.changePercent >= 0 ? '+' : ''}${marketContext.oilContext.changePercent.toFixed(2)}%) — ${marketContext.oilContext.signal}`
     : 'OIL: data unavailable'
 
-  const prompt = `You are a senior macro strategist at a top hedge fund. Not an indicator reader — a REAL TRADER who reads the entire market.
+  const yieldBlock = marketContext.yieldContext
+    ? `US10Y @ ${marketContext.yieldContext.tenYearYield.toFixed(2)}% (${marketContext.yieldContext.tenYearChangeBp >= 0 ? '+' : ''}${marketContext.yieldContext.tenYearChangeBp.toFixed(1)} bp) | FedFunds ${marketContext.yieldContext.fedFundsRate == null ? 'n/a' : `${marketContext.yieldContext.fedFundsRate.toFixed(2)}%`} | 10Y-Fed spread ${marketContext.yieldContext.spread10yMinusFedBp == null ? 'n/a' : `${marketContext.yieldContext.spread10yMinusFedBp.toFixed(1)} bp`} | ${marketContext.yieldContext.signal}`
+    : 'US10Y: data unavailable'
+
+  const techLeaderBlock = marketContext.techLeaders.length > 0
+    ? marketContext.techLeaders
+      .map((t) =>
+        `  ${t.symbol} ${t.dayChangePercent >= 0 ? '+' : ''}${t.dayChangePercent.toFixed(2)}% 1D | ${t.weekChangePercent >= 0 ? '+' : ''}${t.weekChangePercent.toFixed(2)}% 1W | ${t.signal}`
+      )
+      .join('\n')
+    : '  data unavailable'
+
+  const themeScoreBlock = `Tariffs=${marketContext.themeScores.tariffs}, Rates=${marketContext.themeScores.rates}, Trump=${marketContext.themeScores.trump}, Analysts=${marketContext.themeScores.analysts}, AI/Tech=${marketContext.themeScores.aiTech}, EventRisk=${marketContext.themeScores.eventRisk}`
+
+  const shockBlock = `VIX spike reactions: n=${marketContext.shockReactions.vixSpikeSample}, next-day MES avg=${marketContext.shockReactions.vixSpikeAvgNextDayMesPct == null ? 'n/a' : `${marketContext.shockReactions.vixSpikeAvgNextDayMesPct.toFixed(2)}%`}, median=${marketContext.shockReactions.vixSpikeMedianNextDayMesPct == null ? 'n/a' : `${marketContext.shockReactions.vixSpikeMedianNextDayMesPct.toFixed(2)}%`} | 10Y spike reactions: n=${marketContext.shockReactions.yieldSpikeSample}, next-day MES avg=${marketContext.shockReactions.yieldSpikeAvgNextDayMesPct == null ? 'n/a' : `${marketContext.shockReactions.yieldSpikeAvgNextDayMesPct.toFixed(2)}%`}, median=${marketContext.shockReactions.yieldSpikeMedianNextDayMesPct == null ? 'n/a' : `${marketContext.shockReactions.yieldSpikeMedianNextDayMesPct.toFixed(2)}%`}`
+  const breakout7000Block = marketContext.breakout7000
+    ? `Status=${marketContext.breakout7000.status}; last close=${marketContext.breakout7000.latestClose.toFixed(2)}; dist=${marketContext.breakout7000.distanceFromLevel >= 0 ? '+' : ''}${marketContext.breakout7000.distanceFromLevel.toFixed(2)}; last two closes=${marketContext.breakout7000.lastTwoCloses[0].toFixed(2)}, ${marketContext.breakout7000.lastTwoCloses[1].toFixed(2)}; consecutive above=${marketContext.breakout7000.consecutiveClosesAboveLevel}; two-close-confirmed=${marketContext.breakout7000.twoCloseConfirmation}; signal=${marketContext.breakout7000.signal}`
+    : 'data unavailable'
+
+  const prompt = `You are a senior macro strategist and chart technician.
+Focus on measured-move and signal-math interpretation with probabilistic framing (neural-net style probability language).
+Write short, concrete, and tradeable output.
+Use ONLY the data provided below; do not invent external facts, policy events, or macro numbers.
+If a datapoint is unavailable, explicitly say "data unavailable".
 
 == TECHNICAL SIGNALS (${grandTotal} computed across 15M/1H/4H) ==
 
@@ -423,6 +727,21 @@ ${gaugeLines}
 == CROSS-ASSET CORRELATIONS (rolling 15-min returns) ==
 ${corrLines || '  No correlation data available'}
 
+== RATES (PRIORITIZE THIS) ==
+${yieldBlock}
+
+== TOP 10 AI/TECH DRIVERS ==
+${techLeaderBlock}
+
+== NEWS/THEME SCORES (from current headlines) ==
+${themeScoreBlock}
+
+== HISTORICAL SHOCK REACTION BASELINE ==
+${shockBlock}
+
+== SPX 7,000 BREAKOUT DETECTOR (STRICT TWO-CLOSE RULE) ==
+${breakout7000Block}
+
 == MARKET REGIME: ${marketContext.regime} ==
 ${marketContext.regimeFactors.map(f => `  - ${f}`).join('\n')}
 
@@ -432,43 +751,42 @@ ${oilBlock}
 ${headlineBlock}
 
 == YOUR ANALYSIS ==
-Think like a macro strategist, not a textbook. Consider ALL of the following:
+Required style:
+- math-first and concrete
+- include a TL;DR sentence at the start of narrative
+- include horizon ranges for 1-week / 1-month / 1-quarter using explicit numbers
+- explicitly cite MES↔VX and MES↔US10Y correlations when available
+- include one clear invalidation/risk condition
+- include one short "how to trade it" plan (trigger + invalidation)
+- narrative must stay short (4-7 sentences)
+- explicitly respect the two-close breakout rule for 7,000 when discussing breakout validity
 
-1. CROSS-ASSET STORY: What are bonds, VIX, gold, oil, and dollar TELLING US about risk sentiment? Do they CONFIRM or CONTRADICT the equity direction?
-2. CORRELATION ANALYSIS: Are the normal relationships (VIX inverse, bonds inverse, gold safe-haven) holding? Any divergences signaling regime change?
-3. GEOPOLITICAL & POLICY CONTEXT: Based on the headlines and current environment — how do tariffs, trade policy, central bank actions, China tensions, and fiscal policy affect the trade?
-4. SECTOR LEADERSHIP: Is tech (NQ) leading or lagging broad market (MES)? What does relative strength tell us about institutional positioning?
-5. VOLATILITY REGIME: Is VIX complacent or pricing tail risk? What does the vol surface imply?
-6. COMMODITY SIGNALS: Gold bid = fear. Gold offered = confidence. Oil up = demand/inflation. Oil down = slowdown. What's the read?
-7. WHERE IS THE MONEY FLOWING? Which asset classes are seeing inflows? What's the rotation story?
-8. WHAT COULD BREAK THE THESIS? Name the specific risk that could flip this trade.
-
-RESPOND WITH JSON ONLY (no markdown, no code fences):
+RESPOND WITH JSON ONLY (no markdown):
 {
   "overallVerdict": "BUY" or "SELL",
-  "overallConfidence": number 55-95,
-  "narrative": "5-7 sentences of REAL macro analysis. Start with the cross-asset story. Reference specific prices, correlations, regime signals. Mention geopolitics/policy if relevant headlines exist. End with the risk. Talk like a trader at a Bloomberg terminal, not an AI chatbot.",
+  "overallConfidence": number 50-95,
+  "narrative": "4-7 concise sentences. Start with TL;DR. Include: signal math snapshot, VIX/10Y references, horizons (1W/1M/1Q), and invalidation.",
   "timeframeGauges": [
     {
       "timeframe": "15M",
       "entry": exact_MES_price,
       "stop": exact_MES_price,
       "target": exact_MES_price,
-      "reasoning": "2-3 sentences. Technical levels + macro confirmation. Name specific MAs, fib levels, AND how cross-asset signals confirm or conflict."
+      "reasoning": "1-2 short sentences. Include numeric technical factors and VIX/10Y confirmation/conflict."
     },
     {
       "timeframe": "1H",
       "entry": exact_MES_price,
       "stop": exact_MES_price,
       "target": exact_MES_price,
-      "reasoning": "2-3 sentences. Technical + macro."
+      "reasoning": "2-4 sentences."
     },
     {
       "timeframe": "4H",
       "entry": exact_MES_price,
       "stop": exact_MES_price,
       "target": exact_MES_price,
-      "reasoning": "2-3 sentences. Bigger picture positioning."
+      "reasoning": "2-4 sentences."
     }
   ],
   "symbols": [
@@ -481,68 +799,64 @@ RESPOND WITH JSON ONLY (no markdown, no code fences):
       "target1": exact_price,
       "target2": exact_price,
       "riskReward": number,
-      "reasoning": "2 sentences — technical + macro context"
+      "reasoning": "1-3 sentences with at least one numeric reference"
     }
   ]
 }
 
-CRITICAL: Include MES, NQ, VX, DX, GC, CL in symbols array. Entry/stop/target must be realistic price levels. The narrative must reference cross-asset correlations and macro context, not just technical indicators.`
+CRITICAL:
+- Include at least MES, NQ, VX, US10Y, DX, GC, CL in symbols array.
+- Keep all numbers realistic to the provided prices.
+- Do not output any text outside the JSON object.`
 
-  const message = await client.messages.create({
-    model: 'claude-sonnet-4-5-20250929',
-    max_tokens: 3000,
-    messages: [{ role: 'user', content: prompt }],
-  })
-
-  const text = message.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map(b => b.text)
-    .join('')
-
-  let parsed: {
-    overallVerdict: string
-    overallConfidence: number
-    narrative: string
-    timeframeGauges: { timeframe: string; entry: number; stop: number; target: number; reasoning: string }[]
-    symbols: { symbol: string; verdict: string; confidence: number; entry: number; stop: number; target1: number; target2: number; riskReward: number; reasoning: string }[]
-  }
-
+  let parsed: AnalysisAiResponse | null = null
   try {
-    parsed = JSON.parse(text)
-  } catch {
-    const m = text.match(/\{[\s\S]*\}/)
-    if (m) parsed = JSON.parse(m[0])
-    else throw new Error('Failed to parse AI response')
+    parsed = await requestAnalysisOverlay(prompt)
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'AI overlay unavailable'
+    const deterministic = runDeterministicAnalysis(allData, symbolNames, marketContext)
+    return {
+      ...deterministic,
+      narrative: `${deterministic.narrative} AI overlay unavailable: ${msg}`,
+      chartData,
+      totalSignalsAnalysed: grandTotal,
+    }
   }
-
-  // Step 4: Compute chart data for MES 15m
-  let chartData: ChartData | null = null
-  const mesData = allData.get('MES')
-  if (mesData && mesData.candles15m.length > 5) {
-    const { highs: chHighs, lows: chLows } = detectSwings(mesData.candles15m, 5, 5, 20)
-    const chFib = calculateFibonacci(chHighs, chLows)
-    const chMM = detectMeasuredMoves(chHighs, chLows, mesData.price)
-    chartData = {
-      candles: mesData.candles15m,
-      fibLevels: chFib?.levels || [],
-      isBullish: chFib?.isBullish ?? true,
-      swingHighs: chHighs,
-      swingLows: chLows,
-      measuredMoves: chMM,
+  if (!parsed) {
+    const deterministic = runDeterministicAnalysis(allData, symbolNames, marketContext)
+    return {
+      ...deterministic,
+      chartData,
+      totalSignalsAnalysed: grandTotal,
     }
   }
 
-  // Step 5: Merge raw signal data with Claude's levels
+  // Step 4: Merge raw signal data with AI levels
   const timeframeGauges: TimeframeGauge[] = rawGauges.map(raw => {
-    const claudeGauge = parsed.timeframeGauges?.find(g => g.timeframe === raw.timeframe)
+    const aiGauge = parsed.timeframeGauges?.find(g => g.timeframe === raw.timeframe)
     return {
       ...raw,
-      entry: claudeGauge?.entry || 0,
-      stop: claudeGauge?.stop || 0,
-      target: claudeGauge?.target || 0,
-      reasoning: claudeGauge?.reasoning || '',
+      entry: aiGauge?.entry || 0,
+      stop: aiGauge?.stop || 0,
+      target: aiGauge?.target || 0,
+      reasoning: aiGauge?.reasoning || '',
     }
   })
+
+  const fallbackSymbols = buildDeterministicSymbols(signalData)
+  const parsedSymbols = Array.isArray(parsed.symbols) ? parsed.symbols : []
+  const mergedSymbols = parsedSymbols.length > 0
+    ? parsedSymbols.map(s => ({
+      ...s,
+      signalBreakdown: signalData.find(d => d.symbol === s.symbol)?.breakdown.map(b => ({
+        tf: b.tf,
+        buy: b.signals.buy,
+        sell: b.signals.sell,
+        neutral: b.signals.neutral,
+        total: b.signals.total,
+      })) || [],
+    }))
+    : fallbackSymbols
 
   return {
     timestamp: new Date().toISOString(),
@@ -550,12 +864,7 @@ CRITICAL: Include MES, NQ, VX, DX, GC, CL in symbols array. Entry/stop/target mu
     overallConfidence: parsed.overallConfidence,
     narrative: parsed.narrative,
     timeframeGauges,
-    symbols: parsed.symbols.map(s => ({
-      ...s,
-      signalBreakdown: signalData.find(d => d.symbol === s.symbol)?.breakdown.map(b => ({
-        tf: b.tf, buy: b.signals.buy, sell: b.signals.sell, neutral: b.signals.neutral, total: b.signals.total,
-      })) || [],
-    })),
+    symbols: mergedSymbols,
     totalSignalsAnalysed: grandTotal,
     chartData,
     marketContext: {
@@ -565,6 +874,11 @@ CRITICAL: Include MES, NQ, VX, DX, GC, CL in symbols array. Entry/stop/target mu
       headlines: marketContext.headlines,
       goldContext: marketContext.goldContext,
       oilContext: marketContext.oilContext,
+      yieldContext: marketContext.yieldContext,
+      techLeaders: marketContext.techLeaders,
+      themeScores: marketContext.themeScores,
+      shockReactions: marketContext.shockReactions,
+      breakout7000: marketContext.breakout7000,
     },
   }
 }

@@ -52,3 +52,13 @@ rabid-raccoon/
 - UDTs for structured data (MeasuredMove, FibLevel, RiskProfile, etc.)
 - v6 dynamic requests enable loop-based correlation analysis
 - Debug mode activates status dashboard + log output
+
+## Web App AI Analysis Setup
+
+For the Next.js dashboard analysis overlay (`/api/analyse/ai`), set:
+
+- `OPENAI_API_KEY`
+- `OPENAI_ANALYSIS_MODEL` (default fallback chain in code starts with `gpt-5.2-pro`)
+- `OPENAI_FORECAST_MODEL` (optional; defaults to `OPENAI_ANALYSIS_MODEL`)
+
+Copy `.env.example` to `.env.local` and fill the keys.

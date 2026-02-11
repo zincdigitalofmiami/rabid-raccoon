@@ -5,7 +5,6 @@ import { CandleData, FibLevel, SwingPoint, MeasuredMove } from '@/lib/types'
 interface TechChartProps {
   candles: CandleData[]
   fibLevels: FibLevel[]
-  isBullish: boolean
   swingHighs: SwingPoint[]
   swingLows: SwingPoint[]
   measuredMoves: MeasuredMove[]
@@ -26,7 +25,6 @@ const PLOT_H = H - PAD_TOP - PAD_BOT
 export default function TechChart({
   candles,
   fibLevels,
-  isBullish,
   swingHighs,
   swingLows,
   measuredMoves,

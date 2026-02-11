@@ -1,15 +1,18 @@
 'use client'
 
+import { useState } from 'react'
 import Header from './Header'
 import AnalysePanel from './AnalysePanel'
 import MarketsGrid from './MarketsGrid'
 import ForecastPanel from './ForecastPanel'
 import { useMarketBatch } from '@/hooks/useMarketBatch'
 import { useForecast } from '@/hooks/useForecast'
+import { InstantAnalysisResult } from '@/lib/instant-analysis'
 
 export default function MarketsPage() {
   const { symbols, loading: marketsLoading, error: marketsError } = useMarketBatch()
   const { forecast, loading: forecastLoading, error: forecastError } = useForecast()
+  const [analysisResult, setAnalysisResult] = useState<InstantAnalysisResult | null>(null)
 
   return (
     <div className="min-h-screen bg-[#0d1117]">
@@ -24,7 +27,7 @@ export default function MarketsPage() {
 
         {/* Analyse — 3 Timeframe Gauges at the top */}
         <div className="mb-10">
-          <AnalysePanel />
+          <AnalysePanel onResult={setAnalysisResult} />
         </div>
 
         {/* Markets Grid */}
@@ -37,7 +40,7 @@ export default function MarketsPage() {
               </div>
             </div>
           ) : (
-            <MarketsGrid symbols={symbols} />
+            <MarketsGrid symbols={symbols} analysisResult={analysisResult} />
           )}
         </div>
 

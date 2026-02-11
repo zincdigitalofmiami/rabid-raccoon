@@ -13,31 +13,77 @@ const INDEX_NAMES: Record<string, string> = {
   DX: 'US Dollar Index',
   GC: 'Gold',
   CL: 'Crude Oil',
+  US10Y: 'US 10-Year Yield',
   ZN: '10-Year T-Note',
   ZB: '30-Year T-Bond',
 }
 
-export default function AnalysePanel() {
+interface AnalysePanelProps {
+  onResult?: (result: InstantAnalysisResult) => void
+}
+
+export default function AnalysePanel({ onResult }: AnalysePanelProps) {
   const [loading, setLoading] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
   const [result, setResult] = useState<InstantAnalysisResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expandedGauge, setExpandedGauge] = useState<string | null>(null)
 
   async function handleAnalyse() {
     setLoading(true)
+    setAiLoading(false)
     setError(null)
     try {
-      const res = await fetch('/api/analyse', { method: 'POST' })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }))
-        throw new Error(err.error || `HTTP ${res.status}`)
+      // Step 1: deterministic-only analysis (always available if data is available)
+      const detRes = await fetch('/api/analyse/deterministic', { method: 'POST' })
+      if (!detRes.ok) {
+        const err = await detRes.json().catch(() => ({ error: detRes.statusText }))
+        throw new Error(err.error || `HTTP ${detRes.status}`)
       }
-      const data: InstantAnalysisResult = await res.json()
-      setResult(data)
+      const deterministic: InstantAnalysisResult = await detRes.json()
+      setResult(deterministic)
+      onResult?.(deterministic)
+
+      setLoading(false)
+      setAiLoading(true)
+
+      // Step 2: AI overlay (narrative + levels). If this fails, keep deterministic output.
+      try {
+        const aiRes = await fetch('/api/analyse/ai', { method: 'POST' })
+        if (!aiRes.ok) {
+          const err = await aiRes.json().catch(() => ({ error: aiRes.statusText }))
+          throw new Error(err.error || `HTTP ${aiRes.status}`)
+        }
+
+        const aiOverlay: Pick<
+          InstantAnalysisResult,
+          'timestamp' | 'overallVerdict' | 'overallConfidence' | 'narrative' | 'timeframeGauges' | 'symbols'
+        > = await aiRes.json()
+
+        const merged: InstantAnalysisResult = {
+          ...deterministic,
+          timestamp: aiOverlay.timestamp || deterministic.timestamp,
+          overallVerdict: aiOverlay.overallVerdict || deterministic.overallVerdict,
+          overallConfidence: aiOverlay.overallConfidence || deterministic.overallConfidence,
+          narrative: aiOverlay.narrative || deterministic.narrative,
+          timeframeGauges: aiOverlay.timeframeGauges?.length
+            ? aiOverlay.timeframeGauges
+            : deterministic.timeframeGauges,
+          symbols: aiOverlay.symbols?.length ? aiOverlay.symbols : deterministic.symbols,
+        }
+
+        setResult(merged)
+        onResult?.(merged)
+      } catch (aiErr) {
+        const msg = aiErr instanceof Error ? aiErr.message : 'AI overlay failed'
+        setError(`Deterministic analysis loaded. AI overlay unavailable: ${msg}`)
+      } finally {
+        setAiLoading(false)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed')
-    } finally {
       setLoading(false)
+      setAiLoading(false)
     }
   }
 
@@ -48,20 +94,22 @@ export default function AnalysePanel() {
       {/* Analyse Button */}
       <button
         onClick={handleAnalyse}
-        disabled={loading}
+        disabled={loading || aiLoading}
         className="w-full relative overflow-hidden rounded-2xl border-2 py-5 px-6 text-lg font-black uppercase tracking-wider transition-all duration-300 disabled:opacity-50"
         style={{
-          borderColor: loading ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.15)',
-          background: loading
+          borderColor: loading || aiLoading ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.15)',
+          background: loading || aiLoading
             ? 'linear-gradient(135deg, #131722, #1e222d)'
             : 'linear-gradient(135deg, #131722, #1a1f2e)',
-          color: loading ? 'rgba(255,255,255,0.3)' : '#fff',
+          color: loading || aiLoading ? 'rgba(255,255,255,0.3)' : '#fff',
         }}
       >
-        {loading ? (
+        {loading || aiLoading ? (
           <span className="flex items-center justify-center gap-3">
             <span className="w-5 h-5 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
-            Analysing 200+ signals across 6 instruments...
+            {loading
+              ? 'Computing deterministic signals...'
+              : 'Adding AI narrative and trade levels...'}
           </span>
         ) : (
           <span className="flex items-center justify-center gap-2">
@@ -102,7 +150,6 @@ export default function AnalysePanel() {
             <TechChart
               candles={result.chartData.candles}
               fibLevels={result.chartData.fibLevels}
-              isBullish={result.chartData.isBullish}
               swingHighs={result.chartData.swingHighs}
               swingLows={result.chartData.swingLows}
               measuredMoves={result.chartData.measuredMoves}
@@ -137,6 +184,10 @@ export default function AnalysePanel() {
                   </div>
                 </div>
 
+                {result.marketContext.breakout7000 && (
+                  <Breakout7000Card breakout={result.marketContext.breakout7000} />
+                )}
+
                 {(result.marketContext.goldContext || result.marketContext.oilContext) && (
                   <div className="rounded-xl border border-white/5 bg-[#131722] p-5 space-y-3">
                     {result.marketContext.goldContext && (
@@ -145,6 +196,45 @@ export default function AnalysePanel() {
                     {result.marketContext.oilContext && (
                       <CommodityRow label="OIL" price={result.marketContext.oilContext.price} changePercent={result.marketContext.oilContext.changePercent} signal={result.marketContext.oilContext.signal} />
                     )}
+                  </div>
+                )}
+
+                {result.marketContext.yieldContext && (
+                  <div className="rounded-xl border border-white/5 bg-[#131722] p-5 space-y-2">
+                    <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Rates</h3>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-white/40">US10Y</span>
+                      <span className="text-sm font-black text-white">
+                        {result.marketContext.yieldContext.tenYearYield.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-white/40">1D Change</span>
+                      <span
+                        className="text-xs font-black"
+                        style={{ color: result.marketContext.yieldContext.tenYearChangeBp >= 0 ? '#ef5350' : '#26a69a' }}
+                      >
+                        {result.marketContext.yieldContext.tenYearChangeBp >= 0 ? '+' : ''}
+                        {result.marketContext.yieldContext.tenYearChangeBp.toFixed(1)} bp
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-white/40">Fed Funds</span>
+                      <span className="text-xs text-white/70">
+                        {result.marketContext.yieldContext.fedFundsRate == null
+                          ? 'n/a'
+                          : `${result.marketContext.yieldContext.fedFundsRate.toFixed(2)}%`}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-white/40">10Y - Fed</span>
+                      <span className="text-xs text-white/70">
+                        {result.marketContext.yieldContext.spread10yMinusFedBp == null
+                          ? 'n/a'
+                          : `${result.marketContext.yieldContext.spread10yMinusFedBp.toFixed(1)} bp`}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-white/35">{result.marketContext.yieldContext.signal}</p>
                   </div>
                 )}
               </div>
@@ -159,6 +249,58 @@ export default function AnalysePanel() {
                     <div className="p-5 space-y-3">
                       {result.marketContext.correlations.map((c, i) => (
                         <CorrelationRow key={i} pair={c.pair} value={c.value} interpretation={c.interpretation} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+                  <div className="px-5 py-3 border-b border-white/5">
+                    <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">News Theme Scores</h3>
+                  </div>
+                  <div className="p-5 space-y-2">
+                    <ThemeScoreRow label="Tariffs" value={result.marketContext.themeScores.tariffs} />
+                    <ThemeScoreRow label="Rates" value={result.marketContext.themeScores.rates} />
+                    <ThemeScoreRow label="Trump Policy" value={result.marketContext.themeScores.trump} />
+                    <ThemeScoreRow label="Analyst Tone" value={result.marketContext.themeScores.analysts} />
+                    <ThemeScoreRow label="AI/Tech" value={result.marketContext.themeScores.aiTech} />
+                    <ThemeScoreRow label="Event Risk" value={result.marketContext.themeScores.eventRisk} />
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+                  <div className="px-5 py-3 border-b border-white/5">
+                    <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Shock Reactions</h3>
+                  </div>
+                  <div className="p-5 space-y-2">
+                    <ShockRow
+                      label="VIX > +8%"
+                      sample={result.marketContext.shockReactions.vixSpikeSample}
+                      avg={result.marketContext.shockReactions.vixSpikeAvgNextDayMesPct}
+                      med={result.marketContext.shockReactions.vixSpikeMedianNextDayMesPct}
+                    />
+                    <ShockRow
+                      label="US10Y > +8bp"
+                      sample={result.marketContext.shockReactions.yieldSpikeSample}
+                      avg={result.marketContext.shockReactions.yieldSpikeAvgNextDayMesPct}
+                      med={result.marketContext.shockReactions.yieldSpikeMedianNextDayMesPct}
+                    />
+                  </div>
+                </div>
+
+                {result.marketContext.techLeaders.length > 0 && (
+                  <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+                    <div className="px-5 py-3 border-b border-white/5">
+                      <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Top AI/Tech Breadth</h3>
+                    </div>
+                    <div className="p-5 space-y-2">
+                      {result.marketContext.techLeaders.map((leader) => (
+                        <TechLeaderRow
+                          key={leader.symbol}
+                          symbol={leader.symbol}
+                          dayChangePercent={leader.dayChangePercent}
+                          weekChangePercent={leader.weekChangePercent}
+                        />
                       ))}
                     </div>
                   </div>
@@ -240,6 +382,144 @@ function CorrelationRow({ pair, value, interpretation }: { pair: string; value: 
         <div className="h-full rounded-full" style={{ width: `${Math.abs(value) * 100}%`, backgroundColor: barColor }} />
       </div>
       <span className="text-[10px] text-white/25">{interpretation}</span>
+    </div>
+  )
+}
+
+function ThemeScoreRow({ label, value }: { label: string; value: number }) {
+  const positive = value >= 0
+  const color = positive ? '#26a69a' : '#ef5350'
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-xs text-white/45">{label}</span>
+      <span className="text-xs font-black tabular-nums" style={{ color }}>
+        {positive ? '+' : ''}{value}
+      </span>
+    </div>
+  )
+}
+
+function ShockRow({
+  label,
+  sample,
+  avg,
+  med,
+}: {
+  label: string
+  sample: number
+  avg: number | null
+  med: number | null
+}) {
+  return (
+    <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-white/45">{label}</span>
+        <span className="text-[11px] text-white/60">n={sample}</span>
+      </div>
+      <div className="mt-1 text-[11px] text-white/40">
+        avg next MES: {avg == null ? 'n/a' : `${avg >= 0 ? '+' : ''}${avg.toFixed(2)}%`} | median: {med == null ? 'n/a' : `${med >= 0 ? '+' : ''}${med.toFixed(2)}%`}
+      </div>
+    </div>
+  )
+}
+
+function TechLeaderRow({
+  symbol,
+  dayChangePercent,
+  weekChangePercent,
+}: {
+  symbol: string
+  dayChangePercent: number
+  weekChangePercent: number
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-xs font-bold text-white/50">{symbol}</span>
+      <span
+        className="text-[11px] font-black tabular-nums"
+        style={{ color: dayChangePercent >= 0 ? '#26a69a' : '#ef5350' }}
+      >
+        {dayChangePercent >= 0 ? '+' : ''}{dayChangePercent.toFixed(2)}% 1D
+      </span>
+      <span
+        className="text-[11px] font-black tabular-nums"
+        style={{ color: weekChangePercent >= 0 ? '#26a69a' : '#ef5350' }}
+      >
+        {weekChangePercent >= 0 ? '+' : ''}{weekChangePercent.toFixed(2)}% 1W
+      </span>
+    </div>
+  )
+}
+
+function Breakout7000Card({
+  breakout,
+}: {
+  breakout: {
+    level: number
+    status:
+      | 'CONFIRMED_BREAKOUT'
+      | 'UNCONFIRMED_BREAKOUT'
+      | 'REJECTED_AT_LEVEL'
+      | 'TESTING_7000'
+      | 'BELOW_7000'
+    latestClose: number
+    latestHigh: number
+    distanceFromLevel: number
+    lastTwoCloses: [number, number]
+    closesAboveLevelLast2: number
+    closesBelowLevelLast2: number
+    consecutiveClosesAboveLevel: number
+    consecutiveClosesBelowLevel: number
+    twoCloseConfirmation: boolean
+    signal: string
+    tradePlan: string
+  }
+}) {
+  const statusColor: Record<typeof breakout.status, string> = {
+    CONFIRMED_BREAKOUT: '#26a69a',
+    UNCONFIRMED_BREAKOUT: '#ffa726',
+    REJECTED_AT_LEVEL: '#ef5350',
+    TESTING_7000: '#90a4ae',
+    BELOW_7000: '#78909c',
+  }
+  const color = statusColor[breakout.status]
+
+  return (
+    <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+      <div className="px-5 py-3 border-b border-white/5 flex items-center justify-between">
+        <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">7,000 Detector</h3>
+        <span
+          className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider"
+          style={{ color, backgroundColor: `${color}20` }}
+        >
+          {breakout.status.replaceAll('_', ' ')}
+        </span>
+      </div>
+
+      <div className="p-5 space-y-3">
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <div className="rounded-lg bg-white/[0.03] p-2.5">
+            <span className="block text-white/30">Latest Close</span>
+            <span className="font-black text-white">{breakout.latestClose.toFixed(2)}</span>
+          </div>
+          <div className="rounded-lg bg-white/[0.03] p-2.5">
+            <span className="block text-white/30">Distance vs 7,000</span>
+            <span className="font-black" style={{ color: breakout.distanceFromLevel >= 0 ? '#26a69a' : '#ef5350' }}>
+              {breakout.distanceFromLevel >= 0 ? '+' : ''}{breakout.distanceFromLevel.toFixed(2)}
+            </span>
+          </div>
+        </div>
+
+        <div className="text-[11px] text-white/45">
+          Last 2 closes: {breakout.lastTwoCloses[0].toFixed(2)} / {breakout.lastTwoCloses[1].toFixed(2)} | Above 7,000: {breakout.closesAboveLevelLast2}/2
+        </div>
+        <div className="text-[11px] text-white/45">
+          Consecutive closes above 7,000: {breakout.consecutiveClosesAboveLevel} | Two-close confirmed: {breakout.twoCloseConfirmation ? 'YES' : 'NO'}
+        </div>
+
+        <p className="text-xs text-white/60">{breakout.signal}</p>
+        <p className="text-xs text-white/40">{breakout.tradePlan}</p>
+      </div>
     </div>
   )
 }
@@ -337,8 +617,10 @@ function GaugeCard({ gauge, expanded, onToggle }: { gauge: TimeframeGauge; expan
 // ─── SYMBOL DETAIL ───────────────────────────────────────────
 
 function SymbolDetail({ data }: { data: InstantSymbolResult }) {
+  const inverseSymbols = new Set(['VX', 'DX', 'US10Y', 'ZN', 'ZB'])
   const isBuy = data.verdict === 'BUY'
-  const color = isBuy ? '#26a69a' : '#ef5350'
+  const pressureUp = inverseSymbols.has(data.symbol) ? !isBuy : isBuy
+  const color = pressureUp ? '#26a69a' : '#ef5350'
   const name = INDEX_NAMES[data.symbol] || data.symbol
 
   return (
@@ -351,7 +633,9 @@ function SymbolDetail({ data }: { data: InstantSymbolResult }) {
             <span className="text-[10px] text-white/25 font-bold uppercase">{data.symbol}</span>
           </div>
           <div className="text-right">
-            <span className="px-2.5 py-0.5 rounded-md text-xs font-black uppercase" style={{ backgroundColor: `${color}15`, color }}>{data.verdict}</span>
+            <span className="px-2.5 py-0.5 rounded-md text-xs font-black uppercase" style={{ backgroundColor: `${color}15`, color }}>
+              SPX PRESSURE {pressureUp ? 'UP' : 'DOWN'}
+            </span>
             <span className="block text-lg font-black tabular-nums mt-1" style={{ color }}>{data.confidence}%</span>
           </div>
         </div>

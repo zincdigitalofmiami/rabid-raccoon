@@ -9,48 +9,55 @@ interface MarketTileProps {
 
 export default function MarketTile({ data }: MarketTileProps) {
   const isBull = data.changePercent >= 0
-  const dirColor = data.direction === 'BULLISH' ? '#26a69a' : '#ef5350'
+  const inverseSymbols = new Set(['VX', 'DX', 'US10Y', 'ZN', 'ZB'])
+  const isInverse = inverseSymbols.has(data.symbol)
+  const assetTrendBullish = data.direction === 'BULLISH'
+  const spxPressureUp = isInverse ? !assetTrendBullish : assetTrendBullish
+  const pressureColor = spxPressureUp ? '#26a69a' : '#ef5350'
 
   return (
     <div
       className="relative rounded-2xl border overflow-hidden transition-all duration-200 hover:scale-[1.01] hover:shadow-2xl"
       style={{
-        borderColor: `${dirColor}15`,
+        borderColor: `${pressureColor}15`,
         background: 'linear-gradient(180deg, #131722 0%, #0d1117 100%)',
       }}
     >
       {/* Top accent line */}
-      <div className="h-[2px] w-full" style={{ background: `linear-gradient(90deg, transparent, ${dirColor}40, transparent)` }} />
+      <div className="h-[2px] w-full" style={{ background: `linear-gradient(90deg, transparent, ${pressureColor}40, transparent)` }} />
 
       {/* Content */}
       <div className="p-6 pb-2">
         {/* Symbol row */}
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-3">
-            <span className="text-2xl font-black text-white tracking-tight">
-              {data.displayName}
-            </span>
+            <div>
+              <span className="block text-2xl font-black text-white tracking-tight">
+                {data.displayName}
+              </span>
+              <span className="text-[10px] text-white/25 font-bold uppercase">{data.symbol}</span>
+            </div>
             <span
               className="px-2 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wide"
               style={{
-                backgroundColor: `${dirColor}15`,
-                color: dirColor,
+                backgroundColor: `${pressureColor}15`,
+                color: pressureColor,
               }}
             >
-              {data.direction === 'BULLISH' ? '▲ BULL' : '▼ BEAR'}
+              {spxPressureUp ? '\u25B2 SPX PRESSURE UP' : '\u25BC SPX PRESSURE DOWN'}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
             <div
               className="w-12 h-1.5 rounded-full overflow-hidden"
-              style={{ backgroundColor: `${dirColor}15` }}
+              style={{ backgroundColor: `${pressureColor}15` }}
             >
               <div
                 className="h-full rounded-full"
-                style={{ width: `${data.signal.confidence}%`, backgroundColor: dirColor }}
+                style={{ width: `${data.signal.confidence}%`, backgroundColor: pressureColor }}
               />
             </div>
-            <span className="text-xs font-bold tabular-nums" style={{ color: `${dirColor}aa` }}>
+            <span className="text-xs font-bold tabular-nums" style={{ color: `${pressureColor}aa` }}>
               {data.signal.confidence}%
             </span>
           </div>
@@ -87,17 +94,28 @@ export default function MarketTile({ data }: MarketTileProps) {
         <Sparkline data={data.sparklineData} width={400} height={100} strokeWidth={2.5} />
       </div>
 
-      {/* Bottom: confluence factors */}
+      {/* Bottom: confluence factors — now showing real signal data */}
       {data.signal.confluenceFactors.length > 0 && (
-        <div className="px-6 py-3 border-t" style={{ borderColor: `${dirColor}10` }}>
+        <div className="px-6 py-3 border-t" style={{ borderColor: `${pressureColor}10` }}>
           <div className="flex flex-wrap gap-1.5">
-            {data.signal.confluenceFactors.slice(0, 3).map((factor, i) => (
+            <span
+              className="px-2 py-0.5 rounded text-[10px] font-medium"
+              style={{
+                backgroundColor: `${pressureColor}12`,
+                color: pressureColor,
+                border: `1px solid ${pressureColor}20`,
+              }}
+            >
+              {spxPressureUp ? 'SPX IMPACT: UP' : 'SPX IMPACT: DOWN'}
+            </span>
+            {data.signal.confluenceFactors.map((factor, i) => (
               <span
                 key={i}
                 className="px-2 py-0.5 rounded text-[10px] font-medium"
                 style={{
-                  backgroundColor: 'rgba(255,255,255,0.03)',
-                  color: 'rgba(255,255,255,0.35)',
+                  backgroundColor: i === 0 ? `${pressureColor}12` : 'rgba(255,255,255,0.03)',
+                  color: i === 0 ? pressureColor : 'rgba(255,255,255,0.4)',
+                  border: i === 0 ? `1px solid ${pressureColor}20` : '1px solid rgba(255,255,255,0.04)',
                 }}
               >
                 {factor}
