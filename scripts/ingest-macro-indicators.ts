@@ -1,4 +1,4 @@
-import { DataSource, Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
 import {
   fetchDollarCandles,
@@ -17,6 +17,8 @@ interface MacroIngestSummary {
   indicatorsFailed: Record<string, string>
   dryRun: boolean
 }
+
+type MacroSource = Prisma.MacroIndicatorCreateManyInput['source']
 
 function toJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue
@@ -39,7 +41,7 @@ interface YahooChartResult {
 function candlesToRows(
   indicator: string,
   candles: CandleData[],
-  source: DataSource,
+  source: MacroSource,
   sourceSymbol: string
 ): Prisma.MacroIndicatorCreateManyInput[] {
   return candles
@@ -123,37 +125,37 @@ export async function runIngestMacroIndicators(): Promise<MacroIngestSummary> {
 
   const jobs: Array<{
     indicator: string
-    source: DataSource
+    source: MacroSource
     sourceSymbol: string
     fetcher: () => Promise<CandleData[]>
   }> = [
     {
       indicator: 'VIXCLS',
-      source: DataSource.FRED,
+      source: 'FRED',
       sourceSymbol: 'VIXCLS',
       fetcher: () => fetchVixCandles(startDate, endDate),
     },
     {
       indicator: 'FEDFUNDS',
-      source: DataSource.FRED,
+      source: 'FRED',
       sourceSymbol: 'FEDFUNDS',
       fetcher: () => fetchFedFundsCandles(startDate, endDate),
     },
     {
       indicator: 'DTWEXBGS',
-      source: DataSource.FRED,
+      source: 'FRED',
       sourceSymbol: 'DTWEXBGS',
       fetcher: () => fetchDollarCandles(startDate, endDate),
     },
     {
       indicator: 'DGS10',
-      source: DataSource.FRED,
+      source: 'FRED',
       sourceSymbol: 'DGS10',
       fetcher: () => fetchTenYearYieldCandles(startDate, endDate),
     },
     {
       indicator: 'FXI_CLOSE',
-      source: DataSource.YAHOO,
+      source: 'YAHOO',
       sourceSymbol: 'FXI',
       fetcher: () => fetchYahooDailyClose('FXI', daysBack),
     },

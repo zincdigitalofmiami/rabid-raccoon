@@ -1,4 +1,4 @@
-import { DataSource, Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
 import { fetchOhlcv, toCandles } from '../src/lib/databento'
 import { INGESTION_SYMBOLS } from '../src/lib/ingestion-symbols'
@@ -169,7 +169,7 @@ async function upsertSymbolCatalog(symbolCodes: string[]): Promise<void> {
         shortName: cfg.shortName,
         description: cfg.description,
         tickSize: cfg.tickSize,
-        dataSource: DataSource.DATABENTO,
+        dataSource: 'DATABENTO',
         dataset: cfg.dataset,
         databentoSymbol: cfg.databentoSymbol,
       },
@@ -178,7 +178,7 @@ async function upsertSymbolCatalog(symbolCodes: string[]): Promise<void> {
         shortName: cfg.shortName,
         description: cfg.description,
         tickSize: cfg.tickSize,
-        dataSource: DataSource.DATABENTO,
+        dataSource: 'DATABENTO',
         dataset: cfg.dataset,
         databentoSymbol: cfg.databentoSymbol,
         isActive: true,
@@ -339,7 +339,7 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
           low: bar.low,
           close: bar.close,
           volume: BigInt(Math.max(0, Math.trunc(bar.volume || 0))),
-          source: DataSource.DATABENTO,
+          source: 'DATABENTO',
           sourceDataset: symbol.dataset,
           sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
         }))
