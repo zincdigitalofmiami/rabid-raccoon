@@ -38,6 +38,15 @@ function defaultSessionWindow(): { start: string; end: string } {
   }
 }
 
+function defaultDailyWindow(lookbackDays = 180): { start: string; end: string } {
+  const now = new Date()
+  const start = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000)
+  return {
+    start: start.toISOString(),
+    end: now.toISOString(),
+  }
+}
+
 function parseDateRange(startIso: string, endIso: string): { start: Date; end: Date } | null {
   const start = new Date(startIso)
   const end = new Date(endIso)
@@ -58,6 +67,25 @@ function toCandle(timeMs: number, open: number, high: number, low: number, close
 
 function startOfUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+}
+
+const INDEX_PROXY_BY_SYMBOL: Record<string, string> = {
+  ZN: 'IEF',
+  ZB: 'TLT',
+  GC: 'GLD',
+  CL: 'USO',
+}
+
+function fredIndicatorForSymbol(symbol: string): string | null {
+  if (symbol === 'VX') return 'VIXCLS'
+  if (symbol === 'US10Y') return 'DGS10'
+  if (symbol === 'DX' || symbol === 'DXY') return 'DTWEXBGS'
+  return null
+}
+
+function defaultWindowForSymbol(symbol: string): { start: string; end: string } {
+  if (symbol === 'MES') return defaultSessionWindow()
+  return defaultDailyWindow()
 }
 
 async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: string): Promise<CandleData[] | null> {
@@ -114,9 +142,37 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
       take: 20_000,
     })
 
-    if (rows.length === 0) return null
-    return rows.map((row) =>
-      toCandle(row.eventDate.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
+    if (rows.length > 0) {
+      return rows.map((row) =>
+        toCandle(row.eventDate.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
+      )
+    }
+
+    const proxy = INDEX_PROXY_BY_SYMBOL[symbol]
+    if (!proxy) return null
+
+    const proxyRows = await prisma.mktIndexes1d.findMany({
+      where: {
+        symbol: proxy,
+        eventDate: {
+          gte: startOfUtcDay(start),
+          lte: startOfUtcDay(end),
+        },
+      },
+      orderBy: { eventDate: 'asc' },
+      take: 20_000,
+    })
+
+    if (proxyRows.length === 0) return null
+    return proxyRows.map((row) =>
+      toCandle(
+        row.eventDate.getTime(),
+        row.open ?? row.close ?? 0,
+        row.high ?? row.close ?? 0,
+        row.low ?? row.close ?? 0,
+        row.close ?? 0,
+        row.volume ? Number(row.volume) : 0
+      )
     )
   } catch {
     dbState = 'failed'
@@ -134,7 +190,7 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
   try {
     if (indicator === 'VIXCLS') {
       const rows = await prisma.econVolIndices1d.findMany({
-        where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
+        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
@@ -144,7 +200,7 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
 
     if (indicator === 'DGS10') {
       const rows = await prisma.econYields1d.findMany({
-        where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
+        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
@@ -154,7 +210,7 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
 
     if (indicator === 'DFF') {
       const rows = await prisma.econRates1d.findMany({
-        where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
+        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
@@ -164,7 +220,7 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
 
     if (indicator === 'DTWEXBGS') {
       const rows = await prisma.econFx1d.findMany({
-        where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
+        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
@@ -224,16 +280,20 @@ export async function fetchCandlesForSymbol(
   const config = SYMBOLS[symbol]
   if (!config) throw new Error(`Unknown symbol: ${symbol}`)
 
-  const window = defaultSessionWindow()
-  const queryStart = start || window.start
-  const queryEnd = end || window.end
+  const defaults = defaultWindowForSymbol(symbol)
+  const queryStart = start || defaults.start
+  const queryEnd = end || defaults.end
 
-  if (config.dataSource === 'fred') {
-    const indicator = symbol === 'VX' ? 'VIXCLS' : symbol === 'US10Y' ? 'DGS10' : null
-    if (!indicator) throw new Error(`Unknown FRED symbol: ${symbol}`)
+  const indicator = config.dataSource === 'fred' ? fredIndicatorForSymbol(symbol) : null
+  if (indicator) {
     const candles = await fetchMacroFromDb(indicator, queryStart, queryEnd)
     if (!candles || candles.length === 0) databaseOnlyError(symbol)
     return candles
+  }
+
+  if (symbol === 'DX' || symbol === 'DXY') {
+    const dxCandles = await fetchMacroFromDb('DTWEXBGS', queryStart, queryEnd)
+    if (dxCandles && dxCandles.length > 0) return dxCandles
   }
 
   const candles = await fetchCandlesFromDb(symbol, queryStart, queryEnd)
@@ -253,12 +313,16 @@ export async function fetchDailyCandlesForSymbol(
   const queryStart = start.toISOString()
   const queryEnd = end.toISOString()
 
-  if (config.dataSource === 'fred') {
-    const indicator = symbol === 'VX' ? 'VIXCLS' : symbol === 'US10Y' ? 'DGS10' : null
-    if (!indicator) throw new Error(`Unknown FRED symbol: ${symbol}`)
+  const indicator = config.dataSource === 'fred' ? fredIndicatorForSymbol(symbol) : null
+  if (indicator) {
     const candles = await fetchMacroFromDb(indicator, queryStart, queryEnd)
     if (!candles || candles.length === 0) databaseOnlyError(symbol)
     return candles
+  }
+
+  if (symbol === 'DX' || symbol === 'DXY') {
+    const dxCandles = await fetchMacroFromDb('DTWEXBGS', queryStart, queryEnd)
+    if (dxCandles && dxCandles.length > 0) return dxCandles
   }
 
   const hourly = await fetchCandlesFromDb(symbol, queryStart, queryEnd)

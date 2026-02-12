@@ -63,13 +63,11 @@ export function mapMeasuredMoveAndCoreToTargets(
   // --- TP: snap-blend against fib .618 ---
   let tpPrice = move.target
   const tpTags: string[] = ['OOF']
-  // MAE placeholder: use a fraction of AB distance as proxy until real MAE is available
-  const abDistance = Math.abs(move.pointB.price - move.pointA.price)
-  const maeProxy = abDistance * 0.02 // ~2% of leg as rough MAE proxy
+  const snapTolerance = roundToTick(Math.max(tick, snapMult * tick), tick)
 
   if (fib618Target != null) {
     const delta = Math.abs(tpPrice - fib618Target)
-    if (delta <= snapMult * maeProxy) {
+    if (delta <= snapTolerance) {
       tpPrice = fib618Target
       tpTags.push('FIB-0.618')
     }
@@ -79,11 +77,11 @@ export function mapMeasuredMoveAndCoreToTargets(
   targets.push({
     id: `${dir}-TP-${move.pointC.barIndex}`,
     kind: 'TP',
-    label: buildLabel('TP', tpPrice, tpTags, undefined, maeProxy > 0 ? maeProxy : undefined),
+    label: buildLabel('TP', tpPrice, tpTags),
     startTime: lastCandleTime,
     endTime: futureEndTime,
     price: tpPrice,
-    bandHalfWidth: roundToTick(maeProxy, tick),
+    bandHalfWidth: 0,
     tags: tpTags,
     color: kindColor('TP'),
     mcProbTouch: undefined,

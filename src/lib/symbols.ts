@@ -82,12 +82,10 @@ export const SYMBOLS: Record<string, SymbolConfig> = {
   DX: {
     displayName: 'DXY',
     shortName: 'US Dollar',
-    dataSource: 'databento',
-    databentoSymbol: 'DX.c.0',
-    dataset: 'IFUS.IMPACT',
-    stypeIn: 'continuous',
+    dataSource: 'fred',
+    fredSymbol: 'DTWEXBGS',
     tickSize: 0.01,
-    description: 'US Dollar Index Futures',
+    description: 'US Dollar Broad Index (via FRED)',
   },
   US10Y: {
     displayName: 'US10Y',
