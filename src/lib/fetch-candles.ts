@@ -1,4 +1,3 @@
-import { Timeframe } from '@prisma/client'
 import { fetchOhlcv, toCandles, getCurrentSessionTimes } from './databento'
 import {
   fetchVixCandles,
@@ -8,15 +7,6 @@ import {
 import { prisma } from './prisma'
 import { SYMBOLS } from './symbols'
 import { CandleData } from './types'
-
-const DB_TF_PRIORITY: Timeframe[] = [
-  Timeframe.M1,
-  Timeframe.M5,
-  Timeframe.M15,
-  Timeframe.H1,
-  Timeframe.H4,
-  Timeframe.D1,
-]
 
 type DbState = 'disabled' | 'probing' | 'enabled' | 'failed'
 
@@ -53,7 +43,30 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null
 
   try {
-    const futuresBars = await prisma.mktFutures1h.findMany({
+    if (symbol === 'MES') {
+      const mesRows = await prisma.mesPrice1h.findMany({
+        where: {
+          eventTime: {
+            gte: start,
+            lte: end,
+          },
+        },
+        orderBy: { eventTime: 'asc' },
+        take: 20_000,
+      })
+
+      if (mesRows.length === 0) return null
+      return mesRows.map((row) => ({
+        time: Math.floor(row.eventTime.getTime() / 1000),
+        open: row.open,
+        high: row.high,
+        low: row.low,
+        close: row.close,
+        volume: row.volume ? Number(row.volume) : 0,
+      }))
+    }
+
+    const futuresRows = await prisma.futuresExMes1h.findMany({
       where: {
         symbolCode: symbol,
         eventTime: {
@@ -65,48 +78,19 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
       take: 20_000,
     })
 
-    if (futuresBars.length > 0) {
-      return futuresBars.map((bar) => ({
-        time: Math.floor(bar.eventTime.getTime() / 1000),
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume ? Number(bar.volume) : 0,
-      }))
-    }
-
-    // Backward-compatible fallback for legacy deployments.
-    for (const timeframe of DB_TF_PRIORITY) {
-      const bars = await prisma.marketBar.findMany({
-        where: {
-          symbolCode: symbol,
-          timeframe,
-          timestamp: {
-            gte: start,
-            lte: end,
-          },
-        },
-        orderBy: { timestamp: 'asc' },
-        take: 20_000,
-      })
-
-      if (bars.length === 0) continue
-      return bars.map((bar) => ({
-        time: Math.floor(bar.timestamp.getTime() / 1000),
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume ? Number(bar.volume) : 0,
-      }))
-    }
+    if (futuresRows.length === 0) return null
+    return futuresRows.map((row) => ({
+      time: Math.floor(row.eventTime.getTime() / 1000),
+      open: row.open,
+      high: row.high,
+      low: row.low,
+      close: row.close,
+      volume: row.volume ? Number(row.volume) : 0,
+    }))
   } catch {
     dbState = 'failed'
     return null
   }
-
-  return null
 }
 
 async function fetchMacroFromDb(indicator: string, startIso: string, endIso: string): Promise<CandleData[] | null> {
@@ -156,43 +140,7 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
       if (rows.length > 0) return mapRowsToCandles(rows)
     }
 
-    // Backward-compatible fallback for older deployments using macro_indicators only.
-    const econRows = await prisma.economicObservation.findMany({
-      where: {
-        seriesId: indicator,
-        eventDate: {
-          gte: start,
-          lte: end,
-        },
-      },
-      orderBy: { eventDate: 'asc' },
-      take: 10_000,
-    })
-    if (econRows.length > 0) {
-      return mapRowsToCandles(econRows)
-    }
-
-    const legacyRows = await prisma.macroIndicator.findMany({
-      where: {
-        indicator,
-        timestamp: {
-          gte: start,
-          lte: end,
-        },
-      },
-      orderBy: { timestamp: 'asc' },
-      take: 10_000,
-    })
-    if (legacyRows.length === 0) return null
-
-    return legacyRows.map((row) => ({
-      time: Math.floor(row.timestamp.getTime() / 1000),
-      open: row.value,
-      high: row.value,
-      low: row.value,
-      close: row.value,
-      volume: 0,
-    }))
+    return null
   } catch {
     dbState = 'failed'
     return null

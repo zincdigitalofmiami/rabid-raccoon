@@ -127,7 +127,7 @@ export async function GET(request: NextRequest) {
         macroCandlesMap.set(res.value.symbol, res.value.candles)
       }
     }
-    // Fallback to intraday bars for any symbols missing daily data.
+    // Fallback to intraday candles for any symbols missing daily data.
     for (const data of processedSymbols) {
       if (macroCandlesMap.has(data.symbol)) continue
       if (data.candles.length > 0) {

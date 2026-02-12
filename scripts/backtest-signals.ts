@@ -87,7 +87,7 @@ async function run(): Promise<void> {
     .filter(Boolean)
 
   const lookbackDays = Number(process.env.BACKTEST_DAYS || 7)
-  const warmupBars = Number(process.env.BACKTEST_WARMUP_BARS || 220)
+  const warmupCandles = Number(process.env.BACKTEST_WARMUP_CANDLES || 220)
   const now = new Date()
   const start = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000).toISOString()
   const end = now.toISOString()
@@ -97,14 +97,14 @@ async function run(): Promise<void> {
   for (const symbol of symbols) {
     const candles = await fetchCandlesForSymbol(symbol, start, end)
     const candles15m = aggregateCandles(candles, 15)
-    if (candles15m.length < warmupBars + 2) {
+    if (candles15m.length < warmupCandles + 2) {
       console.log(
-        `[skip] ${symbol}: need at least ${warmupBars + 2} aggregated bars, got ${candles15m.length}`
+        `[skip] ${symbol}: need at least ${warmupCandles + 2} aggregated candles, got ${candles15m.length}`
       )
       continue
     }
 
-    for (let i = warmupBars; i < candles15m.length - 1; i++) {
+    for (let i = warmupCandles; i < candles15m.length - 1; i++) {
       const window = candles15m.slice(0, i + 1)
       const sig = computeSignals(window)
       const voting = sig.buy + sig.sell
@@ -140,13 +140,13 @@ async function run(): Promise<void> {
   const avgRawNext = mean(observations.map((o) => o.nextReturnPct))
   const avgStrategy = mean(observations.map((o) => o.strategyReturnPct))
 
-  console.log('\n=== Deterministic Signal Backtest (next 15m bar) ===')
+  console.log('\n=== Deterministic Signal Backtest (next 15m candle) ===')
   console.log(`Symbols: ${symbols.join(', ')}`)
   console.log(`Window: last ${lookbackDays} day(s)`)
   console.log(`Samples: ${total}`)
   console.log(`Hit Rate: ${pct(hitRate)}`)
-  console.log(`Avg next-bar move (raw): ${pct(avgRawNext)}`)
-  console.log(`Avg next-bar move (strategy-signed): ${pct(avgStrategy)}`)
+  console.log(`Avg next-candle move (raw): ${pct(avgRawNext)}`)
+  console.log(`Avg next-candle move (strategy-signed): ${pct(avgStrategy)}`)
 
   const buckets = ['50-59', '60-69', '70-79', '80-100']
   const bucketRows = buckets.map((bucket) => {

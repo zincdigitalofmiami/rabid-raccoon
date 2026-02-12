@@ -13,7 +13,6 @@ import {
   timeframeToPrisma,
 } from './ingest-utils'
 
-// HARD-ENFORCED INGESTION CONFIG: NO SHORTCUTS, NO LIES, FULL 2Y OR FAIL
 const INGEST_CONFIG = {
   SYMBOL_UNIVERSE: [
     'ES',
@@ -55,13 +54,13 @@ const INGEST_CONFIG = {
   MIN_COVERAGE_PCT: 95,
   ZERO_FAKE_POLICY: true,
   DATABENTO_ONLY: true,
-  EXPECTED_BARS_PER_SYMBOL: Math.floor(730 * 23), // user-locked reference threshold
+  EXPECTED_CANDLES_PER_SYMBOL: Math.floor(730 * 23),
   RAW_SCHEMA: 'ohlcv-1m',
   CHUNK_DAYS: 14,
-  UPSERT_BATCH_SIZE: 1000,
+  INSERT_BATCH_SIZE: 1000,
 }
 
-interface MarketIngestSummary {
+interface PriceIngestSummary {
   timeframe: string
   sourceSchema: string
   daysBack: number
@@ -121,14 +120,13 @@ function assertHardConfigIntegrity(): void {
   }
 }
 
-function expectedTradableBarsPerSymbol(days: number): number {
-  // 23 trading hours/day across 5 trading days/week.
+function expectedTradableCandlesPerSymbol(days: number): number {
   return Math.floor((days * 5 * 23) / 7)
 }
 
 function sanitizeCandles(candles: ReturnType<typeof toCandles>): ReturnType<typeof toCandles> {
   const byTime = new Map<number, (typeof candles)[number]>()
-  for (const c of candles) byTime.set(c.time, c)
+  for (const candle of candles) byTime.set(candle.time, candle)
   return [...byTime.values()].sort((a, b) => a.time - b.time)
 }
 
@@ -148,7 +146,7 @@ function hasInvalidRealData(candles: ReturnType<typeof toCandles>): boolean {
   )
 }
 
-function hashFuturesRow(symbolCode: string, eventTime: Date, close: number): string {
+function hashPriceRow(symbolCode: string, eventTime: Date, close: number): string {
   return createHash('sha256')
     .update(`${symbolCode}|${eventTime.toISOString()}|${close}`)
     .digest('hex')
@@ -156,26 +154,26 @@ function hashFuturesRow(symbolCode: string, eventTime: Date, close: number): str
 
 async function upsertDataSourceRegistry(): Promise<void> {
   await prisma.dataSourceRegistry.upsert({
-    where: { sourceId: 'market-bars-databento' },
+    where: { sourceId: 'market-prices-databento' },
     create: {
-      sourceId: 'market-bars-databento',
+      sourceId: 'market-prices-databento',
       sourceName: 'Databento Futures OHLCV',
-      description: 'Databento GLBX market bars ingestion for MES universe.',
-      targetTable: 'mkt_futures_1h',
+      description: 'Databento GLBX futures candle ingestion with MES isolated from non-MES universe.',
+      targetTable: 'mes_prices_1h,futures_ex_mes_1h',
       apiProvider: 'databento',
       updateFrequency: 'intraday',
       authEnvVar: 'DATABENTO_API_KEY',
-      ingestionScript: 'scripts/ingest-market-bars.ts',
+      ingestionScript: 'scripts/ingest-market-prices.ts',
       isActive: true,
     },
     update: {
       sourceName: 'Databento Futures OHLCV',
-      description: 'Databento GLBX market bars ingestion for MES universe.',
-      targetTable: 'mkt_futures_1h',
+      description: 'Databento GLBX futures candle ingestion with MES isolated from non-MES universe.',
+      targetTable: 'mes_prices_1h,futures_ex_mes_1h',
       apiProvider: 'databento',
       updateFrequency: 'intraday',
       authEnvVar: 'DATABENTO_API_KEY',
-      ingestionScript: 'scripts/ingest-market-bars.ts',
+      ingestionScript: 'scripts/ingest-market-prices.ts',
       isActive: true,
     },
   })
@@ -244,7 +242,109 @@ async function upsertSymbolCatalog(symbolCodes: string[]): Promise<void> {
   }
 }
 
-export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
+async function existingCountForSymbol(symbolCode: string): Promise<number> {
+  if (symbolCode === 'MES') {
+    return prisma.mesPrice1h.count()
+  }
+  return prisma.futuresExMes1h.count({ where: { symbolCode } })
+}
+
+async function insertCandlesForSymbol(
+  symbolCode: string,
+  dataset: string,
+  candles1h: ReturnType<typeof aggregateCandles>,
+  dryRun: boolean
+): Promise<{ processed: number; inserted: number }> {
+  let inserted = 0
+  const processed = candles1h.length
+  if (dryRun || processed === 0) return { processed, inserted }
+
+  if (symbolCode === 'MES') {
+    const rows: Prisma.MesPrice1hCreateManyInput[] = candles1h.map((candle) => {
+      const eventTime = asUtcDateFromUnixSeconds(candle.time)
+      return {
+        eventTime,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
+        source: 'DATABENTO',
+        sourceDataset: dataset,
+        sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
+        rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
+      }
+    })
+
+    for (let i = 0; i < rows.length; i += INGEST_CONFIG.INSERT_BATCH_SIZE) {
+      const batch = rows.slice(i, i + INGEST_CONFIG.INSERT_BATCH_SIZE)
+      const result = await prisma.mesPrice1h.createMany({
+        data: batch,
+        skipDuplicates: true,
+      })
+      inserted += result.count
+    }
+    return { processed, inserted }
+  }
+
+  const rows: Prisma.FuturesExMes1hCreateManyInput[] = candles1h.map((candle) => {
+    const eventTime = asUtcDateFromUnixSeconds(candle.time)
+    return {
+      symbolCode,
+      eventTime,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
+      source: 'DATABENTO',
+      sourceDataset: dataset,
+      sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
+      rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
+    }
+  })
+
+  for (let i = 0; i < rows.length; i += INGEST_CONFIG.INSERT_BATCH_SIZE) {
+    const batch = rows.slice(i, i + INGEST_CONFIG.INSERT_BATCH_SIZE)
+    const result = await prisma.futuresExMes1h.createMany({
+      data: batch,
+      skipDuplicates: true,
+    })
+    inserted += result.count
+  }
+
+  return { processed, inserted }
+}
+
+async function verifyLoadedCoverage(symbolCodes: string[], minCoverageCount: number): Promise<void> {
+  const mesCount = await prisma.mesPrice1h.count()
+  if (symbolCodes.includes('MES') && mesCount < minCoverageCount) {
+    hardFail(`INSUFFICIENT_DATA: MES has only ${mesCount} rows; ${minCoverageCount} required.`)
+  }
+
+  const nonMes = symbolCodes.filter((code) => code !== 'MES')
+  if (nonMes.length === 0) return
+
+  const grouped = await prisma.futuresExMes1h.groupBy({
+    by: ['symbolCode'],
+    where: { symbolCode: { in: nonMes } },
+    _count: { _all: true },
+  })
+
+  if (grouped.length !== nonMes.length) {
+    hardFail('LOAD_INCOMPLETE: non-MES symbol set is missing one or more symbols.')
+  }
+
+  const countMap = new Map<string, number>(grouped.map((row) => [row.symbolCode, row._count._all]))
+  for (const code of nonMes) {
+    const count = countMap.get(code) || 0
+    if (count < minCoverageCount) {
+      hardFail(`INSUFFICIENT_DATA: ${code} has only ${count} rows; ${minCoverageCount} required.`)
+    }
+  }
+}
+
+export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
   loadDotEnvFiles()
   assertHardConfigIntegrity()
   const dryRun = assertNoForbiddenOverrides()
@@ -276,13 +376,14 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
   if (tfPrisma !== Timeframe.H1) {
     hardFail(`TIMEFRAME_VIOLATION: expected H1 only, got ${tfPrisma}`)
   }
-  const minCoverageBars = Math.floor(
-    expectedTradableBarsPerSymbol(INGEST_CONFIG.HISTORY_DAYS) * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100)
+
+  const minCoverageCount = Math.floor(
+    expectedTradableCandlesPerSymbol(INGEST_CONFIG.HISTORY_DAYS) * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100)
   )
 
   const run = await prisma.ingestionRun.create({
     data: {
-      job: 'market-bars',
+      job: 'market-prices-1h',
       status: 'RUNNING',
       details: toJson({
         daysBack: INGEST_CONFIG.HISTORY_DAYS,
@@ -290,8 +391,8 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
         sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
         chunkDays: INGEST_CONFIG.CHUNK_DAYS,
         symbolsRequested: INGEST_CONFIG.SYMBOL_UNIVERSE,
-        minCoverageBars,
-        expectedBarsReference: INGEST_CONFIG.EXPECTED_BARS_PER_SYMBOL,
+        minCoverageCount,
+        expectedCandlesReference: INGEST_CONFIG.EXPECTED_CANDLES_PER_SYMBOL,
       }),
     },
   })
@@ -309,28 +410,25 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
 
     for (const symbol of selected) {
       try {
-        const existingDomainCount = await prisma.mktFutures1h.count({
-          where: { symbolCode: symbol.code },
-        })
-        if (existingDomainCount >= minCoverageBars) {
-          symbolsCoveragePct[symbol.code] = Number(
-            ((existingDomainCount / minCoverageBars) * 100).toFixed(2)
-          )
+        const existingCount = await existingCountForSymbol(symbol.code)
+        if (existingCount >= minCoverageCount) {
+          symbolsCoveragePct[symbol.code] = Number(((existingCount / minCoverageCount) * 100).toFixed(2))
           symbolsProcessed.push(symbol.code)
           console.log(
-            `[market-bars] SUCCESS: ${symbol.code} already compliant in DB (${existingDomainCount} bars >= ${minCoverageBars}).`
+            `[market-prices] SUCCESS: ${symbol.code} already compliant in DB (${existingCount} rows >= ${minCoverageCount}).`
           )
           continue
         }
 
-        console.log(`\n[market-bars] ${symbol.code} ingest start (${chunks.length} chunks)`)
+        console.log(`\n[market-prices] ${symbol.code} ingest start (${chunks.length} chunks)`)
         const rawCandlesAll: ReturnType<typeof toCandles> = []
 
         for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
           const chunk = chunks[chunkIndex]
           if (chunkIndex === 0 || (chunkIndex + 1) % 5 === 0 || chunkIndex === chunks.length - 1) {
-            console.log(`[market-bars] ${symbol.code} chunk ${chunkIndex + 1}/${chunks.length}`)
+            console.log(`[market-prices] ${symbol.code} chunk ${chunkIndex + 1}/${chunks.length}`)
           }
+
           const records = await fetchOhlcv({
             dataset: symbol.dataset,
             symbol: symbol.databentoSymbol,
@@ -345,8 +443,8 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
 
           if (hasInvalidRealData(chunkCandles)) {
             symbolsFailed[symbol.code] =
-              `FAKE_DATA_DETECTED: invalid/zero OHLCV in raw bars for ${symbol.code}; zero tolerance.`
-            console.error(`[market-bars] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
+              `FAKE_DATA_DETECTED: invalid/zero OHLCV in raw candles for ${symbol.code}; zero tolerance.`
+            console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
             rawCandlesAll.length = 0
             break
           }
@@ -356,77 +454,51 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
 
         if (symbolsFailed[symbol.code]) continue
         if (rawCandlesAll.length === 0) {
-          symbolsFailed[symbol.code] = `AUDIT_FAIL: ${symbol.code} returned zero raw 1m bars.`
-          console.error(`[market-bars] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
+          symbolsFailed[symbol.code] = `AUDIT_FAIL: ${symbol.code} returned zero raw 1m rows.`
+          console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
           continue
         }
 
-        // User-locked audit check (reference threshold on raw fetch cardinality).
         if (
           rawCandlesAll.length <
-          Math.floor(INGEST_CONFIG.EXPECTED_BARS_PER_SYMBOL * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100))
+          Math.floor(INGEST_CONFIG.EXPECTED_CANDLES_PER_SYMBOL * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100))
         ) {
           symbolsFailed[symbol.code] =
-            `AUDIT_FAIL: ${symbol.code} raw bars=${rawCandlesAll.length} below enforced reference threshold.`
-          console.error(`[market-bars] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
+            `AUDIT_FAIL: ${symbol.code} raw count=${rawCandlesAll.length} below enforced reference threshold.`
+          console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
           continue
         }
 
-        const rawUnique = sanitizeCandles(rawCandlesAll)
-        const resampled = aggregateCandles(rawUnique, 60)
-        if (resampled.some((bar) => bar.close == null || !Number.isFinite(bar.close))) {
+        const uniqueCandles = sanitizeCandles(rawCandlesAll)
+        const candles1h = aggregateCandles(uniqueCandles, 60)
+        if (candles1h.some((candle) => candle.close == null || !Number.isFinite(candle.close))) {
           symbolsFailed[symbol.code] =
-            `GAP_DETECTED_IN_RESAMPLE: ${symbol.code} has null/invalid close post-aggregation.`
-          console.error(`[market-bars] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
+            `GAP_DETECTED_IN_RESAMPLE: ${symbol.code} has null/invalid close after aggregation.`
+          console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
           continue
         }
 
-        const coveragePct = (resampled.length / minCoverageBars) * 100
+        const coveragePct = (candles1h.length / minCoverageCount) * 100
         symbolsCoveragePct[symbol.code] = Number(coveragePct.toFixed(2))
-        if (resampled.length < minCoverageBars) {
+        if (candles1h.length < minCoverageCount) {
           symbolsFailed[symbol.code] =
-            `AUDIT_FAIL: ${symbol.code} has ${resampled.length} 1h bars (< ${minCoverageBars}, ${INGEST_CONFIG.MIN_COVERAGE_PCT}% coverage). Excluding.`
-          console.error(`[market-bars] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
+            `AUDIT_FAIL: ${symbol.code} has ${candles1h.length} 1h rows (< ${minCoverageCount}, ${INGEST_CONFIG.MIN_COVERAGE_PCT}% coverage). Excluding.`
+          console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
           continue
         }
 
-        const data: Prisma.MktFutures1hCreateManyInput[] = resampled.map((bar) => {
-          const eventTime = asUtcDateFromUnixSeconds(bar.time)
-          return {
-            symbolCode: symbol.code,
-            eventTime,
-            open: bar.open,
-            high: bar.high,
-            low: bar.low,
-            close: bar.close,
-            volume: BigInt(Math.max(0, Math.trunc(bar.volume || 0))),
-            source: 'DATABENTO',
-            sourceDataset: symbol.dataset,
-            sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
-            rowHash: hashFuturesRow(symbol.code, eventTime, bar.close),
-          }
-        })
-
-        rowsProcessed += data.length
-        if (!dryRun) {
-          for (let i = 0; i < data.length; i += INGEST_CONFIG.UPSERT_BATCH_SIZE) {
-            const batch = data.slice(i, i + INGEST_CONFIG.UPSERT_BATCH_SIZE)
-            const inserted = await prisma.mktFutures1h.createMany({
-              data: batch,
-              skipDuplicates: true,
-            })
-            rowsInserted += inserted.count
-          }
-        }
+        const result = await insertCandlesForSymbol(symbol.code, symbol.dataset, candles1h, dryRun)
+        rowsProcessed += result.processed
+        rowsInserted += result.inserted
 
         symbolsProcessed.push(symbol.code)
         console.log(
-          `[market-bars] SUCCESS: ${symbol.code} full 2y 1h loaded – ${resampled.length} bars, no fakes.`
+          `[market-prices] SUCCESS: ${symbol.code} full 2y 1h loaded – ${candles1h.length} rows, no fake data.`
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         symbolsFailed[symbol.code] = message.slice(0, 400)
-        console.error(`[market-bars] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
+        console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
       }
     }
 
@@ -436,35 +508,13 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
     }
 
     if (!dryRun) {
-      const loadedCounts = await prisma.mktFutures1h.groupBy({
-        by: ['symbolCode'],
-        where: { symbolCode: { in: passingSymbols } },
-        _count: {
-          _all: true,
-        },
-      })
-
-      if (loadedCounts.length !== passingSymbols.length) {
-        hardFail('LOAD_INCOMPLETE: Not all passing symbols were loaded fully.')
-      }
-
-      const countMap = new Map<string, number>(
-        loadedCounts.map((row) => [row.symbolCode, row._count._all])
-      )
-      for (const symbolCode of passingSymbols) {
-        const count = countMap.get(symbolCode) || 0
-        if (count < minCoverageBars) {
-          hardFail(
-            `INSUFFICIENT_DATA: ${symbolCode} has only ${count} bars; ${minCoverageBars} required for hard compliance.`
-          )
-        }
-      }
+      await verifyLoadedCoverage(passingSymbols, minCoverageCount)
       postLoadVerified = true
       console.log('ALL CLEAR: Full 2y ingestion complete – no lies, no fakes, ready for training.')
     }
 
     const status = Object.keys(symbolsFailed).length === 0 ? 'SUCCEEDED' : 'PARTIAL'
-    const summary: MarketIngestSummary = {
+    const summary: PriceIngestSummary = {
       timeframe: INGEST_CONFIG.TIMEFRAME,
       sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
       daysBack: INGEST_CONFIG.HISTORY_DAYS,
@@ -513,14 +563,14 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runIngestMarketBars()
+  runIngestMarketPrices()
     .then((summary) => {
-      console.log('\n[market-bars] done')
+      console.log('\n[market-prices] done')
       console.log(JSON.stringify(summary, null, 2))
     })
     .catch((error) => {
       const message = error instanceof Error ? error.message : String(error)
-      console.error(`[market-bars] failed: ${message}`)
+      console.error(`[market-prices] failed: ${message}`)
       process.exit(1)
     })
     .finally(async () => {

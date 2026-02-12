@@ -1,15 +1,15 @@
 import { prisma } from '../src/lib/prisma'
 import { runIngestMacroIndicators } from './ingest-macro-indicators'
-import { runIngestMarketBars } from './ingest-market-bars'
+import { runIngestMarketPrices } from './ingest-market-prices'
 import { runIngestMeasuredMoveSignals } from './ingest-mm-signals'
 import { loadDotEnvFiles } from './ingest-utils'
 
 async function run(): Promise<void> {
   loadDotEnvFiles()
 
-  console.log('[ingest-all] step 1/3 market bars')
-  const market = await runIngestMarketBars()
-  console.log('[ingest-all] market bars complete')
+  console.log('[ingest-all] step 1/3 market prices')
+  const market = await runIngestMarketPrices()
+  console.log('[ingest-all] market prices complete')
 
   console.log('[ingest-all] step 2/3 macro indicators')
   const macro = await runIngestMacroIndicators()
@@ -41,4 +41,3 @@ run()
   .finally(async () => {
     await prisma.$disconnect()
   })
-

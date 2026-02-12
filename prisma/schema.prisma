@@ -74,8 +74,7 @@ model Symbol {
   isActive        Boolean     @default(true)
   createdAt       DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime    @updatedAt @db.Timestamptz(6)
-  bars            MarketBar[]
-  futures1h       MktFutures1h[]
+  futuresExMes1h  FuturesExMes1h[]
   measuredMoves   MeasuredMoveSignal[]
   mappings        SymbolMapping[]
 
@@ -101,11 +100,9 @@ model SymbolMapping {
   @@map("symbol_mappings")
 }
 
-model MarketBar {
+model MesPrice1h {
   id            BigInt     @id @default(autoincrement())
-  symbolCode    String     @db.VarChar(16)
-  timeframe     Timeframe
-  timestamp     DateTime   @db.Timestamptz(6)
+  eventTime     DateTime   @db.Timestamptz(6)
   open          Float
   high          Float
   low           Float
@@ -114,17 +111,17 @@ model MarketBar {
   source        DataSource @default(DATABENTO)
   sourceDataset String?    @db.VarChar(64)
   sourceSchema  String?    @db.VarChar(32)
-  createdAt     DateTime   @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime   @updatedAt @db.Timestamptz(6)
-  symbol        Symbol     @relation(fields: [symbolCode], references: [code], onDelete: Cascade)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
 
-  @@unique([symbolCode, timeframe, timestamp], map: "market_bars_symbol_tf_ts_key")
-  @@index([symbolCode, timeframe, timestamp], map: "market_bars_symbol_tf_ts_idx")
-  @@index([timestamp], map: "market_bars_ts_idx")
-  @@map("market_bars")
+  @@unique([eventTime], map: "mes_prices_1h_event_time_key")
+  @@index([eventTime], map: "mes_prices_1h_event_time_idx")
+  @@map("mes_prices_1h")
 }
 
-model MktFutures1h {
+model FuturesExMes1h {
   id            BigInt     @id @default(autoincrement())
   symbolCode    String     @db.VarChar(16)
   eventTime     DateTime   @db.Timestamptz(6)
@@ -143,10 +140,10 @@ model MktFutures1h {
   metadata      Json?
   symbol        Symbol     @relation(fields: [symbolCode], references: [code], onDelete: Cascade)
 
-  @@unique([symbolCode, eventTime], map: "mkt_futures_1h_symbol_time_key")
-  @@index([symbolCode, eventTime], map: "mkt_futures_1h_symbol_time_idx")
-  @@index([eventTime], map: "mkt_futures_1h_time_idx")
-  @@map("mkt_futures_1h")
+  @@unique([symbolCode, eventTime], map: "futures_ex_mes_1h_symbol_time_key")
+  @@index([symbolCode, eventTime], map: "futures_ex_mes_1h_symbol_time_idx")
+  @@index([eventTime], map: "futures_ex_mes_1h_time_idx")
+  @@map("futures_ex_mes_1h")
 }
 
 model EconRates1d {

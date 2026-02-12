@@ -15,10 +15,11 @@
     "db:up": "bash scripts/dev-db-up.sh",
     "db:down": "bash scripts/dev-db-down.sh",
     "db:counts": "tsx scripts/db-counts.ts",
-    "ingest:market": "tsx scripts/ingest-market-bars.ts",
+    "ingest:market": "tsx scripts/ingest-market-prices.ts",
     "ingest:macro": "tsx scripts/ingest-macro-indicators.ts",
     "ingest:mm": "tsx scripts/ingest-mm-signals.ts",
-    "ingest:all": "tsx scripts/ingest-all.ts"
+    "ingest:all": "tsx scripts/ingest-all.ts",
+    "dataset:autogluon:1h": "tsx scripts/build-autogluon-1h-dataset.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.0",
