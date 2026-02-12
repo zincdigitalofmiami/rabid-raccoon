@@ -235,6 +235,91 @@ model EconVolIndices1d {
   @@map("econ_vol_indices_1d")
 }
 
+model EconInflation1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_inflation_1d_series_date_key")
+  @@index([seriesId, eventDate], map: "econ_inflation_1d_series_date_idx")
+  @@index([eventDate], map: "econ_inflation_1d_date_idx")
+  @@map("econ_inflation_1d")
+}
+
+model EconLabor1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_labor_1d_series_date_key")
+  @@index([seriesId, eventDate], map: "econ_labor_1d_series_date_idx")
+  @@index([eventDate], map: "econ_labor_1d_date_idx")
+  @@map("econ_labor_1d")
+}
+
+model EconActivity1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_activity_1d_series_date_key")
+  @@index([seriesId, eventDate], map: "econ_activity_1d_series_date_idx")
+  @@index([eventDate], map: "econ_activity_1d_date_idx")
+  @@map("econ_activity_1d")
+}
+
+model EconMoney1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_money_1d_series_date_key")
+  @@index([seriesId, eventDate], map: "econ_money_1d_series_date_idx")
+  @@index([eventDate], map: "econ_money_1d_date_idx")
+  @@map("econ_money_1d")
+}
+
+model EconCommodities1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_commodities_1d_series_date_key")
+  @@index([seriesId, eventDate], map: "econ_commodities_1d_series_date_idx")
+  @@index([eventDate], map: "econ_commodities_1d_date_idx")
+  @@map("econ_commodities_1d")
+}
+
 model MktIndexes1d {
   id            BigInt     @id @default(autoincrement())
   symbol        String     @db.VarChar(32)
@@ -275,6 +360,32 @@ model MktSpot1d {
   @@map("mkt_spot_1d")
 }
 
+model EconNews1d {
+  id             BigInt    @id @default(autoincrement())
+  articleId      String?   @db.VarChar(128)
+  eventDate      DateTime  @db.Date
+  publishedAt    DateTime? @db.Timestamptz(6)
+  headline       String
+  summary        String?
+  content        String?
+  source         String?   @db.VarChar(100)
+  author         String?   @db.VarChar(100)
+  url            String?
+  sentimentLabel String?   @db.VarChar(32)
+  topics         String[]  @default([])
+  subjects       String[]  @default([])
+  tags           String[]  @default([])
+  ingestedAt     DateTime  @default(now()) @db.Timestamptz(6)
+  knowledgeTime  DateTime  @default(now()) @db.Timestamptz(6)
+  rowHash        String?   @unique(map: "econ_news_1d_row_hash_key") @db.VarChar(64)
+  rawPayload     Json?
+
+  @@index([eventDate], map: "econ_news_1d_date_idx")
+  @@index([source], map: "econ_news_1d_source_idx")
+  @@index([tags], map: "econ_news_1d_tags_idx", type: Gin)
+  @@map("econ_news_1d")
+}
+
 model PolicyNews1d {
   id             BigInt     @id @default(autoincrement())
   eventDate      DateTime   @db.Date
@@ -293,6 +404,7 @@ model PolicyNews1d {
   rowHash        String?    @db.VarChar(64)
   rawPayload     Json?
 
+  @@unique([rowHash], map: "policy_news_1d_row_hash_key")
   @@index([eventDate], map: "policy_news_1d_date_idx")
   @@index([source], map: "policy_news_1d_source_idx")
   @@index([tags], map: "policy_news_1d_tags_idx", type: Gin)

@@ -21,6 +21,7 @@
     "ingest:mm": "tsx scripts/ingest-mm-signals.ts",
     "ingest:mes:live": "tsx scripts/ingest-mes-live-1m.ts",
     "ingest:all": "tsx scripts/ingest-all.ts",
+    "import:fusion:econ": "tsx scripts/import-fusion-econ.ts",
     "dataset:autogluon:1h": "tsx scripts/build-autogluon-1h-dataset.ts",
     "inngest:dev": "npx inngest-cli dev -u http://localhost:3000/api/inngest"
   },
