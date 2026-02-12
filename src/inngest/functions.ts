@@ -1,6 +1,7 @@
 import { inngest } from './client'
 import { runIngestMacroIndicators } from '../../scripts/ingest-macro-indicators'
 import { runIngestMarketPricesDaily } from '../../scripts/ingest-market-prices-daily'
+import { runIngestAltNewsFeeds } from '../../scripts/ingest-alt-news-feeds'
 import { runIngestMeasuredMoveSignals } from '../../scripts/ingest-mm-signals'
 
 export const dailyIngestionJob = inngest.createFunction(
@@ -15,6 +16,8 @@ export const dailyIngestionJob = inngest.createFunction(
       runIngestMacroIndicators({ daysBack: 45, dryRun: false })
     )
 
+    const altNews = await step.run('alt-news-rss-daily', async () => runIngestAltNewsFeeds())
+
     const mm = await step.run('measured-move-signals', async () =>
       runIngestMeasuredMoveSignals({ timeframe: '1h', daysBack: 120, symbols: ['MES'], dryRun: false })
     )
@@ -23,6 +26,7 @@ export const dailyIngestionJob = inngest.createFunction(
       ranAt: new Date().toISOString(),
       market,
       macro,
+      altNews,
       mm,
     }
   }

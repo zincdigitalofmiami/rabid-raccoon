@@ -62,6 +62,8 @@ interface AnalysePanelProps {
 type ActiveTab = 'chart' | 'market' | 'trades' | null
 
 export default function AnalysePanel({ onResult, onCaptureChart }: AnalysePanelProps) {
+  void onResult
+
   // Chart analysis state
   const [chartLoading, setChartLoading] = useState(false)
   const [chartResult, setChartResult] = useState<ChartAnalysisResult | null>(null)

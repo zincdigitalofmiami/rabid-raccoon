@@ -1,4 +1,5 @@
 import { prisma } from '../src/lib/prisma'
+import { runIngestAltNewsFeeds } from './ingest-alt-news-feeds'
 import { runIngestMacroIndicators } from './ingest-macro-indicators'
 import { runIngestMarketPrices } from './ingest-market-prices'
 import { runIngestMeasuredMoveSignals } from './ingest-mm-signals'
@@ -11,11 +12,15 @@ async function run(): Promise<void> {
   const market = await runIngestMarketPrices()
   console.log('[ingest-all] market prices complete')
 
-  console.log('[ingest-all] step 2/3 macro indicators')
+  console.log('[ingest-all] step 2/4 macro indicators')
   const macro = await runIngestMacroIndicators()
   console.log('[ingest-all] macro indicators complete')
 
-  console.log('[ingest-all] step 3/3 measured move signals')
+  console.log('[ingest-all] step 3/4 alt news')
+  const altNews = await runIngestAltNewsFeeds()
+  console.log('[ingest-all] alt news complete')
+
+  console.log('[ingest-all] step 4/4 measured move signals')
   const mm = await runIngestMeasuredMoveSignals({ timeframe: '1h', symbols: ['MES'] })
   console.log('[ingest-all] measured move signals complete')
 
@@ -24,6 +29,7 @@ async function run(): Promise<void> {
       {
         market,
         macro,
+        altNews,
         mm,
       },
       null,

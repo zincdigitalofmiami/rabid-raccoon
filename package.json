@@ -18,6 +18,7 @@
     "ingest:market": "tsx scripts/ingest-market-prices.ts",
     "ingest:market:daily": "tsx scripts/ingest-market-prices-daily.ts",
     "ingest:macro": "tsx scripts/ingest-macro-indicators.ts",
+    "ingest:alt-news": "tsx scripts/ingest-alt-news-feeds.ts",
     "ingest:mm": "tsx scripts/ingest-mm-signals.ts",
     "ingest:mes:live": "tsx scripts/ingest-mes-live-15m.ts",
     "ingest:mes:live:stream": "tsx scripts/ingest-mes-live-stream.ts",
