@@ -6,15 +6,18 @@ const globalForPrisma = globalThis as unknown as {
 }
 
 const databaseUrl = process.env.DATABASE_URL
-const adapter = databaseUrl ? new PrismaPg({ connectionString: databaseUrl }) : undefined
+const usePgAdapter = !!databaseUrl && /^postgres(ql)?:\/\//i.test(databaseUrl)
+const useAccelerateUrl = !!databaseUrl && /^prisma(\+postgres)?:\/\//i.test(databaseUrl)
+const adapter = usePgAdapter ? new PrismaPg({ connectionString: databaseUrl }) : undefined
 
-const prismaClient =
-  adapter &&
-  (globalForPrisma.prisma ??
+const prismaClient = databaseUrl
+  ? globalForPrisma.prisma ??
     new PrismaClient({
-      adapter,
+      ...(adapter ? { adapter } : {}),
+      ...(useAccelerateUrl ? { accelerateUrl: databaseUrl } : {}),
       log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-    }))
+    })
+  : undefined
 
 if (prismaClient && process.env.NODE_ENV !== 'production') {
   globalForPrisma.prisma = prismaClient
