@@ -44,7 +44,6 @@ const INGEST_CONFIG = {
     'SXR',
     'SOX',
     'BIO',
-    'RJ',
     'RS1',
     'RSG',
     'RSV',
@@ -129,8 +128,8 @@ function assertNoForbiddenOverrides(): boolean {
 }
 
 function assertHardConfigIntegrity(): void {
-  if (INGEST_CONFIG.SYMBOL_UNIVERSE.length !== 33) {
-    hardFail('Must load ALL 33 symbols. Fix config and retry.')
+  if (INGEST_CONFIG.SYMBOL_UNIVERSE.length !== 32) {
+    hardFail('Must load ALL 32 symbols. Fix config and retry.')
   }
   if (!INGEST_CONFIG.ZERO_FAKE_POLICY || !INGEST_CONFIG.DATABENTO_ONLY) {
     hardFail('Zero fake data and Databento-only policy must remain enabled.')

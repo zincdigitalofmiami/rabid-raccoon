@@ -125,6 +125,10 @@ async function run(): Promise<void> {
     prisma.mesPrice1h.findMany({
       where: { eventTime: { gte: start } },
       orderBy: { eventTime: 'asc' },
+      select: {
+        eventTime: true,
+        close: true,
+      },
     }),
     prisma.econVolIndices1d.findMany({
       where: { seriesId: 'VIXCLS' },

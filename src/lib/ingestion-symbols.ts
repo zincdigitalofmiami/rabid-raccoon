@@ -10,7 +10,7 @@ export interface IngestionSymbol {
 
 const GLBX = 'GLBX.MDP3'
 
-const SYMBOL_UNIVERSE_33 = [
+const SYMBOL_UNIVERSE_32 = [
   'ES',
   'MES',
   'NQ',
@@ -40,7 +40,6 @@ const SYMBOL_UNIVERSE_33 = [
   'SXR',
   'SOX',
   'BIO',
-  'RJ',
   'RS1',
   'RSG',
   'RSV',
@@ -76,13 +75,12 @@ const META: Record<string, { shortName: string; description: string; tickSize: n
   SXR: { shortName: 'SX R', description: 'SX R Futures', tickSize: 0.01 },
   SOX: { shortName: 'SOX', description: 'SOX Futures', tickSize: 0.01 },
   BIO: { shortName: 'BIO', description: 'BIO Futures', tickSize: 0.01 },
-  RJ: { shortName: 'RJ', description: 'RJ Futures', tickSize: 0.01 },
   RS1: { shortName: 'RS1', description: 'RS1 Futures', tickSize: 0.01 },
   RSG: { shortName: 'RSG', description: 'RSG Futures', tickSize: 0.01 },
   RSV: { shortName: 'RSV', description: 'RSV Futures', tickSize: 0.01 },
 }
 
-export const INGESTION_SYMBOLS: IngestionSymbol[] = SYMBOL_UNIVERSE_33.map((code) => {
+export const INGESTION_SYMBOLS: IngestionSymbol[] = SYMBOL_UNIVERSE_32.map((code) => {
   const meta = META[code]
   return {
     code,
@@ -96,4 +94,3 @@ export const INGESTION_SYMBOLS: IngestionSymbol[] = SYMBOL_UNIVERSE_33.map((code
 })
 
 export const INGESTION_SYMBOL_CODES = INGESTION_SYMBOLS.map((s) => s.code)
-

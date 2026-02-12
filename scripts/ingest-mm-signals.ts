@@ -91,6 +91,14 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
       const mesCandles = await prisma.mesPrice1h.findMany({
         where: { eventTime: { gte: start } },
         orderBy: { eventTime: 'asc' },
+        select: {
+          eventTime: true,
+          open: true,
+          high: true,
+          low: true,
+          close: true,
+          volume: true,
+        },
       })
       if (mesCandles.length > 0) {
         perSymbol.set(
@@ -115,6 +123,15 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
           symbolCode: { in: nonMesRequested },
         },
         orderBy: [{ symbolCode: 'asc' }, { eventTime: 'asc' }],
+        select: {
+          symbolCode: true,
+          eventTime: true,
+          open: true,
+          high: true,
+          low: true,
+          close: true,
+          volume: true,
+        },
       })
       for (const row of futuresRows) {
         const list = perSymbol.get(row.symbolCode) || []
