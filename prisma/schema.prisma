@@ -1,0 +1,136 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "binary"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum DataSource {
+  DATABENTO
+  FRED
+  YAHOO
+  INTERNAL
+}
+
+enum Timeframe {
+  M1
+  M5
+  M15
+  H1
+  H4
+  D1
+}
+
+enum SignalDirection {
+  BULLISH
+  BEARISH
+}
+
+enum SignalStatus {
+  FORMING
+  ACTIVE
+  TARGET_HIT
+  STOPPED_OUT
+}
+
+model Symbol {
+  code            String      @id @db.VarChar(16)
+  displayName     String      @db.VarChar(64)
+  shortName       String?     @db.VarChar(64)
+  description     String?
+  tickSize        Float
+  dataSource      DataSource
+  dataset         String?     @db.VarChar(64)
+  databentoSymbol String?     @db.VarChar(32)
+  fredSymbol      String?     @db.VarChar(32)
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime    @updatedAt @db.Timestamptz(6)
+  bars            MarketBar[]
+  measuredMoves   MeasuredMoveSignal[]
+
+  @@index([dataSource, isActive], map: "symbols_source_active_idx")
+  @@map("symbols")
+}
+
+model MarketBar {
+  id            BigInt     @id @default(autoincrement())
+  symbolCode    String     @db.VarChar(16)
+  timeframe     Timeframe
+  timestamp     DateTime   @db.Timestamptz(6)
+  open          Float
+  high          Float
+  low           Float
+  close         Float
+  volume        BigInt?
+  source        DataSource @default(DATABENTO)
+  sourceDataset String?    @db.VarChar(64)
+  sourceSchema  String?    @db.VarChar(32)
+  createdAt     DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime   @updatedAt @db.Timestamptz(6)
+  symbol        Symbol     @relation(fields: [symbolCode], references: [code], onDelete: Cascade)
+
+  @@unique([symbolCode, timeframe, timestamp], map: "market_bars_symbol_tf_ts_key")
+  @@index([symbolCode, timeframe, timestamp], map: "market_bars_symbol_tf_ts_idx")
+  @@index([timestamp], map: "market_bars_ts_idx")
+  @@map("market_bars")
+}
+
+model MacroIndicator {
+  id           BigInt     @id @default(autoincrement())
+  indicator    String     @db.VarChar(32)
+  timestamp    DateTime   @db.Timestamptz(6)
+  value        Float
+  source       DataSource
+  sourceSymbol String?    @db.VarChar(32)
+  metadata     Json?
+  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
+
+  @@unique([indicator, timestamp], map: "macro_indicators_indicator_ts_key")
+  @@index([indicator, timestamp], map: "macro_indicators_indicator_ts_idx")
+  @@map("macro_indicators")
+}
+
+model MeasuredMoveSignal {
+  id               BigInt          @id @default(autoincrement())
+  symbolCode       String          @db.VarChar(16)
+  timeframe        Timeframe
+  timestamp        DateTime        @db.Timestamptz(6)
+  direction        SignalDirection
+  status           SignalStatus
+  pointA           Float
+  pointB           Float
+  pointC           Float
+  entry            Float
+  stop             Float
+  target100        Float
+  target1236       Float
+  retracementRatio Float
+  quality          Int
+  source           String          @default("halsey") @db.VarChar(32)
+  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
+  symbol           Symbol          @relation(fields: [symbolCode], references: [code], onDelete: Cascade)
+
+  @@unique([symbolCode, timeframe, timestamp, direction, entry, target100], map: "mm_signals_dedupe_key")
+  @@index([symbolCode, timeframe, timestamp], map: "mm_signals_symbol_tf_ts_idx")
+  @@map("measured_move_signals")
+}
+
+model IngestionRun {
+  id            BigInt    @id @default(autoincrement())
+  job           String    @db.VarChar(64)
+  startedAt     DateTime  @default(now()) @db.Timestamptz(6)
+  finishedAt    DateTime? @db.Timestamptz(6)
+  status        String    @default("RUNNING") @db.VarChar(24)
+  rowsProcessed Int       @default(0)
+  rowsInserted  Int       @default(0)
+  rowsFailed    Int       @default(0)
+  details       Json?
+
+  @@index([job, startedAt], map: "ingestion_runs_job_started_idx")
+  @@map("ingestion_runs")
+}

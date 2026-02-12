@@ -63,6 +63,74 @@ For the Next.js dashboard analysis overlay (`/api/analyse/ai`), set:
 
 Copy `.env.example` to `.env.local` and fill the keys.
 
+## Prisma Data Layer (Local PostgreSQL)
+
+The app now supports persistent market/macro storage via Prisma + Postgres.
+
+### 1. Start local DB
+
+```bash
+npm run db:up
+```
+
+Default local URL:
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public
+```
+
+### 2. Apply schema
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npx prisma migrate dev --name init_market_data
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npx prisma generate
+```
+
+### 3. Ingest real data (no synthetic rows)
+
+`ingest:market` is now hard-locked to:
+- `33` symbols (fixed universe)
+- `730` days
+- `1h` output bars aggregated from Databento `1m`
+- Databento-only, zero-fake policy
+- no runtime overrides (only `--dry-run` is allowed)
+
+Market bars (Databento):
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:market
+```
+
+Macro indicators (FRED + Yahoo FXI):
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:macro -- --days-back 730
+```
+
+Measured-move features from stored bars:
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:mm -- --timeframe 1h --days-back 120
+```
+
+Or run everything:
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:all
+```
+
+### 4. Validate row counts
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run db:counts
+```
+
+### 5. Stop local DB
+
+```bash
+npm run db:down
+```
+
 ## MES HFT Halsey Module
 
 Standalone Python intraday module (Databento + FRED + Yahoo only, no Polygon):

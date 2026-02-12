@@ -139,7 +139,8 @@ def fetch_mes_databento(
     key = _require_env("DATABENTO_API_KEY")
 
     client = db.Historical(key=key)
-    end = datetime.now(timezone.utc)
+    # Historical endpoint can trail real-time ingestion, so use a safety lag.
+    end = datetime.now(timezone.utc) - timedelta(minutes=45)
     start = end - timedelta(days=days_back)
 
     params = {

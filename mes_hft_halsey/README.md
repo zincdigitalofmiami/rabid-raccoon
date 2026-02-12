@@ -11,6 +11,7 @@ No Polygon dependency is used.
 
 - `mes_hft_halsey/mes_intraday_halsey.py`: CLI scanner + CSV exporter
 - `mes_hft_halsey/mes_api.py`: optional FastAPI wrapper
+- `mes_hft_halsey/mes_autogluon_timeseries.py`: local AutoGluon TimeSeries MES trainer
 - `mes_hft_halsey/requirements.txt`: Python dependencies
 
 ## Setup
@@ -88,3 +89,39 @@ Implemented from the Halsey-style framing requested:
   - Shorts filtered when `VIX < 16`
 
 Signals are emitted for `5m`, `15m`, `1h`, `4h`, and `1d` bars.
+
+## Local AutoGluon (MES Modeling)
+
+This is local-machine only (no server deploy needed).
+
+1. Create and activate local environment:
+
+```bash
+python3 -m venv .venv-autogluon
+source .venv-autogluon/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install autogluon
+pip install "setuptools==80.9.0"
+```
+
+2. Train MES model (1H first, extreme quality, 2-year lookback):
+
+```bash
+source .venv-autogluon/bin/activate
+python mes_hft_halsey/mes_autogluon_timeseries.py \
+  --days-back 730 \
+  --timeframe 1h \
+  --horizons 5m,15m,60m,4h,24h,7d \
+  --quality extreme \
+  --time-limit 3600
+```
+
+3. Outputs:
+- Forecast rows: `mes_hft_halsey/output/mes_autogluon_forecast.csv`
+- Run summary: `mes_hft_halsey/output/mes_autogluon_summary.json`
+- Trained model: `mes_hft_halsey/models/autogluon_mes_<timeframe>/`
+
+Notes:
+- `--quality extreme` maps to AutoGluon `best_quality`.
+- `--prediction-length` is auto-expanded to cover your max requested horizon.
+- For `1h` with horizons `5m,15m,60m,4h,24h,7d`, the script uses up to `168` forecast steps.

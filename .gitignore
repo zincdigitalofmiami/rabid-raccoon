@@ -22,5 +22,11 @@ out/
 node_modules/
 .vercel
 mes_hft_halsey/*.csv
+mes_hft_halsey/models/
+mes_hft_halsey/output/
 **/__pycache__/
 *.pyc
+.venv-autogluon/
+/tsconfig.tsbuildinfo
+
+/src/generated/prisma

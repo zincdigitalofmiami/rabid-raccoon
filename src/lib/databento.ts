@@ -2,6 +2,7 @@ import { CandleData, DatabentoOhlcvRecord } from './types'
 
 const DATABENTO_BASE = 'https://hist.databento.com/v0'
 const FIXED_PRICE_SCALE = 1_000_000_000
+const DATABENTO_REQUEST_TIMEOUT_MS = 90_000
 
 export async function fetchOhlcv(params: {
   dataset: string
@@ -34,14 +35,31 @@ export async function fetchOhlcv(params: {
       encoding: 'json',
     })
 
-    const response = await fetch(`${DATABENTO_BASE}/timeseries.get_range`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: body.toString(),
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), DATABENTO_REQUEST_TIMEOUT_MS)
+    let response: Response
+    try {
+      response = await fetch(`${DATABENTO_BASE}/timeseries.get_range`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body.toString(),
+        signal: controller.signal,
+      })
+    } catch (error) {
+      clearTimeout(timeout)
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.toLowerCase().includes('aborted')) {
+        lastStatus = 408
+        lastStatusText = 'Request Timeout'
+        lastErrorText = `Databento request timed out after ${DATABENTO_REQUEST_TIMEOUT_MS}ms`
+        continue
+      }
+      throw error
+    }
+    clearTimeout(timeout)
 
     if (response.ok) {
       const text = await response.text()
