@@ -123,3 +123,5 @@ export interface SymbolForecast {
   direction: 'BULLISH' | 'BEARISH'
   confidence: number
 }
+
+export type { ForecastTarget, ForecastTargetKind } from './charts/types'

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import {
   CandlestickSeries,
   ColorType,
@@ -10,6 +10,13 @@ import {
   Time,
   UTCTimestamp,
 } from 'lightweight-charts'
+import type { ForecastResponse, MeasuredMove, CandleData } from '@/lib/types'
+import { ForecastTargetsPrimitive } from '@/lib/charts/ForecastTargetsPrimitive'
+import { mapMeasuredMoveAndCoreToTargets } from '@/lib/charts/blendTargets'
+import { ensureFutureWhitespace } from '@/lib/charts/ensureFutureWhitespace'
+import { detectSwings } from '@/lib/swing-detection'
+import { calculateFibonacci } from '@/lib/fibonacci'
+import TV from '@/lib/colors'
 
 type MesPoint = {
   time: number
@@ -21,7 +28,8 @@ type MesPoint = {
 }
 
 type StreamStatus = 'connecting' | 'live' | 'error'
-type TrendState = 'UP' | 'DOWN' | 'FLAT'
+
+const BAR_INTERVAL_SEC = 900 // 15m
 
 function toChartPoint(point: MesPoint) {
   return {
@@ -33,86 +41,77 @@ function toChartPoint(point: MesPoint) {
   }
 }
 
-function aggregateCandles(points: MesPoint[], periodMinutes: number): MesPoint[] {
-  if (points.length === 0) return []
-  const periodSec = periodMinutes * 60
-  const out: MesPoint[] = []
-  let bucket: MesPoint | null = null
-  let bucketStart = 0
-
-  for (const point of points) {
-    const aligned = Math.floor(point.time / periodSec) * periodSec
-    if (bucket === null || aligned !== bucketStart) {
-      if (bucket) out.push(bucket)
-      bucket = { ...point, time: aligned }
-      bucketStart = aligned
-      continue
-    }
-
-    bucket.high = Math.max(bucket.high, point.high)
-    bucket.low = Math.min(bucket.low, point.low)
-    bucket.close = point.close
-    bucket.volume = (bucket.volume || 0) + (point.volume || 0)
+function toCandle(point: MesPoint): CandleData {
+  return {
+    time: point.time,
+    open: point.open,
+    high: point.high,
+    low: point.low,
+    close: point.close,
+    volume: point.volume,
   }
-
-  if (bucket) out.push(bucket)
-  return out
 }
 
-function computeTrend(points: MesPoint[]): TrendState {
-  if (points.length < 2) return 'FLAT'
-  const last = points[points.length - 1].close
-  const lookback = points[Math.max(0, points.length - 4)].close
-  if (last > lookback) return 'UP'
-  if (last < lookback) return 'DOWN'
-  return 'FLAT'
+interface LiveMesChartProps {
+  forecast?: ForecastResponse | null
 }
 
-export default function LiveMesChart() {
+export default function LiveMesChart({ forecast }: LiveMesChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null)
+  const primitiveRef = useRef<ForecastTargetsPrimitive | null>(null)
   const pointsRef = useRef<MesPoint[]>([])
 
   const [status, setStatus] = useState<StreamStatus>('connecting')
   const [error, setError] = useState<string | null>(null)
   const [lastPrice, setLastPrice] = useState<number | null>(null)
-  const [trend1h, setTrend1h] = useState<TrendState>('FLAT')
-  const [trend4h, setTrend4h] = useState<TrendState>('FLAT')
+  const [priceChange, setPriceChange] = useState<number>(0)
+  const [sessionHigh, setSessionHigh] = useState<number | null>(null)
+  const [sessionLow, setSessionLow] = useState<number | null>(null)
 
+  // Get the best active measured move from the forecast
+  const activeMove = useMemo<MeasuredMove | null>(() => {
+    if (!forecast?.measuredMoves) return null
+    const active = forecast.measuredMoves.filter((m) => m.status === 'ACTIVE')
+    return active.length > 0 ? active[0] : null
+  }, [forecast])
+
+  // --- Chart setup ---
   useEffect(() => {
     if (!containerRef.current) return
 
     const chart = createChart(containerRef.current, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: '#0d1117' },
-        textColor: '#9aa4b2',
+        background: { type: ColorType.Solid, color: TV.bg.primary },
+        textColor: TV.text.secondary,
+        fontFamily: '-apple-system, BlinkMacSystemFont, Inter, sans-serif',
       },
       grid: {
-        vertLines: { color: 'rgba(255,255,255,0.05)' },
-        horzLines: { color: 'rgba(255,255,255,0.05)' },
+        vertLines: { color: TV.border.secondary },
+        horzLines: { color: TV.border.secondary },
       },
       rightPriceScale: {
-        borderColor: 'rgba(255,255,255,0.15)',
+        borderColor: TV.border.primary,
       },
       timeScale: {
-        borderColor: 'rgba(255,255,255,0.15)',
+        borderColor: TV.border.primary,
         timeVisible: true,
         secondsVisible: false,
       },
       crosshair: {
-        vertLine: { color: 'rgba(255,255,255,0.25)' },
-        horzLine: { color: 'rgba(255,255,255,0.25)' },
+        vertLine: { color: 'rgba(255,255,255,0.2)' },
+        horzLine: { color: 'rgba(255,255,255,0.2)' },
       },
     })
 
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a',
-      downColor: '#ef5350',
+      upColor: TV.bull.primary,
+      downColor: TV.bear.primary,
       borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
+      wickUpColor: TV.bull.primary,
+      wickDownColor: TV.bear.primary,
       priceFormat: {
         type: 'price',
         precision: 2,
@@ -120,26 +119,54 @@ export default function LiveMesChart() {
       },
     })
 
+    // Attach forecast targets primitive
+    const primitive = new ForecastTargetsPrimitive()
+    series.attachPrimitive(primitive)
+
     chartRef.current = chart
     seriesRef.current = series
+    primitiveRef.current = primitive
 
-    const onResize = () => {
+    const resizeObserver = new ResizeObserver(() => {
       chart.timeScale().fitContent()
-    }
-
-    const resizeObserver = new ResizeObserver(onResize)
+    })
     resizeObserver.observe(containerRef.current)
 
     return () => {
       resizeObserver.disconnect()
+      series.detachPrimitive(primitive)
       chart.remove()
       chartRef.current = null
       seriesRef.current = null
+      primitiveRef.current = null
     }
   }, [])
 
+  // --- SSE stream ---
   useEffect(() => {
-    const eventSource = new EventSource('/api/live/mes?backfill=220')
+    const eventSource = new EventSource('/api/live/mes15m?backfill=96')
+
+    const updateSessionStats = (points: MesPoint[]) => {
+      if (points.length === 0) return
+      const last = points[points.length - 1]
+      setLastPrice(last.close)
+
+      // Session H/L from visible data
+      let high = -Infinity
+      let low = Infinity
+      for (const p of points) {
+        if (p.high > high) high = p.high
+        if (p.low < low) low = p.low
+      }
+      setSessionHigh(high)
+      setSessionLow(low)
+
+      // Change % from first to last
+      const first = points[0]
+      if (first.open > 0) {
+        setPriceChange(((last.close - first.open) / first.open) * 100)
+      }
+    }
 
     const onSnapshot = (event: MessageEvent) => {
       try {
@@ -147,17 +174,22 @@ export default function LiveMesChart() {
         if (!seriesRef.current) return
         const points = data.points || []
         if (points.length === 0) return
+
         pointsRef.current = points
-        seriesRef.current.setData(points.map(toChartPoint))
-        setLastPrice(points[points.length - 1].close)
-        setTrend1h(computeTrend(aggregateCandles(points, 60)))
-        setTrend4h(computeTrend(aggregateCandles(points, 240)))
+
+        // Add whitespace for future target zones
+        const lastTime = points[points.length - 1].time
+        const whitespace = ensureFutureWhitespace(lastTime, BAR_INTERVAL_SEC, 8)
+        const chartData = [...points.map(toChartPoint), ...whitespace]
+        seriesRef.current.setData(chartData)
+
+        updateSessionStats(points)
         chartRef.current?.timeScale().fitContent()
         setStatus('live')
         setError(null)
       } catch (e) {
         setStatus('error')
-        setError(e instanceof Error ? e.message : 'Invalid live snapshot payload')
+        setError(e instanceof Error ? e.message : 'Invalid snapshot')
       }
     }
 
@@ -167,31 +199,30 @@ export default function LiveMesChart() {
         if (!seriesRef.current) return
         const updates = data.points || []
         if (updates.length === 0) return
+
         const byTime = new Map(pointsRef.current.map((p) => [p.time, p] as const))
         for (const point of updates) {
           byTime.set(point.time, point)
           seriesRef.current.update(toChartPoint(point))
-          setLastPrice(point.close)
         }
         pointsRef.current = [...byTime.values()].sort((a, b) => a.time - b.time)
-        setTrend1h(computeTrend(aggregateCandles(pointsRef.current, 60)))
-        setTrend4h(computeTrend(aggregateCandles(pointsRef.current, 240)))
+        updateSessionStats(pointsRef.current)
         setStatus('live')
         setError(null)
       } catch (e) {
         setStatus('error')
-        setError(e instanceof Error ? e.message : 'Invalid live update payload')
+        setError(e instanceof Error ? e.message : 'Invalid update')
       }
     }
 
-    const onError = () => {
+    const onSseError = () => {
       setStatus('error')
-      setError('Live stream disconnected. Verify local MES 15m ingestion process is running.')
+      setError('Live stream disconnected. Verify MES 15m ingestion is running.')
     }
 
     eventSource.addEventListener('snapshot', onSnapshot)
     eventSource.addEventListener('update', onUpdate)
-    eventSource.onerror = onError
+    eventSource.onerror = onSseError
 
     return () => {
       eventSource.removeEventListener('snapshot', onSnapshot)
@@ -200,33 +231,131 @@ export default function LiveMesChart() {
     }
   }, [])
 
+  // --- Wire forecast targets to primitive ---
+  useEffect(() => {
+    if (!primitiveRef.current) return
+
+    if (!activeMove || pointsRef.current.length === 0) {
+      primitiveRef.current.setTargets([])
+      return
+    }
+
+    const points = pointsRef.current
+    const lastTime = points[points.length - 1].time
+    const futureEnd = lastTime + BAR_INTERVAL_SEC * 8
+
+    // Run fib calculation on candle data for snap-blend alignment
+    const candles = points.map(toCandle)
+    const swings = detectSwings(candles)
+    const fib = calculateFibonacci(swings.highs, swings.lows)
+
+    const targets = mapMeasuredMoveAndCoreToTargets(
+      activeMove,
+      fib,
+      lastTime,
+      futureEnd
+    )
+
+    primitiveRef.current.setTargets(targets)
+  }, [activeMove, lastPrice])
+
+  const changeColor = priceChange >= 0 ? TV.bull.bright : TV.bear.bright
+
   return (
-    <div className="rounded-xl border border-white/5 bg-[#0d1117] overflow-hidden">
-      <div className="px-4 py-2 border-b border-white/5 flex items-center justify-between">
-        <span className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">MES Live 15m (Entries)</span>
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-white/45 font-semibold uppercase">
-            1H {trend1h}
-          </span>
-          <span className="text-[10px] text-white/45 font-semibold uppercase">
-            4H {trend4h}
-          </span>
-          {lastPrice != null && (
-            <span className="text-xs font-mono text-white/80">{lastPrice.toFixed(2)}</span>
+    <div
+      className="relative w-full rounded-2xl overflow-hidden border border-white/5"
+      style={{ background: 'linear-gradient(180deg, #131722 0%, #0d1117 100%)' }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div
+              className="w-2 h-2 rounded-full animate-pulse shadow-lg"
+              style={{
+                backgroundColor: status === 'live' ? TV.bull.bright : status === 'connecting' ? '#ffa726' : TV.bear.bright,
+                boxShadow: status === 'live' ? `0 0 8px ${TV.bull.bright}80` : 'none',
+              }}
+            />
+            <span className="text-base font-semibold text-white tracking-tight">MES</span>
+          </div>
+          <span className="text-xs text-white/30 font-medium">Micro E-mini S&P 500 &bull; 15m</span>
+        </div>
+
+        <div className="flex items-center gap-6">
+          {sessionHigh != null && sessionLow != null && (
+            <div className="flex items-center gap-4 text-xs">
+              <div className="flex items-center gap-1.5">
+                <span className="text-white/30">H</span>
+                <span className="text-white/60 font-mono">{sessionHigh.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-white/30">L</span>
+                <span className="text-white/60 font-mono">{sessionLow.toFixed(2)}</span>
+              </div>
+            </div>
           )}
+
+          {sessionHigh != null && <div className="h-4 w-px bg-white/10" />}
+
+          {lastPrice != null && (
+            <div className="flex items-center gap-3">
+              <span className="text-2xl font-semibold text-white tabular-nums">
+                {lastPrice.toFixed(2)}
+              </span>
+              <span
+                className="text-sm font-medium tabular-nums"
+                style={{ color: changeColor }}
+              >
+                {priceChange >= 0 ? '+' : ''}
+                {priceChange.toFixed(2)}%
+              </span>
+            </div>
+          )}
+
           <span
             className="text-[10px] font-bold uppercase tracking-wider"
-            style={{ color: status === 'live' ? '#26a69a' : status === 'connecting' ? '#ffa726' : '#ef5350' }}
+            style={{ color: status === 'live' ? TV.bull.bright : status === 'connecting' ? '#ffa726' : TV.bear.bright }}
           >
             {status}
           </span>
         </div>
       </div>
 
-      <div ref={containerRef} className="h-[420px] w-full" />
+      {/* Chart */}
+      <div ref={containerRef} className="w-full" style={{ height: '480px' }} />
 
+      {/* Legend Footer */}
+      <div className="flex items-center justify-center gap-8 px-6 py-3 border-t border-white/5 bg-black/20">
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: TV.bull.primary }} />
+          <span className="text-[10px] text-white/40 uppercase tracking-wider">Bullish</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: TV.bear.primary }} />
+          <span className="text-[10px] text-white/40 uppercase tracking-wider">Bearish</span>
+        </div>
+        {activeMove && (
+          <>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-2 rounded-sm" style={{ backgroundColor: TV.bull.primary, opacity: 0.3 }} />
+              <span className="text-[10px] text-white/40 uppercase tracking-wider">TP Zone</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 border-t border-dashed" style={{ borderColor: TV.bear.primary }} />
+              <span className="text-[10px] text-white/40 uppercase tracking-wider">Stop</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 border-t border-dashed" style={{ borderColor: TV.blue.primary }} />
+              <span className="text-[10px] text-white/40 uppercase tracking-wider">Entry</span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Error banner */}
       {error && (
-        <div className="px-4 py-2 border-t border-white/5">
+        <div className="px-6 py-2 border-t border-white/5">
           <p className="text-xs text-red-400">{error}</p>
         </div>
       )}
