@@ -30,30 +30,77 @@ except Exception as exc:  # pragma: no cover
         "AutoGluon TimeSeries is not available. Activate .venv-autogluon and install autogluon."
     ) from exc
 
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
+    print("[warn] psycopg2 not available; database source disabled")
+
 
 DEFAULT_SYMBOLS: tuple[str, ...] = (
-    "MES",
-    "ES",
-    "NQ",
-    "MNQ",
-    "YM",
-    "MYM",
-    "RTY",
-    "M2K",
-    "ZN",
-    "ZB",
-    "ZF",
-    "ZT",
-    "GC",
-    "MGC",
-    "SI",
-    "HG",
-    "CL",
-    "MCL",
-    "NG",
-    "6E",
-    "6J",
-    "6B",
+    # Equity Index Futures (Micro & Standard)
+    "MES", "ES",     # E-mini & Micro S&P 500
+    "MNQ", "NQ",     # Micro & E-mini Nasdaq-100
+    "MYM", "YM",     # Micro & E-mini Dow
+    "M2K", "RTY",    # Micro & E-mini Russell 2000
+    "MXP",           # Micro Nikkei 225
+
+    # Interest Rate Futures
+    "ZT",            # 2-Year T-Note
+    "ZF",            # 5-Year T-Note
+    "ZN",            # 10-Year T-Note
+    "ZB",            # 30-Year T-Bond
+    "UB",            # Ultra T-Bond
+    "GE",            # Eurodollar
+    "ZQ",            # 30-Day Fed Funds
+
+    # Energy Futures
+    "CL", "MCL",     # Crude Oil & Micro
+    "HO",            # Heating Oil
+    "RB",            # RBOB Gasoline
+    "NG", "QG",      # Natural Gas & E-mini
+    "BZ",            # Brent Crude
+
+    # Metals Futures
+    "GC", "MGC",     # Gold & Micro
+    "SI", "SIL",     # Silver & Micro
+    "HG",            # Copper
+    "PL",            # Platinum
+    "PA",            # Palladium
+
+    # Agricultural Futures
+    "ZC",            # Corn
+    "ZS",            # Soybeans
+    "ZW",            # Wheat
+    "ZL",            # Soybean Oil
+    "ZM",            # Soybean Meal
+    "KE",            # KC Hard Red Winter Wheat
+    "ZO",            # Oats
+    "ZR",            # Rough Rice
+    "GF",            # Feeder Cattle
+    "HE",            # Lean Hogs
+    "LE",            # Live Cattle
+
+    # FX Futures
+    "6E",            # Euro
+    "6J",            # Japanese Yen
+    "6B",            # British Pound
+    "6C",            # Canadian Dollar
+    "6A",            # Australian Dollar
+    "6S",            # Swiss Franc
+    "6N",            # New Zealand Dollar
+    "6M",            # Mexican Peso
+    "DX",            # US Dollar Index
+
+    # Crypto Futures
+    "BTC", "MBT",    # Bitcoin & Micro
+    "ETH", "MET",    # Ethereum & Micro
+
+    # Volatility & Other
+    "VX",            # VIX Futures
+    "VXM",           # Micro VIX
 )
 
 DEFAULT_HORIZONS: tuple[str, ...] = ("5m", "15m", "60m", "4h", "24h", "7d")
@@ -96,6 +143,14 @@ QUALITY_TO_PRESET: Dict[str, str] = {
     "high": "high_quality",
     "best": "best_quality",
     "extreme": "best_quality",
+}
+
+QUALITY_TO_TIME_LIMIT: Dict[str, int] = {
+    "fast": 300,      # 5 minutes
+    "medium": 1800,   # 30 minutes
+    "high": 3600,     # 1 hour
+    "best": 7200,     # 2 hours
+    "extreme": 14400, # 4 hours (full model zoo)
 }
 
 BIAS_THRESHOLD_PCT = 0.05
@@ -220,6 +275,96 @@ def _to_naive_utc(ts_index: pd.Index) -> pd.DatetimeIndex:
     return ts
 
 
+def _fetch_from_database(
+    timeframe: Timeframe,
+    days_back: int,
+) -> Tuple[pd.DataFrame, Dict[str, int], Dict[str, str], Dict[str, str], Dict[str, str], Dict[str, str]]:
+    """Fetch ALL symbols from local database instead of Databento."""
+    import os
+    if not PSYCOPG2_AVAILABLE:
+        raise RuntimeError("psycopg2 not installed; cannot fetch from database")
+
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL not set")
+
+    # Map timeframe to table
+    table_map = {
+        "1h": "futures_ex_mes_1h",
+        "1d": "futures_ex_mes_1d",
+    }
+    table = table_map.get(timeframe)
+    if not table:
+        raise ValueError(f"Database source only supports 1h, 1d timeframes; got {timeframe}")
+
+    cutoff_date = f"NOW() - INTERVAL '{days_back} days'"
+    time_col = "event_time" if timeframe == "1h" else "event_date"
+
+    conn = psycopg2.connect(db_url)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get all symbols
+            cur.execute(f"SELECT DISTINCT symbol_code FROM {table} ORDER BY symbol_code")
+            all_symbols = [row["symbol_code"] for row in cur.fetchall()]
+            print(f"[db] Found {len(all_symbols)} symbols in {table}: {', '.join(all_symbols[:20])}{'...' if len(all_symbols) > 20 else ''}")
+
+            rows = []
+            bars_per_symbol = {}
+            failed = {}
+            first_ts = {}
+            last_ts = {}
+            source_schema = {}
+
+            for symbol in all_symbols:
+                try:
+                    query = f"""
+                        SELECT {time_col} as timestamp, close as target
+                        FROM {table}
+                        WHERE symbol_code = %s AND {time_col} >= {cutoff_date}
+                        ORDER BY {time_col} ASC
+                    """
+                    cur.execute(query, (symbol,))
+                    symbol_data = cur.fetchall()
+
+                    if not symbol_data:
+                        failed[symbol] = "No data in timeframe"
+                        continue
+
+                    df = pd.DataFrame([
+                        {
+                            "item_id": symbol,
+                            "timestamp": row["timestamp"],
+                            "target": float(row["target"])
+                        }
+                        for row in symbol_data
+                    ])
+
+                    df = df.dropna().sort_values("timestamp")
+                    if df.empty:
+                        failed[symbol] = "No valid rows"
+                        continue
+
+                    rows.append(df)
+                    bars_per_symbol[symbol] = len(df)
+                    source_schema[symbol] = table
+                    first_ts[symbol] = pd.Timestamp(df["timestamp"].iloc[0]).isoformat()
+                    last_ts[symbol] = pd.Timestamp(df["timestamp"].iloc[-1]).isoformat()
+                    print(f"[db]   {symbol}: {len(df)} bars, {first_ts[symbol]} to {last_ts[symbol]}")
+
+                except Exception as exc:
+                    failed[symbol] = str(exc).splitlines()[0][:280]
+                    print(f"[db]   {symbol}: FAILED - {failed[symbol]}")
+
+            if not rows:
+                raise RuntimeError("No symbols could be fetched from database")
+
+            combined = pd.concat(rows, ignore_index=True).sort_values(["item_id", "timestamp"])
+            return combined, bars_per_symbol, failed, first_ts, last_ts, source_schema
+
+    finally:
+        conn.close()
+
+
 def _build_multiseries_frame(
     roots: Sequence[str],
     timeframe: Timeframe,
@@ -322,6 +467,7 @@ def train_real_mes_model(
     time_limit: int,
     model_dir: Path,
     forecast_csv: Path,
+    use_database: bool = False,
 ) -> MesRealModelSummary:
     modeled_horizons, skipped_horizons = _split_horizons_for_timeframe(timeframe, horizons)
     if not modeled_horizons:
@@ -333,18 +479,31 @@ def train_real_mes_model(
     required_pred_len = max(horizon_steps.values()) if horizon_steps else prediction_length
     prediction_length = max(prediction_length, required_pred_len)
 
-    multi_df, bars_per_symbol, failed, _, _, _ = _build_multiseries_frame(
-        roots=roots, timeframe=timeframe, days_back=days_back
-    )
+    if use_database:
+        print(f"[train] Fetching ALL symbols from database (ignoring --symbols argument)")
+        multi_df, bars_per_symbol, failed, _, _, _ = _fetch_from_database(
+            timeframe=timeframe, days_back=days_back
+        )
+    else:
+        print(f"[train] Fetching {len(roots)} symbols from Databento API")
+        multi_df, bars_per_symbol, failed, _, _, _ = _build_multiseries_frame(
+            roots=roots, timeframe=timeframe, days_back=days_back
+        )
     tsdf = TimeSeriesDataFrame.from_data_frame(
         multi_df,
         id_column="item_id",
         timestamp_column="timestamp",
     )
-    # Keep only real observed bars (no generated fills / no synthetic carry-forward rows).
-    tsdf = tsdf.dropna()
+    # Keep only real observed bars per symbol (no NaN targets within each series).
+    # Use subset=['target'] to avoid dropping rows just because timestamp/item_id exist.
+    tsdf = tsdf.dropna(subset=["target"])
 
     used_symbols = sorted(str(s) for s in tsdf.item_ids)
+    print(f"[train] Training on {len(used_symbols)} symbols: {used_symbols}")
+    for sym in used_symbols:
+        sym_len = len(tsdf.loc[sym])
+        print(f"[train]   {sym}: {sym_len} bars")
+
     if "MES" not in used_symbols:
         raise RuntimeError("MES missing from fetched symbol universe; cannot train MES model")
     if len(tsdf) <= prediction_length * max(2, len(used_symbols)):
@@ -353,21 +512,97 @@ def train_real_mes_model(
         )
 
     train_data, test_data = tsdf.train_test_split(prediction_length=prediction_length)
+    print(f"[train] train_data: {len(train_data)} rows across {len(train_data.item_ids)} symbols")
+    print(f"[train] test_data: {len(test_data)} rows across {len(test_data.item_ids)} symbols")
 
     model_dir.mkdir(parents=True, exist_ok=True)
+
+    # Known covariates are features we know in advance (time-based)
+    # Note: Only works if these columns exist in the training data
+    known_covariates = []  # Would be ['hour', 'day_of_week', etc] if we had them
+
     predictor = TimeSeriesPredictor(
         prediction_length=prediction_length,
         target="target",
         freq=AG_FREQ_MAP[timeframe],
         path=str(model_dir),
         eval_metric="MASE",
+        known_covariates_names=known_covariates,
         verbosity=2,
     )
+
+    # FULL MODEL ZOO - ALL AutoGluon 1.5 TimeSeries Models
+    all_models_hyperparameters = {
+        # ================== STATISTICAL MODELS ==================
+        "Naive": {},
+        "SeasonalNaive": {},
+        "Average": {},
+        "SeasonalAverage": {},
+        "Zero": {},  # Always predicts zero baseline
+        "Theta": {},
+        "AutoETS": {"max_ts_length": 2500},
+        "AutoARIMA": {"max_ts_length": 2500},
+        "DynamicOptimizedTheta": {},
+        "ADIDA": {},  # Aggregate-Disaggregate Intermittent Demand Approach
+
+        # ================== TABULAR ML MODELS ==================
+        "RecursiveTabular": {"n_repeat_predictions": 10},
+        "DirectTabular": {},
+
+        # ================== DEEP LEARNING MODELS ==================
+        # Transformer-based
+        "TemporalFusionTransformer": {"epochs": 100, "num_batches_per_epoch": 50},
+        "Transformer": {"epochs": 100, "num_batches_per_epoch": 50},
+        "PatchTST": {"epochs": 100, "num_batches_per_epoch": 50},
+
+        # RNN-based
+        "DeepAR": {"epochs": 100, "num_batches_per_epoch": 50},
+        "MQRNNRegressor": {"epochs": 100},  # Multi-Quantile RNN
+        "SimpleFeedForward": {"epochs": 100, "num_batches_per_epoch": 50},
+
+        # CNN-based
+        "WaveNet": {"epochs": 100, "num_batches_per_epoch": 50},
+        "MQCNN": {"epochs": 100},  # Multi-Quantile CNN
+
+        # Quantile-based deep models
+        "MQF2": {"epochs": 100},  # Multi-Quantile Feedforward v2
+
+        # ================== CHRONOS FOUNDATION MODELS ==================
+        # Pre-trained zero-shot models (if available)
+        "Chronos[tiny]": {},     # Fastest, least accurate
+        "Chronos[mini]": {},     # Fast, good accuracy
+        "Chronos[small]": {},    # Balanced
+        "Chronos[base]": {},     # Standard (recommended)
+        "Chronos[large]": {},    # Slower, more accurate
+
+        # ================== ENSEMBLE MODELS ==================
+        # WeightedEnsemble is auto-created if enable_ensemble=True
+    }
+
+    print(f"[train] ========================================")
+    print(f"[train] FULL AUTOGLUON 1.5 MODEL ZOO")
+    print(f"[train] {len(all_models_hyperparameters)} models configured")
+    print(f"[train] ========================================")
+    print(f"[train] Statistical: Naive, SeasonalNaive, Theta, AutoETS, AutoARIMA, etc")
+    print(f"[train] Tabular: RecursiveTabular, DirectTabular")
+    print(f"[train] Deep Learning: TFT, PatchTST, DeepAR, WaveNet, Transformer")
+    print(f"[train] Chronos: tiny→mini→small→base→large")
+    print(f"[train] Time limit: {time_limit}s ({time_limit/3600:.1f}h)")
+    print(f"[train] ========================================")
+
     predictor.fit(
         train_data=train_data,
-        presets=presets,
+        hyperparameters=all_models_hyperparameters,
         time_limit=time_limit,
+        enable_ensemble=True,
+        num_val_windows=1,
+        skip_model_selection=False,
+        random_seed=42,  # Reproducibility
     )
+
+    print(f"[train] ========================================")
+    print(f"[train] Training complete!")
+    print(f"[train] Generating leaderboard...")
 
     leaderboard = predictor.leaderboard(test_data, silent=True)
     top_row = leaderboard.iloc[0]
@@ -521,8 +756,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--time-limit",
         type=int,
-        default=3600,
-        help="Training time limit in seconds.",
+        default=0,
+        help="Training time limit in seconds (0=auto based on quality: extreme=14400s/4h).",
     )
     parser.add_argument(
         "--model-dir",
@@ -547,6 +782,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Only run Databento symbol audit and exit (no model training).",
     )
+    parser.add_argument(
+        "--use-database",
+        action="store_true",
+        help="Fetch ALL symbols from local database instead of Databento (trains on EVERYTHING).",
+    )
     return parser.parse_args()
 
 
@@ -569,6 +809,13 @@ def main() -> None:
         else max(DEFAULT_PREDICTION_LENGTH[timeframe], min_required)
     )
     presets = _select_presets(args.quality, args.presets or None)
+
+    # Auto-select time limit based on quality if not explicitly provided
+    time_limit = args.time_limit if args.time_limit > 0 else QUALITY_TO_TIME_LIMIT[args.quality]
+
+    print(f"[config] Quality: {args.quality} -> Presets: {presets}, Time limit: {time_limit}s ({time_limit/3600:.1f}h)")
+    print(f"[config] Training on {len(roots)} symbols: {roots}")
+    print(f"[config] Prediction length: {prediction_length} bars, Horizons: {horizons}")
 
     run_model_dir = Path(f"{args.model_dir}_{timeframe}")
     if args.audit_only:
@@ -593,8 +840,7 @@ def main() -> None:
         presets=presets,
         time_limit=args.time_limit,
         model_dir=run_model_dir,
-        forecast_csv=args.forecast_csv,
-    )
+        forecast_csv=args.forecast_csv,        use_database=args.use_database,    )
 
     args.summary_json.parent.mkdir(parents=True, exist_ok=True)
     args.summary_json.write_text(json.dumps(asdict(summary), indent=2))
