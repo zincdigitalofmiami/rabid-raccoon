@@ -56,6 +56,10 @@ function toCandle(timeMs: number, open: number, high: number, low: number, close
   }
 }
 
+function startOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+}
+
 async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: string): Promise<CandleData[] | null> {
   if (!(await canUseDatabase())) return null
 
@@ -98,21 +102,21 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
       )
     }
 
-    const rows = await prisma.futuresExMes1h.findMany({
+    const rows = await prisma.futuresExMes1d.findMany({
       where: {
         symbolCode: symbol,
-        eventTime: {
-          gte: start,
-          lte: end,
+        eventDate: {
+          gte: startOfUtcDay(start),
+          lte: startOfUtcDay(end),
         },
       },
-      orderBy: { eventTime: 'asc' },
+      orderBy: { eventDate: 'asc' },
       take: 20_000,
     })
 
     if (rows.length === 0) return null
     return rows.map((row) =>
-      toCandle(row.eventTime.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
+      toCandle(row.eventDate.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
     )
   } catch {
     dbState = 'failed'
@@ -259,6 +263,8 @@ export async function fetchDailyCandlesForSymbol(
 
   const hourly = await fetchCandlesFromDb(symbol, queryStart, queryEnd)
   if (!hourly || hourly.length === 0) databaseOnlyError(symbol)
+  if (symbol !== 'MES') return hourly
+
   const daily = aggregateToDaily(hourly)
   if (daily.length === 0) databaseOnlyError(symbol)
   return daily

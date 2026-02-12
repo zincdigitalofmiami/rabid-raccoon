@@ -49,13 +49,16 @@ const INGEST_CONFIG = {
     'RSG',
     'RSV',
   ] as const,
-  TIMEFRAME: '1h' as const,
+  MES_TIMEFRAME: '1h' as const,
+  NON_MES_TIMEFRAME: '1d' as const,
   HISTORY_DAYS: 730,
   MIN_COVERAGE_PCT: 95,
   ZERO_FAKE_POLICY: true,
   DATABENTO_ONLY: true,
-  EXPECTED_CANDLES_PER_SYMBOL: Math.floor(730 * 23),
-  RAW_SCHEMA: 'ohlcv-1m',
+  EXPECTED_H1_CANDLES_PER_SYMBOL: Math.floor(730 * 23),
+  EXPECTED_D1_CANDLES_PER_SYMBOL: Math.floor((730 * 5) / 7),
+  MES_RAW_SCHEMA: 'ohlcv-1m',
+  NON_MES_RAW_SCHEMA: 'ohlcv-1d',
   CHUNK_DAYS: 14,
   INSERT_BATCH_SIZE: 1000,
 }
@@ -81,6 +84,20 @@ function toJson(value: unknown): Prisma.InputJsonValue {
 
 function hardFail(message: string): never {
   throw new Error(`FULL_2Y_REQUIRED_VIOLATION: ${message}`)
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null
+  try {
+    return (await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`TIMEOUT: ${label} exceeded ${ms}ms`)), ms)
+      }),
+    ])) as T
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
 }
 
 function assertNoForbiddenOverrides(): boolean {
@@ -124,6 +141,14 @@ function expectedTradableCandlesPerSymbol(days: number): number {
   return Math.floor((days * 5 * 23) / 7)
 }
 
+function expectedTradableDaysPerSymbol(days: number): number {
+  return Math.floor((days * 5) / 7)
+}
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+}
+
 function sanitizeCandles(candles: ReturnType<typeof toCandles>): ReturnType<typeof toCandles> {
   const byTime = new Map<number, (typeof candles)[number]>()
   for (const candle of candles) byTime.set(candle.time, candle)
@@ -158,20 +183,22 @@ async function upsertDataSourceRegistry(): Promise<void> {
     create: {
       sourceId: 'market-prices-databento',
       sourceName: 'Databento Futures OHLCV',
-      description: 'Databento GLBX futures candle ingestion with MES isolated from non-MES universe.',
-      targetTable: 'mes_prices_1h,futures_ex_mes_1h',
+      description:
+        'Databento GLBX futures ingestion with MES (1m->1h) and non-MES (native 1d) in dedicated daily training table.',
+      targetTable: 'mes_prices_1h,futures_ex_mes_1d',
       apiProvider: 'databento',
-      updateFrequency: 'intraday',
+      updateFrequency: 'mixed',
       authEnvVar: 'DATABENTO_API_KEY',
       ingestionScript: 'scripts/ingest-market-prices.ts',
       isActive: true,
     },
     update: {
       sourceName: 'Databento Futures OHLCV',
-      description: 'Databento GLBX futures candle ingestion with MES isolated from non-MES universe.',
-      targetTable: 'mes_prices_1h,futures_ex_mes_1h',
+      description:
+        'Databento GLBX futures ingestion with MES (1m->1h) and non-MES (native 1d) in dedicated daily training table.',
+      targetTable: 'mes_prices_1h,futures_ex_mes_1d',
       apiProvider: 'databento',
-      updateFrequency: 'intraday',
+      updateFrequency: 'mixed',
       authEnvVar: 'DATABENTO_API_KEY',
       ingestionScript: 'scripts/ingest-market-prices.ts',
       isActive: true,
@@ -246,21 +273,22 @@ async function existingCountForSymbol(symbolCode: string): Promise<number> {
   if (symbolCode === 'MES') {
     return prisma.mesPrice1h.count()
   }
-  return prisma.futuresExMes1h.count({ where: { symbolCode } })
+  return prisma.futuresExMes1d.count({ where: { symbolCode } })
 }
 
 async function insertCandlesForSymbol(
   symbolCode: string,
   dataset: string,
-  candles1h: ReturnType<typeof aggregateCandles>,
+  sourceSchema: string,
+  candles: ReturnType<typeof aggregateCandles>,
   dryRun: boolean
 ): Promise<{ processed: number; inserted: number }> {
   let inserted = 0
-  const processed = candles1h.length
+  const processed = candles.length
   if (dryRun || processed === 0) return { processed, inserted }
 
   if (symbolCode === 'MES') {
-    const rows: Prisma.MesPrice1hCreateManyInput[] = candles1h.map((candle) => {
+    const rows: Prisma.MesPrice1hCreateManyInput[] = candles.map((candle) => {
       const eventTime = asUtcDateFromUnixSeconds(candle.time)
       return {
         eventTime,
@@ -271,7 +299,7 @@ async function insertCandlesForSymbol(
         volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
         source: 'DATABENTO',
         sourceDataset: dataset,
-        sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
+        sourceSchema,
         rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
       }
     })
@@ -287,11 +315,12 @@ async function insertCandlesForSymbol(
     return { processed, inserted }
   }
 
-  const rows: Prisma.FuturesExMes1hCreateManyInput[] = candles1h.map((candle) => {
+  const rows: Prisma.FuturesExMes1dCreateManyInput[] = candles.map((candle) => {
     const eventTime = asUtcDateFromUnixSeconds(candle.time)
+    const eventDate = startOfUtcDay(eventTime)
     return {
       symbolCode,
-      eventTime,
+      eventDate,
       open: candle.open,
       high: candle.high,
       low: candle.low,
@@ -299,14 +328,14 @@ async function insertCandlesForSymbol(
       volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
       source: 'DATABENTO',
       sourceDataset: dataset,
-      sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
+      sourceSchema,
       rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
     }
   })
 
   for (let i = 0; i < rows.length; i += INGEST_CONFIG.INSERT_BATCH_SIZE) {
     const batch = rows.slice(i, i + INGEST_CONFIG.INSERT_BATCH_SIZE)
-    const result = await prisma.futuresExMes1h.createMany({
+    const result = await prisma.futuresExMes1d.createMany({
       data: batch,
       skipDuplicates: true,
     })
@@ -316,16 +345,20 @@ async function insertCandlesForSymbol(
   return { processed, inserted }
 }
 
-async function verifyLoadedCoverage(symbolCodes: string[], minCoverageCount: number): Promise<void> {
+async function verifyLoadedCoverage(
+  symbolCodes: string[],
+  minCoverageHourly: number,
+  minCoverageDaily: number
+): Promise<void> {
   const mesCount = await prisma.mesPrice1h.count()
-  if (symbolCodes.includes('MES') && mesCount < minCoverageCount) {
-    hardFail(`INSUFFICIENT_DATA: MES has only ${mesCount} rows; ${minCoverageCount} required.`)
+  if (symbolCodes.includes('MES') && mesCount < minCoverageHourly) {
+    hardFail(`INSUFFICIENT_DATA: MES has only ${mesCount} rows; ${minCoverageHourly} required.`)
   }
 
   const nonMes = symbolCodes.filter((code) => code !== 'MES')
   if (nonMes.length === 0) return
 
-  const grouped = await prisma.futuresExMes1h.groupBy({
+  const grouped = await prisma.futuresExMes1d.groupBy({
     by: ['symbolCode'],
     where: { symbolCode: { in: nonMes } },
     _count: { _all: true },
@@ -338,8 +371,8 @@ async function verifyLoadedCoverage(symbolCodes: string[], minCoverageCount: num
   const countMap = new Map<string, number>(grouped.map((row) => [row.symbolCode, row._count._all]))
   for (const code of nonMes) {
     const count = countMap.get(code) || 0
-    if (count < minCoverageCount) {
-      hardFail(`INSUFFICIENT_DATA: ${code} has only ${count} rows; ${minCoverageCount} required.`)
+    if (count < minCoverageDaily) {
+      hardFail(`INSUFFICIENT_DATA: ${code} has only ${count} rows; ${minCoverageDaily} required.`)
     }
   }
 }
@@ -372,27 +405,34 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
   }
 
   const chunks = splitIntoDayChunks(start, end, INGEST_CONFIG.CHUNK_DAYS)
-  const tfPrisma = timeframeToPrisma(INGEST_CONFIG.TIMEFRAME)
+  const tfPrisma = timeframeToPrisma(INGEST_CONFIG.MES_TIMEFRAME)
   if (tfPrisma !== Timeframe.H1) {
-    hardFail(`TIMEFRAME_VIOLATION: expected H1 only, got ${tfPrisma}`)
+    hardFail(`TIMEFRAME_VIOLATION: expected MES H1, got ${tfPrisma}`)
   }
 
-  const minCoverageCount = Math.floor(
+  const minCoverageHourly = Math.floor(
     expectedTradableCandlesPerSymbol(INGEST_CONFIG.HISTORY_DAYS) * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100)
+  )
+  const minCoverageDaily = Math.floor(
+    expectedTradableDaysPerSymbol(INGEST_CONFIG.HISTORY_DAYS) * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100)
   )
 
   const run = await prisma.ingestionRun.create({
     data: {
-      job: 'market-prices-1h',
+      job: 'market-prices-mes-1h-nonmes-1d',
       status: 'RUNNING',
       details: toJson({
         daysBack: INGEST_CONFIG.HISTORY_DAYS,
-        timeframe: INGEST_CONFIG.TIMEFRAME,
-        sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
+        timeframeMes: INGEST_CONFIG.MES_TIMEFRAME,
+        timeframeNonMes: INGEST_CONFIG.NON_MES_TIMEFRAME,
+        sourceSchemaMes: INGEST_CONFIG.MES_RAW_SCHEMA,
+        sourceSchemaNonMes: INGEST_CONFIG.NON_MES_RAW_SCHEMA,
         chunkDays: INGEST_CONFIG.CHUNK_DAYS,
         symbolsRequested: INGEST_CONFIG.SYMBOL_UNIVERSE,
-        minCoverageCount,
-        expectedCandlesReference: INGEST_CONFIG.EXPECTED_CANDLES_PER_SYMBOL,
+        minCoverageHourly,
+        minCoverageDaily,
+        expectedH1Reference: INGEST_CONFIG.EXPECTED_H1_CANDLES_PER_SYMBOL,
+        expectedD1Reference: INGEST_CONFIG.EXPECTED_D1_CANDLES_PER_SYMBOL,
       }),
     },
   })
@@ -410,33 +450,50 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
 
     for (const symbol of selected) {
       try {
+        const symbolMinCoverage = symbol.code === 'MES' ? minCoverageHourly : minCoverageDaily
+        const symbolTimeframe = symbol.code === 'MES' ? INGEST_CONFIG.MES_TIMEFRAME : INGEST_CONFIG.NON_MES_TIMEFRAME
+        const sourceSchema = symbol.code === 'MES' ? INGEST_CONFIG.MES_RAW_SCHEMA : INGEST_CONFIG.NON_MES_RAW_SCHEMA
+        const rawMinCoverage =
+          symbol.code === 'MES'
+            ? Math.floor(INGEST_CONFIG.EXPECTED_H1_CANDLES_PER_SYMBOL * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100))
+            : Math.floor(INGEST_CONFIG.EXPECTED_D1_CANDLES_PER_SYMBOL * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100))
+
         const existingCount = await existingCountForSymbol(symbol.code)
-        if (existingCount >= minCoverageCount) {
-          symbolsCoveragePct[symbol.code] = Number(((existingCount / minCoverageCount) * 100).toFixed(2))
+        if (existingCount >= symbolMinCoverage) {
+          symbolsCoveragePct[symbol.code] = Number(((existingCount / symbolMinCoverage) * 100).toFixed(2))
           symbolsProcessed.push(symbol.code)
           console.log(
-            `[market-prices] SUCCESS: ${symbol.code} already compliant in DB (${existingCount} rows >= ${minCoverageCount}).`
+            `[market-prices] SUCCESS: ${symbol.code} already compliant in DB (${existingCount} ${symbolTimeframe} rows >= ${symbolMinCoverage}).`
           )
           continue
         }
 
-        console.log(`\n[market-prices] ${symbol.code} ingest start (${chunks.length} chunks)`)
+        const symbolChunks = symbol.code === 'MES' ? chunks : [{ start, end }]
+        console.log(`\n[market-prices] ${symbol.code} ingest start (${symbolChunks.length} chunks)`)
         const rawCandlesAll: ReturnType<typeof toCandles> = []
 
-        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-          const chunk = chunks[chunkIndex]
-          if (chunkIndex === 0 || (chunkIndex + 1) % 5 === 0 || chunkIndex === chunks.length - 1) {
-            console.log(`[market-prices] ${symbol.code} chunk ${chunkIndex + 1}/${chunks.length}`)
+        for (let chunkIndex = 0; chunkIndex < symbolChunks.length; chunkIndex++) {
+          const chunk = symbolChunks[chunkIndex]
+          if (
+            chunkIndex === 0 ||
+            (chunkIndex + 1) % 5 === 0 ||
+            chunkIndex === symbolChunks.length - 1
+          ) {
+            console.log(`[market-prices] ${symbol.code} chunk ${chunkIndex + 1}/${symbolChunks.length}`)
           }
 
-          const records = await fetchOhlcv({
-            dataset: symbol.dataset,
-            symbol: symbol.databentoSymbol,
-            stypeIn: 'continuous',
-            start: formatUtcIso(chunk.start),
-            end: formatUtcIso(chunk.end),
-            schema: INGEST_CONFIG.RAW_SCHEMA,
-          })
+          const records = await withTimeout(
+            fetchOhlcv({
+              dataset: symbol.dataset,
+              symbol: symbol.databentoSymbol,
+              stypeIn: 'continuous',
+              start: formatUtcIso(chunk.start),
+              end: formatUtcIso(chunk.end),
+              schema: sourceSchema,
+            }),
+            symbol.code === 'MES' ? 120_000 : 60_000,
+            `Databento ${symbol.code} ${sourceSchema}`
+          )
 
           if (records.length === 0) continue
           const chunkCandles = toCandles(records)
@@ -459,41 +516,44 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
           continue
         }
 
-        if (
-          rawCandlesAll.length <
-          Math.floor(INGEST_CONFIG.EXPECTED_CANDLES_PER_SYMBOL * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100))
-        ) {
+        if (rawCandlesAll.length < rawMinCoverage) {
           symbolsFailed[symbol.code] =
-            `AUDIT_FAIL: ${symbol.code} raw count=${rawCandlesAll.length} below enforced reference threshold.`
+            `AUDIT_FAIL: ${symbol.code} raw count=${rawCandlesAll.length} below enforced ${sourceSchema} threshold ${rawMinCoverage}.`
           console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
           continue
         }
 
         const uniqueCandles = sanitizeCandles(rawCandlesAll)
-        const candles1h = aggregateCandles(uniqueCandles, 60)
-        if (candles1h.some((candle) => candle.close == null || !Number.isFinite(candle.close))) {
+        const aggregated = aggregateCandles(uniqueCandles, symbol.code === 'MES' ? 60 : 1440)
+        if (aggregated.some((candle) => candle.close == null || !Number.isFinite(candle.close))) {
           symbolsFailed[symbol.code] =
             `GAP_DETECTED_IN_RESAMPLE: ${symbol.code} has null/invalid close after aggregation.`
           console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
           continue
         }
 
-        const coveragePct = (candles1h.length / minCoverageCount) * 100
+        const coveragePct = (aggregated.length / symbolMinCoverage) * 100
         symbolsCoveragePct[symbol.code] = Number(coveragePct.toFixed(2))
-        if (candles1h.length < minCoverageCount) {
+        if (aggregated.length < symbolMinCoverage) {
           symbolsFailed[symbol.code] =
-            `AUDIT_FAIL: ${symbol.code} has ${candles1h.length} 1h rows (< ${minCoverageCount}, ${INGEST_CONFIG.MIN_COVERAGE_PCT}% coverage). Excluding.`
+            `AUDIT_FAIL: ${symbol.code} has ${aggregated.length} ${symbolTimeframe} rows (< ${symbolMinCoverage}, ${INGEST_CONFIG.MIN_COVERAGE_PCT}% coverage). Excluding.`
           console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
           continue
         }
 
-        const result = await insertCandlesForSymbol(symbol.code, symbol.dataset, candles1h, dryRun)
+        const result = await insertCandlesForSymbol(
+          symbol.code,
+          symbol.dataset,
+          sourceSchema,
+          aggregated,
+          dryRun
+        )
         rowsProcessed += result.processed
         rowsInserted += result.inserted
 
         symbolsProcessed.push(symbol.code)
         console.log(
-          `[market-prices] SUCCESS: ${symbol.code} full 2y 1h loaded – ${candles1h.length} rows, no fake data.`
+          `[market-prices] SUCCESS: ${symbol.code} full 2y ${symbolTimeframe} loaded – ${aggregated.length} rows, no fake data.`
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -508,15 +568,15 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
     }
 
     if (!dryRun) {
-      await verifyLoadedCoverage(passingSymbols, minCoverageCount)
+      await verifyLoadedCoverage(passingSymbols, minCoverageHourly, minCoverageDaily)
       postLoadVerified = true
       console.log('ALL CLEAR: Full 2y ingestion complete – no lies, no fakes, ready for training.')
     }
 
     const status = Object.keys(symbolsFailed).length === 0 ? 'SUCCEEDED' : 'PARTIAL'
     const summary: PriceIngestSummary = {
-      timeframe: INGEST_CONFIG.TIMEFRAME,
-      sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
+      timeframe: `MES=${INGEST_CONFIG.MES_TIMEFRAME};NON_MES=${INGEST_CONFIG.NON_MES_TIMEFRAME}`,
+      sourceSchema: `MES=${INGEST_CONFIG.MES_RAW_SCHEMA};NON_MES=${INGEST_CONFIG.NON_MES_RAW_SCHEMA}`,
       daysBack: INGEST_CONFIG.HISTORY_DAYS,
       symbolsRequested: [...INGEST_CONFIG.SYMBOL_UNIVERSE],
       symbolsProcessed,

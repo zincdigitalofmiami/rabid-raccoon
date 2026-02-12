@@ -17,7 +17,6 @@ import type {
   IPrimitivePaneRenderer,
   ISeriesPrimitiveAxisView,
   AutoscaleInfo,
-  Logical,
   Coordinate,
 } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'

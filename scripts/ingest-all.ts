@@ -16,7 +16,7 @@ async function run(): Promise<void> {
   console.log('[ingest-all] macro indicators complete')
 
   console.log('[ingest-all] step 3/3 measured move signals')
-  const mm = await runIngestMeasuredMoveSignals()
+  const mm = await runIngestMeasuredMoveSignals({ timeframe: '1h', symbols: ['MES'] })
   console.log('[ingest-all] measured move signals complete')
 
   console.log(

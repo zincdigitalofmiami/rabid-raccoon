@@ -56,7 +56,7 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
         .split(',')
         .map((s) => s.trim().toUpperCase())
         .filter(Boolean)
-    : []
+    : ['MES']
 
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
   if (!Number.isFinite(daysBack) || daysBack <= 0) {
@@ -86,7 +86,7 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
     const perSymbol = new Map<string, CandleData[]>()
 
-    const includeMes = symbolsRequested.length === 0 || symbolsRequested.includes('MES')
+    const includeMes = symbolsRequested.includes('MES')
     if (includeMes) {
       const mesCandles = await prisma.mesPrice1h.findMany({
         where: { eventTime: { gte: start } },
@@ -108,24 +108,26 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
     }
 
     const nonMesRequested = symbolsRequested.filter((code) => code !== 'MES')
-    const futuresRows = await prisma.futuresExMes1h.findMany({
-      where: {
-        eventTime: { gte: start },
-        ...(symbolsRequested.length ? { symbolCode: { in: nonMesRequested } } : {}),
-      },
-      orderBy: [{ symbolCode: 'asc' }, { eventTime: 'asc' }],
-    })
-    for (const row of futuresRows) {
-      const list = perSymbol.get(row.symbolCode) || []
-      list.push({
-        time: Math.floor(row.eventTime.getTime() / 1000),
-        open: row.open,
-        high: row.high,
-        low: row.low,
-        close: row.close,
-        volume: row.volume ? Number(row.volume) : 0,
+    if (nonMesRequested.length > 0) {
+      const futuresRows = await prisma.futuresExMes1h.findMany({
+        where: {
+          eventTime: { gte: start },
+          symbolCode: { in: nonMesRequested },
+        },
+        orderBy: [{ symbolCode: 'asc' }, { eventTime: 'asc' }],
       })
-      perSymbol.set(row.symbolCode, list)
+      for (const row of futuresRows) {
+        const list = perSymbol.get(row.symbolCode) || []
+        list.push({
+          time: Math.floor(row.eventTime.getTime() / 1000),
+          open: row.open,
+          high: row.high,
+          low: row.low,
+          close: row.close,
+          volume: row.volume ? Number(row.volume) : 0,
+        })
+        perSymbol.set(row.symbolCode, list)
+      }
     }
 
     if (perSymbol.size === 0) {

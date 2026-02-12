@@ -12,7 +12,8 @@ import {
 
 const DAILY_LOOKBACK_HOURS_DEFAULT = 72
 const INSERT_BATCH_SIZE = 1000
-const RAW_SCHEMA = 'ohlcv-1m'
+const MES_RAW_SCHEMA = 'ohlcv-1m'
+const NON_MES_RAW_SCHEMA = 'ohlcv-1d'
 
 interface DailyIngestOptions {
   dryRun?: boolean
@@ -38,6 +39,24 @@ function hashPriceRow(symbolCode: string, eventTime: Date, close: number): strin
   return createHash('sha256')
     .update(`${symbolCode}|${eventTime.toISOString()}|${close}`)
     .digest('hex')
+}
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null
+  try {
+    return (await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`TIMEOUT: ${label} exceeded ${ms}ms`)), ms)
+      }),
+    ])) as T
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
 }
 
 function parseBoolean(raw: string): boolean {
@@ -84,12 +103,12 @@ async function latestSymbolTime(symbolCode: string): Promise<Date | null> {
     return row?.eventTime ?? null
   }
 
-  const row = await prisma.futuresExMes1h.findFirst({
+  const row = await prisma.futuresExMes1d.findFirst({
     where: { symbolCode },
-    orderBy: { eventTime: 'desc' },
-    select: { eventTime: true },
+    orderBy: { eventDate: 'desc' },
+    select: { eventDate: true },
   })
-  return row?.eventTime ?? null
+  return row?.eventDate ?? null
 }
 
 function dedupeAndSort(candles: ReturnType<typeof toCandles>): ReturnType<typeof toCandles> {
@@ -98,18 +117,19 @@ function dedupeAndSort(candles: ReturnType<typeof toCandles>): ReturnType<typeof
   return [...byTime.values()].sort((a, b) => a.time - b.time)
 }
 
-async function insertHourlyCandles(
+async function insertCandlesByPolicy(
   symbolCode: string,
   dataset: string,
-  candles1h: ReturnType<typeof aggregateCandles>,
+  sourceSchema: string,
+  candles: ReturnType<typeof aggregateCandles>,
   dryRun: boolean
 ): Promise<{ processed: number; inserted: number }> {
-  const processed = candles1h.length
+  const processed = candles.length
   let inserted = 0
   if (dryRun || processed === 0) return { processed, inserted }
 
   if (symbolCode === 'MES') {
-    const rows: Prisma.MesPrice1hCreateManyInput[] = candles1h.map((candle) => {
+    const rows: Prisma.MesPrice1hCreateManyInput[] = candles.map((candle) => {
       const eventTime = asUtcDateFromUnixSeconds(candle.time)
       return {
         eventTime,
@@ -120,7 +140,7 @@ async function insertHourlyCandles(
         volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
         source: 'DATABENTO',
         sourceDataset: dataset,
-        sourceSchema: RAW_SCHEMA,
+        sourceSchema,
         rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
       }
     })
@@ -133,11 +153,12 @@ async function insertHourlyCandles(
     return { processed, inserted }
   }
 
-  const rows: Prisma.FuturesExMes1hCreateManyInput[] = candles1h.map((candle) => {
+  const rows: Prisma.FuturesExMes1dCreateManyInput[] = candles.map((candle) => {
     const eventTime = asUtcDateFromUnixSeconds(candle.time)
+    const eventDate = startOfUtcDay(eventTime)
     return {
       symbolCode,
-      eventTime,
+      eventDate,
       open: candle.open,
       high: candle.high,
       low: candle.low,
@@ -145,14 +166,14 @@ async function insertHourlyCandles(
       volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
       source: 'DATABENTO',
       sourceDataset: dataset,
-      sourceSchema: RAW_SCHEMA,
+      sourceSchema,
       rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
     }
   })
 
   for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
     const batch = rows.slice(i, i + INSERT_BATCH_SIZE)
-    const result = await prisma.futuresExMes1h.createMany({ data: batch, skipDuplicates: true })
+    const result = await prisma.futuresExMes1d.createMany({ data: batch, skipDuplicates: true })
     inserted += result.count
   }
 
@@ -176,12 +197,13 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
 
   const run = await prisma.ingestionRun.create({
     data: {
-      job: 'market-prices-1h-daily',
+      job: 'market-prices-mes-1h-nonmes-1d-daily',
       status: 'RUNNING',
       details: toJson({
         lookbackHours: resolved.lookbackHours,
         symbolsRequested: symbols.map((s) => s.code),
-        sourceSchema: RAW_SCHEMA,
+        sourceSchemaMes: MES_RAW_SCHEMA,
+        sourceSchemaNonMes: NON_MES_RAW_SCHEMA,
       }),
     },
   })
@@ -197,18 +219,24 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
     for (const symbol of symbols) {
       try {
         const latestTime = await latestSymbolTime(symbol.code)
+        const overlapMs = symbol.code === 'MES' ? 2 * 60 * 60 * 1000 : 2 * 24 * 60 * 60 * 1000
+        const sourceSchema = symbol.code === 'MES' ? MES_RAW_SCHEMA : NON_MES_RAW_SCHEMA
         const overlapStart = latestTime
-          ? new Date(latestTime.getTime() - 2 * 60 * 60 * 1000)
+          ? new Date(latestTime.getTime() - overlapMs)
           : new Date(now.getTime() - resolved.lookbackHours * 60 * 60 * 1000)
 
-        const records = await fetchOhlcv({
-          dataset: symbol.dataset,
-          symbol: symbol.databentoSymbol,
-          stypeIn: 'continuous',
-          start: overlapStart.toISOString(),
-          end: now.toISOString(),
-          schema: RAW_SCHEMA,
-        })
+        const records = await withTimeout(
+          fetchOhlcv({
+            dataset: symbol.dataset,
+            symbol: symbol.databentoSymbol,
+            stypeIn: 'continuous',
+            start: overlapStart.toISOString(),
+            end: now.toISOString(),
+            schema: sourceSchema,
+          }),
+          symbol.code === 'MES' ? 120_000 : 60_000,
+          `Databento ${symbol.code} ${sourceSchema}`
+        )
 
         if (records.length === 0) {
           symbolsProcessed.push(symbol.code)
@@ -217,14 +245,20 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
 
         const rawCandles = toCandles(records)
         const uniqueCandles = dedupeAndSort(rawCandles)
-        const candles1h = aggregateCandles(uniqueCandles, 60)
+        const aggregated = aggregateCandles(uniqueCandles, symbol.code === 'MES' ? 60 : 1440)
 
-        // Keep only candles at/after the latest known hour minus overlap.
+        // MES remains 1h. Non-MES is daily-only.
         const filtered = latestTime
-          ? candles1h.filter((c) => asUtcDateFromUnixSeconds(c.time) >= overlapStart)
-          : candles1h
+          ? aggregated.filter((c) => asUtcDateFromUnixSeconds(c.time) >= overlapStart)
+          : aggregated
 
-        const result = await insertHourlyCandles(symbol.code, symbol.dataset, filtered, resolved.dryRun)
+        const result = await insertCandlesByPolicy(
+          symbol.code,
+          symbol.dataset,
+          sourceSchema,
+          filtered,
+          resolved.dryRun
+        )
         rowsProcessed += result.processed
         rowsInserted += result.inserted
         symbolsProcessed.push(symbol.code)

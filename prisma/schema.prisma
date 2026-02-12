@@ -75,6 +75,7 @@ model Symbol {
   createdAt       DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime    @updatedAt @db.Timestamptz(6)
   futuresExMes1h  FuturesExMes1h[]
+  futuresExMes1d  FuturesExMes1d[]
   measuredMoves   MeasuredMoveSignal[]
   mappings        SymbolMapping[]
 
@@ -186,6 +187,31 @@ model FuturesExMes1h {
   @@index([symbolCode, eventTime], map: "futures_ex_mes_1h_symbol_time_idx")
   @@index([eventTime], map: "futures_ex_mes_1h_time_idx")
   @@map("futures_ex_mes_1h")
+}
+
+model FuturesExMes1d {
+  id            BigInt     @id @default(autoincrement())
+  symbolCode    String     @db.VarChar(16)
+  eventDate     DateTime   @db.Date
+  open          Float
+  high          Float
+  low           Float
+  close         Float
+  volume        BigInt?
+  openInterest  BigInt?
+  source        DataSource @default(DATABENTO)
+  sourceDataset String?    @db.VarChar(64)
+  sourceSchema  String?    @db.VarChar(32)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+  symbol        Symbol     @relation(fields: [symbolCode], references: [code], onDelete: Cascade)
+
+  @@unique([symbolCode, eventDate], map: "futures_ex_mes_1d_symbol_date_key")
+  @@index([symbolCode, eventDate], map: "futures_ex_mes_1d_symbol_date_idx")
+  @@index([eventDate], map: "futures_ex_mes_1d_date_idx")
+  @@map("futures_ex_mes_1d")
 }
 
 model EconRates1d {

@@ -8,7 +8,7 @@ export const dailyIngestionJob = inngest.createFunction(
   { cron: '0 7 * * *' },
   async ({ step }) => {
     const market = await step.run('market-prices-incremental', async () =>
-      runIngestMarketPricesDaily({ lookbackHours: 36, dryRun: false })
+      runIngestMarketPricesDaily({ lookbackHours: 48, dryRun: false })
     )
 
     const macro = await step.run('macro-indicators-daily', async () =>
@@ -16,7 +16,7 @@ export const dailyIngestionJob = inngest.createFunction(
     )
 
     const mm = await step.run('measured-move-signals', async () =>
-      runIngestMeasuredMoveSignals({ timeframe: '1h', daysBack: 120, dryRun: false })
+      runIngestMeasuredMoveSignals({ timeframe: '1h', daysBack: 120, symbols: ['MES'], dryRun: false })
     )
 
     return {

@@ -13,6 +13,7 @@ async function run(): Promise<void> {
     mesPrices15m,
     mesPrices1h,
     futuresExMes1h,
+    futuresExMes1d,
     mesLeakInNonMes,
     econRates,
     econYields,
@@ -38,6 +39,7 @@ async function run(): Promise<void> {
     prisma.mesPrice15m.count(),
     prisma.mesPrice1h.count(),
     prisma.futuresExMes1h.count(),
+    prisma.futuresExMes1d.count(),
     prisma.futuresExMes1h.count({ where: { symbolCode: 'MES' } }),
     prisma.econRates1d.count(),
     prisma.econYields1d.count(),
@@ -66,6 +68,7 @@ async function run(): Promise<void> {
     { table: 'mes_prices_15m', rows: mesPrices15m },
     { table: 'mes_prices_1h', rows: mesPrices1h },
     { table: 'futures_ex_mes_1h', rows: futuresExMes1h },
+    { table: 'futures_ex_mes_1d', rows: futuresExMes1d },
     { table: 'mes_leak_check_in_futures_ex_mes_1h', rows: mesLeakInNonMes },
     { table: 'econ_rates_1d', rows: econRates },
     { table: 'econ_yields_1d', rows: econYields },
@@ -87,9 +90,14 @@ async function run(): Promise<void> {
     { table: 'data_source_registry', rows: dataSources },
   ])
 
-  const [nonMesGrouped, ratesGrouped, yieldsGrouped, fxGrouped, volGrouped, inflationGrouped, laborGrouped, activityGrouped, moneyGrouped, commoditiesGrouped, indexGrouped] =
+  const [nonMesGrouped1h, nonMesGrouped1d, ratesGrouped, yieldsGrouped, fxGrouped, volGrouped, inflationGrouped, laborGrouped, activityGrouped, moneyGrouped, commoditiesGrouped, indexGrouped] =
     await Promise.all([
       prisma.futuresExMes1h.groupBy({
+        by: ['symbolCode'],
+        _count: { _all: true },
+        orderBy: [{ symbolCode: 'asc' }],
+      }),
+      prisma.futuresExMes1d.groupBy({
         by: ['symbolCode'],
         _count: { _all: true },
         orderBy: [{ symbolCode: 'asc' }],
@@ -130,9 +138,17 @@ async function run(): Promise<void> {
       prisma.mktIndexes1d.groupBy({ by: ['symbol'], _count: { _all: true }, orderBy: { symbol: 'asc' } }),
     ])
 
-  console.log('\n=== Futures 1H Coverage (Non-MES) ===')
+  console.log('\n=== Futures 1H Coverage (Non-MES, should be empty) ===')
   console.table(
-    nonMesGrouped.map((row: { symbolCode: string; _count: { _all: number } }) => ({
+    nonMesGrouped1h.map((row: { symbolCode: string; _count: { _all: number } }) => ({
+      symbol: row.symbolCode,
+      rows: row._count._all,
+    }))
+  )
+
+  console.log('\n=== Futures 1D Coverage (Non-MES) ===')
+  console.table(
+    nonMesGrouped1d.map((row: { symbolCode: string; _count: { _all: number } }) => ({
       symbol: row.symbolCode,
       rows: row._count._all,
     }))
