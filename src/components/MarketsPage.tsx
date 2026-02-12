@@ -5,6 +5,7 @@ import Header from './Header'
 import AnalysePanel from './AnalysePanel'
 import MarketsGrid from './MarketsGrid'
 import ForecastPanel from './ForecastPanel'
+import LiveMesChart from './LiveMesChart'
 import { useMarketBatch } from '@/hooks/useMarketBatch'
 import { useForecast } from '@/hooks/useForecast'
 import { InstantAnalysisResult } from '@/lib/instant-analysis'
@@ -28,6 +29,10 @@ export default function MarketsPage() {
         {/* Analyse — 3 Timeframe Gauges at the top */}
         <div className="mb-10">
           <AnalysePanel onResult={setAnalysisResult} />
+        </div>
+
+        <div className="mb-10">
+          <LiveMesChart />
         </div>
 
         {/* Markets Grid */}

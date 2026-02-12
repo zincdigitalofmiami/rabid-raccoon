@@ -121,6 +121,27 @@ model MesPrice1h {
   @@map("mes_prices_1h")
 }
 
+model MesPrice1m {
+  id            BigInt     @id @default(autoincrement())
+  eventTime     DateTime   @db.Timestamptz(6)
+  open          Float
+  high          Float
+  low           Float
+  close         Float
+  volume        BigInt?
+  source        DataSource @default(DATABENTO)
+  sourceDataset String?    @db.VarChar(64)
+  sourceSchema  String?    @db.VarChar(32)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([eventTime], map: "mes_prices_1m_event_time_key")
+  @@index([eventTime], map: "mes_prices_1m_event_time_idx")
+  @@map("mes_prices_1m")
+}
+
 model FuturesExMes1h {
   id            BigInt     @id @default(autoincrement())
   symbolCode    String     @db.VarChar(16)

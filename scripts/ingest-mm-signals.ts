@@ -16,6 +16,13 @@ interface MmIngestSummary {
   dryRun: boolean
 }
 
+interface MmIngestOptions {
+  daysBack?: number
+  timeframe?: string
+  dryRun?: boolean
+  symbols?: string[]
+}
+
 function toJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue
 }
@@ -34,14 +41,16 @@ function directionToPrisma(direction: string): SignalDirection {
   return direction === 'BEARISH' ? SignalDirection.BEARISH : SignalDirection.BULLISH
 }
 
-export async function runIngestMeasuredMoveSignals(): Promise<MmIngestSummary> {
+export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): Promise<MmIngestSummary> {
   loadDotEnvFiles()
 
-  const daysBack = Number(parseArg('days-back', '120'))
-  const rawTimeframe = parseArg('timeframe', '1h')
+  const daysBack = Number.isFinite(options?.daysBack)
+    ? Number(options?.daysBack)
+    : Number(parseArg('days-back', '120'))
+  const rawTimeframe = options?.timeframe ?? parseArg('timeframe', '1h')
   const timeframe = parseTimeframe(rawTimeframe)
-  const dryRun = parseArg('dry-run', 'false').toLowerCase() === 'true'
-  const rawSymbols = parseArg('symbols', '')
+  const dryRun = options?.dryRun ?? parseArg('dry-run', 'false').toLowerCase() === 'true'
+  const rawSymbols = options?.symbols?.length ? options.symbols.join(',') : parseArg('symbols', '')
   const symbolsRequested = rawSymbols
     ? rawSymbols
         .split(',')

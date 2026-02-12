@@ -19,6 +19,11 @@ interface MacroIngestSummary {
   dryRun: boolean
 }
 
+interface MacroIngestOptions {
+  daysBack?: number
+  dryRun?: boolean
+}
+
 type MacroSource = 'FRED' | 'YAHOO'
 type SeriesCategory = 'RATES' | 'VOLATILITY' | 'FX' | 'EQUITY' | 'OTHER'
 type MacroDomain = 'RATES' | 'YIELDS' | 'FX' | 'VOL_INDICES' | 'INDEXES'
@@ -270,11 +275,13 @@ async function fetchYahooDailyClose(symbol: string, daysBack: number): Promise<C
   return out
 }
 
-export async function runIngestMacroIndicators(): Promise<MacroIngestSummary> {
+export async function runIngestMacroIndicators(options?: MacroIngestOptions): Promise<MacroIngestSummary> {
   loadDotEnvFiles()
 
-  const daysBack = Number(parseArg('days-back', '730'))
-  const dryRun = parseArg('dry-run', 'false').toLowerCase() === 'true'
+  const daysBack = Number.isFinite(options?.daysBack)
+    ? Number(options?.daysBack)
+    : Number(parseArg('days-back', '730'))
+  const dryRun = options?.dryRun ?? parseArg('dry-run', 'false').toLowerCase() === 'true'
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
   if (!process.env.FRED_API_KEY) throw new Error('FRED_API_KEY is required')
   if (!Number.isFinite(daysBack) || daysBack <= 0) {

@@ -16,14 +16,19 @@
     "db:down": "bash scripts/dev-db-down.sh",
     "db:counts": "tsx scripts/db-counts.ts",
     "ingest:market": "tsx scripts/ingest-market-prices.ts",
+    "ingest:market:daily": "tsx scripts/ingest-market-prices-daily.ts",
     "ingest:macro": "tsx scripts/ingest-macro-indicators.ts",
     "ingest:mm": "tsx scripts/ingest-mm-signals.ts",
+    "ingest:mes:live": "tsx scripts/ingest-mes-live-1m.ts",
     "ingest:all": "tsx scripts/ingest-all.ts",
-    "dataset:autogluon:1h": "tsx scripts/build-autogluon-1h-dataset.ts"
+    "dataset:autogluon:1h": "tsx scripts/build-autogluon-1h-dataset.ts",
+    "inngest:dev": "npx inngest-cli dev -u http://localhost:3000/api/inngest"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.0",
     "@prisma/client": "^7.4.0",
+    "inngest": "^3.52.0",
+    "lightweight-charts": "^5.1.0",
     "next": "^14.2.35",
     "openai": "^6.6.0",
     "pg": "^8.18.0",

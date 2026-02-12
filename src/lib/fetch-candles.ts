@@ -1,9 +1,3 @@
-import { fetchOhlcv, toCandles, getCurrentSessionTimes } from './databento'
-import {
-  fetchVixCandles,
-  fetchTenYearYieldCandles,
-  getFredDateRange,
-} from './fred'
 import { prisma } from './prisma'
 import { SYMBOLS } from './symbols'
 import { CandleData } from './types'
@@ -35,16 +29,44 @@ async function canUseDatabase(): Promise<boolean> {
   return dbProbePromise
 }
 
-async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: string): Promise<CandleData[] | null> {
-  if (!(await canUseDatabase())) return null
+function defaultSessionWindow(): { start: string; end: string } {
+  const now = new Date()
+  const start = new Date(now.getTime() - 18 * 60 * 60 * 1000)
+  return {
+    start: start.toISOString(),
+    end: now.toISOString(),
+  }
+}
 
+function parseDateRange(startIso: string, endIso: string): { start: Date; end: Date } | null {
   const start = new Date(startIso)
   const end = new Date(endIso)
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null
+  return { start, end }
+}
+
+function toCandle(timeMs: number, open: number, high: number, low: number, close: number, volume = 0): CandleData {
+  return {
+    time: Math.floor(timeMs / 1000),
+    open,
+    high,
+    low,
+    close,
+    volume,
+  }
+}
+
+async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: string): Promise<CandleData[] | null> {
+  if (!(await canUseDatabase())) return null
+
+  const parsed = parseDateRange(startIso, endIso)
+  if (!parsed) return null
+
+  const { start, end } = parsed
 
   try {
     if (symbol === 'MES') {
-      const mesRows = await prisma.mesPrice1h.findMany({
+      const rows = await prisma.mesPrice1h.findMany({
         where: {
           eventTime: {
             gte: start,
@@ -54,19 +76,13 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
         orderBy: { eventTime: 'asc' },
         take: 20_000,
       })
-
-      if (mesRows.length === 0) return null
-      return mesRows.map((row) => ({
-        time: Math.floor(row.eventTime.getTime() / 1000),
-        open: row.open,
-        high: row.high,
-        low: row.low,
-        close: row.close,
-        volume: row.volume ? Number(row.volume) : 0,
-      }))
+      if (rows.length === 0) return null
+      return rows.map((row) =>
+        toCandle(row.eventTime.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
+      )
     }
 
-    const futuresRows = await prisma.futuresExMes1h.findMany({
+    const rows = await prisma.futuresExMes1h.findMany({
       where: {
         symbolCode: symbol,
         eventTime: {
@@ -78,15 +94,10 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
       take: 20_000,
     })
 
-    if (futuresRows.length === 0) return null
-    return futuresRows.map((row) => ({
-      time: Math.floor(row.eventTime.getTime() / 1000),
-      open: row.open,
-      high: row.high,
-      low: row.low,
-      close: row.close,
-      volume: row.volume ? Number(row.volume) : 0,
-    }))
+    if (rows.length === 0) return null
+    return rows.map((row) =>
+      toCandle(row.eventTime.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
+    )
   } catch {
     dbState = 'failed'
     return null
@@ -95,49 +106,50 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
 
 async function fetchMacroFromDb(indicator: string, startIso: string, endIso: string): Promise<CandleData[] | null> {
   if (!(await canUseDatabase())) return null
-  const start = new Date(startIso)
-  const end = new Date(endIso)
-  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null
+  const parsed = parseDateRange(startIso, endIso)
+  if (!parsed) return null
+
+  const { start, end } = parsed
 
   try {
-    const mapRowsToCandles = <T extends { eventDate: Date; value: number | null }>(rows: T[]) =>
-      rows.map((row) => ({
-        time: Math.floor(row.eventDate.getTime() / 1000),
-        open: row.value ?? 0,
-        high: row.value ?? 0,
-        low: row.value ?? 0,
-        close: row.value ?? 0,
-        volume: 0,
-      }))
-
     if (indicator === 'VIXCLS') {
       const rows = await prisma.econVolIndices1d.findMany({
         where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
-      if (rows.length > 0) return mapRowsToCandles(rows)
-    } else if (indicator === 'DGS10') {
+      if (rows.length === 0) return null
+      return rows.map((row) => toCandle(row.eventDate.getTime(), row.value ?? 0, row.value ?? 0, row.value ?? 0, row.value ?? 0, 0))
+    }
+
+    if (indicator === 'DGS10') {
       const rows = await prisma.econYields1d.findMany({
         where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
-      if (rows.length > 0) return mapRowsToCandles(rows)
-    } else if (indicator === 'DFF') {
+      if (rows.length === 0) return null
+      return rows.map((row) => toCandle(row.eventDate.getTime(), row.value ?? 0, row.value ?? 0, row.value ?? 0, row.value ?? 0, 0))
+    }
+
+    if (indicator === 'DFF') {
       const rows = await prisma.econRates1d.findMany({
         where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
-      if (rows.length > 0) return mapRowsToCandles(rows)
-    } else if (indicator === 'DTWEXBGS') {
+      if (rows.length === 0) return null
+      return rows.map((row) => toCandle(row.eventDate.getTime(), row.value ?? 0, row.value ?? 0, row.value ?? 0, row.value ?? 0, 0))
+    }
+
+    if (indicator === 'DTWEXBGS') {
       const rows = await prisma.econFx1d.findMany({
         where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
-      if (rows.length > 0) return mapRowsToCandles(rows)
+      if (rows.length === 0) return null
+      return rows.map((row) => toCandle(row.eventDate.getTime(), row.value ?? 0, row.value ?? 0, row.value ?? 0, row.value ?? 0, 0))
     }
 
     return null
@@ -145,6 +157,43 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
     dbState = 'failed'
     return null
   }
+}
+
+function aggregateToDaily(candles: CandleData[]): CandleData[] {
+  if (candles.length === 0) return []
+
+  const byDay = new Map<number, CandleData>()
+
+  for (const candle of candles) {
+    const dt = new Date(candle.time * 1000)
+    const dayUtc = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate())
+    const current = byDay.get(dayUtc)
+    if (!current) {
+      byDay.set(dayUtc, {
+        time: Math.floor(dayUtc / 1000),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume || 0,
+      })
+      continue
+    }
+
+    current.high = Math.max(current.high, candle.high)
+    current.low = Math.min(current.low, candle.low)
+    current.close = candle.close
+    current.volume = (current.volume || 0) + (candle.volume || 0)
+  }
+
+  return [...byDay.values()].sort((a, b) => a.time - b.time)
+}
+
+function databaseOnlyError(symbol: string): never {
+  throw new Error(
+    `No DB data available for ${symbol}. Runtime provider fallbacks are disabled. ` +
+      'Run machine ingestion first: npm run ingest:market && npm run ingest:macro && npm run ingest:mm'
+  )
 }
 
 export async function fetchCandlesForSymbol(
@@ -155,41 +204,21 @@ export async function fetchCandlesForSymbol(
   const config = SYMBOLS[symbol]
   if (!config) throw new Error(`Unknown symbol: ${symbol}`)
 
-  if (config.dataSource === 'fred') {
-    const fredRange = getFredDateRange()
-    const fredStart = start?.slice(0, 10) || fredRange.start
-    const fredEnd = end?.slice(0, 10) || fredRange.end
-    const dbStartIso = `${fredStart}T00:00:00.000Z`
-    const dbEndIso = `${fredEnd}T23:59:59.999Z`
+  const window = defaultSessionWindow()
+  const queryStart = start || window.start
+  const queryEnd = end || window.end
 
-    if (symbol === 'VX') {
-      const dbCandles = await fetchMacroFromDb('VIXCLS', dbStartIso, dbEndIso)
-      if (dbCandles && dbCandles.length > 0) return dbCandles
-      return fetchVixCandles(fredStart, fredEnd)
-    } else if (symbol === 'US10Y') {
-      const dbCandles = await fetchMacroFromDb('DGS10', dbStartIso, dbEndIso)
-      if (dbCandles && dbCandles.length > 0) return dbCandles
-      return fetchTenYearYieldCandles(fredStart, fredEnd)
-    }
-    throw new Error(`Unknown FRED symbol: ${symbol}`)
+  if (config.dataSource === 'fred') {
+    const indicator = symbol === 'VX' ? 'VIXCLS' : symbol === 'US10Y' ? 'DGS10' : null
+    if (!indicator) throw new Error(`Unknown FRED symbol: ${symbol}`)
+    const candles = await fetchMacroFromDb(indicator, queryStart, queryEnd)
+    if (!candles || candles.length === 0) databaseOnlyError(symbol)
+    return candles
   }
 
-  // Databento source
-  const session = getCurrentSessionTimes()
-  const queryStart = start || session.start
-  const queryEnd = end || session.end
-  const dbCandles = await fetchCandlesFromDb(symbol, queryStart, queryEnd)
-  if (dbCandles && dbCandles.length > 0) return dbCandles
-
-  const records = await fetchOhlcv({
-    dataset: config.dataset!,
-    symbol: config.databentoSymbol!,
-    stypeIn: config.stypeIn!,
-    start: queryStart,
-    end: queryEnd,
-  })
-
-  return toCandles(records)
+  const candles = await fetchCandlesFromDb(symbol, queryStart, queryEnd)
+  if (!candles || candles.length === 0) databaseOnlyError(symbol)
+  return candles
 }
 
 export async function fetchDailyCandlesForSymbol(
@@ -199,37 +228,22 @@ export async function fetchDailyCandlesForSymbol(
   const config = SYMBOLS[symbol]
   if (!config) throw new Error(`Unknown symbol: ${symbol}`)
 
-  if (config.dataSource === 'fred') {
-    const now = new Date()
-    const start = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000)
-    const startDate = start.toISOString().slice(0, 10)
-    const endDate = now.toISOString().slice(0, 10)
-    const dbStartIso = `${startDate}T00:00:00.000Z`
-    const dbEndIso = `${endDate}T23:59:59.999Z`
+  const end = new Date()
+  const start = new Date(end.getTime() - lookbackDays * 24 * 60 * 60 * 1000)
+  const queryStart = start.toISOString()
+  const queryEnd = end.toISOString()
 
-    if (symbol === 'VX') {
-      const dbCandles = await fetchMacroFromDb('VIXCLS', dbStartIso, dbEndIso)
-      if (dbCandles && dbCandles.length > 0) return dbCandles
-      return fetchVixCandles(startDate, endDate)
-    }
-    if (symbol === 'US10Y') {
-      const dbCandles = await fetchMacroFromDb('DGS10', dbStartIso, dbEndIso)
-      if (dbCandles && dbCandles.length > 0) return dbCandles
-      return fetchTenYearYieldCandles(startDate, endDate)
-    }
-    throw new Error(`Unknown FRED symbol: ${symbol}`)
+  if (config.dataSource === 'fred') {
+    const indicator = symbol === 'VX' ? 'VIXCLS' : symbol === 'US10Y' ? 'DGS10' : null
+    if (!indicator) throw new Error(`Unknown FRED symbol: ${symbol}`)
+    const candles = await fetchMacroFromDb(indicator, queryStart, queryEnd)
+    if (!candles || candles.length === 0) databaseOnlyError(symbol)
+    return candles
   }
 
-  const now = new Date()
-  const start = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000)
-  const records = await fetchOhlcv({
-    dataset: config.dataset!,
-    symbol: config.databentoSymbol!,
-    stypeIn: config.stypeIn!,
-    start: start.toISOString(),
-    end: now.toISOString(),
-    schema: 'ohlcv-1d',
-  })
-
-  return toCandles(records)
+  const hourly = await fetchCandlesFromDb(symbol, queryStart, queryEnd)
+  if (!hourly || hourly.length === 0) databaseOnlyError(symbol)
+  const daily = aggregateToDaily(hourly)
+  if (daily.length === 0) databaseOnlyError(symbol)
+  return daily
 }

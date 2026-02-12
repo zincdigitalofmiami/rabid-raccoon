@@ -10,6 +10,7 @@ async function run(): Promise<void> {
   const [
     symbols,
     symbolMappings,
+    mesPrices1m,
     mesPrices1h,
     futuresExMes1h,
     mesLeakInNonMes,
@@ -28,6 +29,7 @@ async function run(): Promise<void> {
   ] = await Promise.all([
     prisma.symbol.count(),
     prisma.symbolMapping.count(),
+    prisma.mesPrice1m.count(),
     prisma.mesPrice1h.count(),
     prisma.futuresExMes1h.count(),
     prisma.futuresExMes1h.count({ where: { symbolCode: 'MES' } }),
@@ -49,6 +51,7 @@ async function run(): Promise<void> {
   console.table([
     { table: 'symbols', rows: symbols },
     { table: 'symbol_mappings', rows: symbolMappings },
+    { table: 'mes_prices_1m', rows: mesPrices1m },
     { table: 'mes_prices_1h', rows: mesPrices1h },
     { table: 'futures_ex_mes_1h', rows: futuresExMes1h },
     { table: 'mes_leak_check_in_futures_ex_mes_1h', rows: mesLeakInNonMes },

@@ -86,46 +86,67 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npx prisma generate
 ```
 
-### 3. Ingest real data (no synthetic rows)
+### 3. Machine-Only Initial Backfill (no synthetic data)
 
-`ingest:market` is now hard-locked to:
-- `33` symbols (fixed universe)
+Backfill is intentionally a local machine operation. Runtime API fallback pulls are disabled.
+
+`ingest:market` is hard-locked to:
+- `33` symbols
 - `730` days
-- `1h` output bars aggregated from Databento `1m`
-- Databento-only, zero-fake policy
-- no runtime overrides (only `--dry-run` is allowed)
-
-Market bars (Databento):
+- `1h` prices aggregated from Databento `1m`
+- Databento-only + zero-fake policy
+- no runtime overrides (except `--dry-run`)
 
 ```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:market
-```
-
-Macro indicators (FRED + Yahoo FXI):
-
-```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:macro -- --days-back 730
-```
-
-Measured-move features from stored bars:
-
-```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:mm -- --timeframe 1h --days-back 120
 ```
 
-Or run everything:
+### 4. Daily Automation (Inngest)
+
+The route `api/inngest` defines the daily scheduled pipeline:
+- incremental Databento update for 1h prices (`market-prices-1h-daily`)
+- macro refresh (FRED + Yahoo FXI)
+- measured-move refresh from stored prices
+
+Local dev:
 
 ```bash
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:all
+npm run dev
+npm run inngest:dev
 ```
 
-### 4. Validate row counts
+Production:
+- deploy with `INNGEST_SIGNING_KEY` and `INNGEST_EVENT_KEY`
+- connect your Inngest app to `https://<your-domain>/api/inngest`
+
+### 5. Live MES Stream (Databento -> DB -> Lightweight Charts)
+
+`mes_prices_1m` stores streaming minute data for chart updates.
+
+Run the local worker:
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:mes:live
+```
+
+Smoke once:
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run ingest:mes:live -- --once=true --lookback-minutes 240
+```
+
+Dashboard live endpoint:
+- `GET /api/live/mes` (SSE snapshot + updates)
+
+### 6. Validate row counts
 
 ```bash
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=public npm run db:counts
 ```
 
-### 5. Stop local DB
+### 7. Stop local DB
 
 ```bash
 npm run db:down
