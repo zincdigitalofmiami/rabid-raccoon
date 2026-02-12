@@ -32,7 +32,7 @@ async function run(): Promise<void> {
 
   console.log('\n=== Market Bars by Symbol/TF ===')
   console.table(
-    grouped.map((row) => ({
+    grouped.map((row: { symbolCode: string; timeframe: string; _count: { _all: number } }) => ({
       symbol: row.symbolCode,
       timeframe: row.timeframe,
       rows: row._count._all,
@@ -49,4 +49,3 @@ run()
   .finally(async () => {
     await prisma.$disconnect()
   })
-
