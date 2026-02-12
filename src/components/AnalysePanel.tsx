@@ -1,340 +1,711 @@
 'use client'
 
 import { useState } from 'react'
-import { InstantAnalysisResult, TimeframeGauge, InstantSymbolResult } from '@/lib/instant-analysis'
-import TechChart from './TechChart'
+import type { InstantAnalysisResult } from '@/lib/instant-analysis'
+import type { MarketContext } from '@/lib/market-context'
 
-const INDEX_NAMES: Record<string, string> = {
-  MES: 'S&P 500 E-mini',
-  NQ: 'Nasdaq 100',
-  YM: 'Dow Jones',
-  RTY: 'Russell 2000',
-  VX: 'VIX',
-  DX: 'US Dollar Index',
-  GC: 'Gold',
-  CL: 'Crude Oil',
-  US10Y: 'US 10-Year Yield',
-  ZN: '10-Year T-Note',
-  ZB: '30-Year T-Bond',
+// ─── Chart Analysis Types ───────────────────────────────────
+
+interface PatternResult {
+  name: string
+  type: string
+  bias: 'bullish' | 'bearish' | 'neutral'
+  confidence: number
+  keyLevels: number[]
+  description: string
 }
+
+interface TimeframeAnalysis {
+  tf: '15M' | '1H' | '4H'
+  patterns: PatternResult[]
+  bias: 'bullish' | 'bearish' | 'neutral'
+  summary: string
+}
+
+interface ChartAnalysisResult {
+  timeframes: TimeframeAnalysis[]
+  overallBias: 'bullish' | 'bearish' | 'neutral'
+  overallSummary: string
+}
+
+// ─── Trades Types ───────────────────────────────────────────
+
+interface TradeCard {
+  direction: 'BULLISH' | 'BEARISH'
+  timeframe: '15M' | '1H'
+  entry: number
+  stop: number
+  target: number
+  quality: number
+  status: string
+  retracementRatio: number
+  pointA: number
+  pointB: number
+  pointC: number
+  projectedD: number
+  riskReward: number
+}
+
+interface TradesResult {
+  currentTrade: TradeCard | null
+  upcoming15m: TradeCard[]
+  upcoming1h: TradeCard[]
+}
+
+// ─── Props ──────────────────────────────────────────────────
 
 interface AnalysePanelProps {
   onResult?: (result: InstantAnalysisResult) => void
+  onCaptureChart?: () => string | null
 }
 
-export default function AnalysePanel({ onResult }: AnalysePanelProps) {
-  const [loading, setLoading] = useState(false)
-  const [aiLoading, setAiLoading] = useState(false)
-  const [result, setResult] = useState<InstantAnalysisResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [expandedGauge, setExpandedGauge] = useState<string | null>(null)
+type ActiveTab = 'chart' | 'market' | 'trades' | null
 
-  async function handleAnalyse() {
-    setLoading(true)
-    setAiLoading(false)
-    setError(null)
+export default function AnalysePanel({ onResult, onCaptureChart }: AnalysePanelProps) {
+  // Chart analysis state
+  const [chartLoading, setChartLoading] = useState(false)
+  const [chartResult, setChartResult] = useState<ChartAnalysisResult | null>(null)
+  const [chartError, setChartError] = useState<string | null>(null)
+
+  // Market analysis state
+  const [marketLoading, setMarketLoading] = useState(false)
+  const [marketResult, setMarketResult] = useState<MarketContext | null>(null)
+  const [marketError, setMarketError] = useState<string | null>(null)
+
+  // Trades state
+  const [tradesLoading, setTradesLoading] = useState(false)
+  const [tradesResult, setTradesResult] = useState<TradesResult | null>(null)
+  const [tradesError, setTradesError] = useState<string | null>(null)
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(null)
+
+  // ─── Handlers ───────────────────────────────────────────────
+
+  async function handleAnalyzeChart() {
+    setChartLoading(true)
+    setChartError(null)
+    setActiveTab('chart')
     try {
-      // Step 1: deterministic-only analysis (always available if data is available)
-      const detRes = await fetch('/api/analyse/deterministic', { method: 'POST' })
-      if (!detRes.ok) {
-        const err = await detRes.json().catch(() => ({ error: detRes.statusText }))
-        throw new Error(err.error || `HTTP ${detRes.status}`)
+      const image = onCaptureChart?.()
+      if (!image) throw new Error('Chart screenshot not available. Ensure the chart has loaded.')
+
+      const res = await fetch('/api/analyse/chart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        throw new Error(err.error || `HTTP ${res.status}`)
       }
-      const deterministic: InstantAnalysisResult = await detRes.json()
-      setResult(deterministic)
-      onResult?.(deterministic)
-
-      setLoading(false)
-      setAiLoading(true)
-
-      // Step 2: AI overlay (narrative + levels). If this fails, keep deterministic output.
-      try {
-        const aiRes = await fetch('/api/analyse/ai', { method: 'POST' })
-        if (!aiRes.ok) {
-          const err = await aiRes.json().catch(() => ({ error: aiRes.statusText }))
-          throw new Error(err.error || `HTTP ${aiRes.status}`)
-        }
-
-        const aiOverlay: Pick<
-          InstantAnalysisResult,
-          'timestamp' | 'overallVerdict' | 'overallConfidence' | 'narrative' | 'timeframeGauges' | 'symbols'
-        > = await aiRes.json()
-
-        const merged: InstantAnalysisResult = {
-          ...deterministic,
-          timestamp: aiOverlay.timestamp || deterministic.timestamp,
-          overallVerdict: aiOverlay.overallVerdict || deterministic.overallVerdict,
-          overallConfidence: aiOverlay.overallConfidence || deterministic.overallConfidence,
-          narrative: aiOverlay.narrative || deterministic.narrative,
-          timeframeGauges: aiOverlay.timeframeGauges?.length
-            ? aiOverlay.timeframeGauges
-            : deterministic.timeframeGauges,
-          symbols: aiOverlay.symbols?.length ? aiOverlay.symbols : deterministic.symbols,
-        }
-
-        setResult(merged)
-        onResult?.(merged)
-      } catch (aiErr) {
-        const msg = aiErr instanceof Error ? aiErr.message : 'AI overlay failed'
-        const userMsg = /openai_api_key|api key|not set/i.test(msg)
-          ? 'AI overlay is disabled in this environment.'
-          : 'AI overlay is currently unavailable.'
-        setError(`Deterministic analysis loaded. ${userMsg}`)
-      } finally {
-        setAiLoading(false)
-      }
+      const data: ChartAnalysisResult = await res.json()
+      setChartResult(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Analysis failed')
-      setLoading(false)
-      setAiLoading(false)
+      setChartError(err instanceof Error ? err.message : 'Chart analysis failed')
+    } finally {
+      setChartLoading(false)
     }
   }
 
-  const gauge15m = result?.timeframeGauges.find(g => g.timeframe === '15M')
+  async function handleAnalyzeMarket() {
+    setMarketLoading(true)
+    setMarketError(null)
+    setActiveTab('market')
+    try {
+      const res = await fetch('/api/analyse/market', { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        throw new Error(err.error || `HTTP ${res.status}`)
+      }
+      const data: MarketContext = await res.json()
+      setMarketResult(data)
+    } catch (err) {
+      setMarketError(err instanceof Error ? err.message : 'Market analysis failed')
+    } finally {
+      setMarketLoading(false)
+    }
+  }
+
+  async function handleUpcomingTrades() {
+    setTradesLoading(true)
+    setTradesError(null)
+    setActiveTab('trades')
+    try {
+      const res = await fetch('/api/analyse/trades', { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        throw new Error(err.error || `HTTP ${res.status}`)
+      }
+      const data: TradesResult = await res.json()
+      setTradesResult(data)
+    } catch (err) {
+      setTradesError(err instanceof Error ? err.message : 'Trade analysis failed')
+    } finally {
+      setTradesLoading(false)
+    }
+  }
+
+  const anyLoading = chartLoading || marketLoading || tradesLoading
 
   return (
-    <div className="space-y-6">
-      {/* Analyse Button */}
-      <button
-        onClick={handleAnalyse}
-        disabled={loading || aiLoading}
-        className="w-full relative overflow-hidden rounded-2xl border-2 py-5 px-6 text-lg font-black uppercase tracking-wider transition-all duration-300 disabled:opacity-50"
-        style={{
-          borderColor: loading || aiLoading ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.15)',
-          background: loading || aiLoading
-            ? 'linear-gradient(135deg, #131722, #1e222d)'
-            : 'linear-gradient(135deg, #131722, #1a1f2e)',
-          color: loading || aiLoading ? 'rgba(255,255,255,0.3)' : '#fff',
-        }}
-      >
-        {loading || aiLoading ? (
-          <span className="flex items-center justify-center gap-3">
-            <span className="w-5 h-5 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
-            {loading
-              ? 'Computing deterministic signals...'
-              : 'Adding AI narrative and trade levels...'}
-          </span>
-        ) : (
-          <span className="flex items-center justify-center gap-2">
-            <span className="text-2xl">&#9889;</span>
-            {result ? 'Re-analyse Now' : 'Analyse Now'}
-          </span>
-        )}
-      </button>
+    <div className="space-y-4">
+      {/* 3-Button Row */}
+      <div className="grid grid-cols-3 gap-3">
+        <AnalyseButton
+          label="Analyze Chart"
+          sublabel="Claude Opus 4.6 Vision"
+          loading={chartLoading}
+          active={activeTab === 'chart'}
+          hasResult={!!chartResult}
+          disabled={anyLoading}
+          onClick={handleAnalyzeChart}
+          color="#2962ff"
+        />
+        <AnalyseButton
+          label="Analyze Market"
+          sublabel="Macro + Micro + News"
+          loading={marketLoading}
+          active={activeTab === 'market'}
+          hasResult={!!marketResult}
+          disabled={anyLoading}
+          onClick={handleAnalyzeMarket}
+          color="#ffa726"
+        />
+        <AnalyseButton
+          label="Upcoming Trades"
+          sublabel="AB=CD Measured Moves"
+          loading={tradesLoading}
+          active={activeTab === 'trades'}
+          hasResult={!!tradesResult}
+          disabled={anyLoading}
+          onClick={handleUpcomingTrades}
+          color="#26a69a"
+        />
+      </div>
 
-      {error && (
-        <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/5">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
+      {/* Result Panels */}
+      {activeTab === 'chart' && (
+        <>
+          {chartError && <ErrorBanner message={chartError} />}
+          {chartLoading && <LoadingBar text="Analyzing chart with Claude Opus 4.6..." />}
+          {chartResult && <ChartResultPanel result={chartResult} />}
+        </>
       )}
 
-      {result && (
+      {activeTab === 'market' && (
         <>
-          {/* 3 Timeframe Gauges */}
-          {result.timeframeGauges.length > 0 && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {result.timeframeGauges.map((gauge) => (
-                <GaugeCard
-                  key={gauge.timeframe}
-                  gauge={gauge}
-                  expanded={expandedGauge === gauge.timeframe}
-                  onToggle={() =>
-                    setExpandedGauge(
-                      expandedGauge === gauge.timeframe ? null : gauge.timeframe
-                    )
-                  }
+          {marketError && <ErrorBanner message={marketError} />}
+          {marketLoading && <LoadingBar text="Loading market context..." />}
+          {marketResult && <MarketResultPanel ctx={marketResult} />}
+        </>
+      )}
+
+      {activeTab === 'trades' && (
+        <>
+          {tradesError && <ErrorBanner message={tradesError} />}
+          {tradesLoading && <LoadingBar text="Scanning for measured move entries..." />}
+          {tradesResult && <TradesResultPanel result={tradesResult} />}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── ANALYSE BUTTON ─────────────────────────────────────────
+
+function AnalyseButton({
+  label,
+  sublabel,
+  loading,
+  active,
+  hasResult,
+  disabled,
+  onClick,
+  color,
+}: {
+  label: string
+  sublabel: string
+  loading: boolean
+  active: boolean
+  hasResult: boolean
+  disabled: boolean
+  onClick: () => void
+  color: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="relative overflow-hidden rounded-xl border-2 py-4 px-4 text-left transition-all duration-300 disabled:opacity-40 hover:brightness-110"
+      style={{
+        borderColor: active ? `${color}60` : 'rgba(255,255,255,0.08)',
+        background: active
+          ? `linear-gradient(135deg, ${color}12, #131722)`
+          : 'linear-gradient(135deg, #131722, #1a1f2e)',
+      }}
+    >
+      {active && (
+        <div
+          className="absolute top-0 left-0 right-0 h-[2px]"
+          style={{ backgroundColor: color }}
+        />
+      )}
+      <div className="flex items-center gap-3">
+        {loading ? (
+          <div
+            className="w-4 h-4 border-2 rounded-full animate-spin flex-shrink-0"
+            style={{ borderColor: `${color}30`, borderTopColor: color }}
+          />
+        ) : (
+          <div
+            className="w-2 h-2 rounded-full flex-shrink-0"
+            style={{ backgroundColor: hasResult ? color : 'rgba(255,255,255,0.15)' }}
+          />
+        )}
+        <div>
+          <span className="block text-sm font-bold text-white">{label}</span>
+          <span className="block text-[10px] text-white/30">{sublabel}</span>
+        </div>
+      </div>
+    </button>
+  )
+}
+
+// ─── SHARED COMPONENTS ──────────────────────────────────────
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/5">
+      <p className="text-sm text-red-400">{message}</p>
+    </div>
+  )
+}
+
+function LoadingBar({ text }: { text: string }) {
+  return (
+    <div className="flex items-center gap-3 p-4 rounded-xl border border-white/5 bg-[#131722]">
+      <div className="w-4 h-4 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+      <span className="text-sm text-white/40">{text}</span>
+    </div>
+  )
+}
+
+// ─── CHART RESULT PANEL ─────────────────────────────────────
+
+function ChartResultPanel({ result }: { result: ChartAnalysisResult }) {
+  const biasColor = result.overallBias === 'bullish' ? '#26a69a' : result.overallBias === 'bearish' ? '#ef5350' : '#ffa726'
+
+  return (
+    <div className="space-y-4">
+      {/* Overall */}
+      <div className="rounded-xl border border-white/5 bg-[#131722] p-5">
+        <div className="flex items-center gap-3 mb-2">
+          <span className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Overall Bias</span>
+          <span
+            className="px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider"
+            style={{ backgroundColor: `${biasColor}15`, color: biasColor, border: `1px solid ${biasColor}30` }}
+          >
+            {result.overallBias}
+          </span>
+        </div>
+        <p className="text-sm text-white/60 leading-relaxed">{result.overallSummary}</p>
+      </div>
+
+      {/* Per-Timeframe Cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {result.timeframes.map((tf) => (
+          <TimeframePatternCard key={tf.tf} analysis={tf} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TimeframePatternCard({ analysis }: { analysis: TimeframeAnalysis }) {
+  const biasColor = analysis.bias === 'bullish' ? '#26a69a' : analysis.bias === 'bearish' ? '#ef5350' : '#ffa726'
+  const typeColors: Record<string, string> = {
+    reversal: '#ef5350',
+    continuation: '#26a69a',
+    triangle: '#2962ff',
+    line_break: '#ffa726',
+    channel: '#9c27b0',
+    other: '#78909c',
+  }
+
+  return (
+    <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+      <div className="h-1 w-full" style={{ backgroundColor: `${biasColor}50` }} />
+      <div className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] font-bold text-white/25 uppercase tracking-[0.2em]">{analysis.tf}</span>
+          <span
+            className="text-xs font-black uppercase"
+            style={{ color: biasColor }}
+          >
+            {analysis.bias}
+          </span>
+        </div>
+
+        <p className="text-xs text-white/50 mb-3 leading-relaxed">{analysis.summary}</p>
+
+        {analysis.patterns.length === 0 ? (
+          <span className="text-[10px] text-white/20">No patterns detected</span>
+        ) : (
+          <div className="space-y-2">
+            {analysis.patterns.map((p, i) => {
+              const pColor = typeColors[p.type] || typeColors.other
+              const pBiasColor = p.bias === 'bullish' ? '#26a69a' : p.bias === 'bearish' ? '#ef5350' : '#ffa726'
+              return (
+                <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+                        style={{ backgroundColor: `${pColor}20`, color: pColor }}
+                      >
+                        {p.type.replace('_', ' ')}
+                      </span>
+                      <span className="text-xs font-bold text-white/70">{p.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="text-[10px] font-bold uppercase"
+                        style={{ color: pBiasColor }}
+                      >
+                        {p.bias}
+                      </span>
+                      <span className="text-[10px] text-white/30 tabular-nums">{p.confidence}%</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-white/40 leading-relaxed">{p.description}</p>
+                  {p.keyLevels.length > 0 && (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <span className="text-[9px] text-white/20 uppercase">Levels:</span>
+                      {p.keyLevels.map((lvl, j) => (
+                        <span key={j} className="text-[10px] font-mono text-white/50 tabular-nums">{lvl.toFixed(2)}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── MARKET RESULT PANEL ────────────────────────────────────
+
+function MarketResultPanel({ ctx }: { ctx: MarketContext }) {
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Left Column */}
+      <div className="space-y-4">
+        <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+          <div className="px-5 py-3 border-b border-white/5 flex items-center gap-3">
+            <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Market Regime</h3>
+            <RegimeBadge regime={ctx.regime} />
+          </div>
+          <div className="p-5 space-y-1.5">
+            {ctx.regimeFactors.map((factor, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <span className="text-white/15 mt-0.5">&bull;</span>
+                <span className="text-xs text-white/50">{factor}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {ctx.breakout7000 && <Breakout7000Card breakout={ctx.breakout7000} />}
+
+        {(ctx.goldContext || ctx.oilContext) && (
+          <div className="rounded-xl border border-white/5 bg-[#131722] p-5 space-y-3">
+            {ctx.goldContext && (
+              <CommodityRow label="GOLD" price={ctx.goldContext.price} changePercent={ctx.goldContext.changePercent} signal={ctx.goldContext.signal} />
+            )}
+            {ctx.oilContext && (
+              <CommodityRow label="OIL" price={ctx.oilContext.price} changePercent={ctx.oilContext.changePercent} signal={ctx.oilContext.signal} />
+            )}
+          </div>
+        )}
+
+        {ctx.yieldContext && (
+          <div className="rounded-xl border border-white/5 bg-[#131722] p-5 space-y-2">
+            <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Rates</h3>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-white/40">US10Y</span>
+              <span className="text-sm font-black text-white">
+                {ctx.yieldContext.tenYearYield.toFixed(2)}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-white/40">1D Change</span>
+              <span
+                className="text-xs font-black"
+                style={{ color: ctx.yieldContext.tenYearChangeBp >= 0 ? '#ef5350' : '#26a69a' }}
+              >
+                {ctx.yieldContext.tenYearChangeBp >= 0 ? '+' : ''}
+                {ctx.yieldContext.tenYearChangeBp.toFixed(1)} bp
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-white/40">Fed Funds</span>
+              <span className="text-xs text-white/70">
+                {ctx.yieldContext.fedFundsRate == null
+                  ? 'n/a'
+                  : `${ctx.yieldContext.fedFundsRate.toFixed(2)}%`}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-white/40">10Y - Fed</span>
+              <span className="text-xs text-white/70">
+                {ctx.yieldContext.spread10yMinusFedBp == null
+                  ? 'n/a'
+                  : `${ctx.yieldContext.spread10yMinusFedBp.toFixed(1)} bp`}
+              </span>
+            </div>
+            <p className="text-[11px] text-white/35">{ctx.yieldContext.signal}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Right Column */}
+      <div className="space-y-4">
+        {ctx.correlations.length > 0 && (
+          <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+            <div className="px-5 py-3 border-b border-white/5">
+              <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Cross-Asset Correlations</h3>
+            </div>
+            <div className="p-5 space-y-3">
+              {ctx.correlations.map((c, i) => (
+                <CorrelationRow key={i} pair={c.pair} value={c.value} interpretation={c.interpretation} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+          <div className="px-5 py-3 border-b border-white/5">
+            <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">News Theme Scores</h3>
+          </div>
+          <div className="p-5 space-y-2">
+            <ThemeScoreRow label="Tariffs" value={ctx.themeScores.tariffs} />
+            <ThemeScoreRow label="Rates" value={ctx.themeScores.rates} />
+            <ThemeScoreRow label="Trump Policy" value={ctx.themeScores.trump} />
+            <ThemeScoreRow label="Analyst Tone" value={ctx.themeScores.analysts} />
+            <ThemeScoreRow label="AI/Tech" value={ctx.themeScores.aiTech} />
+            <ThemeScoreRow label="Event Risk" value={ctx.themeScores.eventRisk} />
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+          <div className="px-5 py-3 border-b border-white/5">
+            <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Shock Reactions</h3>
+          </div>
+          <div className="p-5 space-y-2">
+            <ShockRow
+              label="VIX > +8%"
+              sample={ctx.shockReactions.vixSpikeSample}
+              avg={ctx.shockReactions.vixSpikeAvgNextDayMesPct}
+              med={ctx.shockReactions.vixSpikeMedianNextDayMesPct}
+            />
+            <ShockRow
+              label="US10Y > +8bp"
+              sample={ctx.shockReactions.yieldSpikeSample}
+              avg={ctx.shockReactions.yieldSpikeAvgNextDayMesPct}
+              med={ctx.shockReactions.yieldSpikeMedianNextDayMesPct}
+            />
+          </div>
+        </div>
+
+        {ctx.techLeaders.length > 0 && (
+          <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+            <div className="px-5 py-3 border-b border-white/5">
+              <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Top AI/Tech Breadth</h3>
+            </div>
+            <div className="p-5 space-y-2">
+              {ctx.techLeaders.map((leader) => (
+                <TechLeaderRow
+                  key={leader.symbol}
+                  symbol={leader.symbol}
+                  dayChangePercent={leader.dayChangePercent}
+                  weekChangePercent={leader.weekChangePercent}
                 />
               ))}
             </div>
-          )}
-
-          {/* FULL WIDTH CHART */}
-          {result.chartData && result.chartData.candles.length > 3 && (
-            <TechChart
-              candles={result.chartData.candles}
-              fibLevels={result.chartData.fibLevels}
-              swingHighs={result.chartData.swingHighs}
-              swingLows={result.chartData.swingLows}
-              measuredMoves={result.chartData.measuredMoves}
-              entry={gauge15m?.entry || 0}
-              stop={gauge15m?.stop || 0}
-              target={gauge15m?.target || 0}
-            />
-          )}
-
-          {/* Narrative — concise */}
-          <div className="rounded-xl border border-white/5 bg-[#131722] p-5">
-            <p className="text-sm text-white/60 leading-relaxed">{result.narrative}</p>
           </div>
+        )}
 
-          {/* Market Context Row */}
-          {result.marketContext && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Regime + Commodities */}
-              <div className="space-y-4">
-                <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
-                  <div className="px-5 py-3 border-b border-white/5 flex items-center gap-3">
-                    <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Market Regime</h3>
-                    <RegimeBadge regime={result.marketContext.regime} />
-                  </div>
-                  <div className="p-5 space-y-1.5">
-                    {result.marketContext.regimeFactors.map((factor, i) => (
-                      <div key={i} className="flex items-start gap-2">
-                        <span className="text-white/15 mt-0.5">&bull;</span>
-                        <span className="text-xs text-white/50">{factor}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {result.marketContext.breakout7000 && (
-                  <Breakout7000Card breakout={result.marketContext.breakout7000} />
-                )}
-
-                {(result.marketContext.goldContext || result.marketContext.oilContext) && (
-                  <div className="rounded-xl border border-white/5 bg-[#131722] p-5 space-y-3">
-                    {result.marketContext.goldContext && (
-                      <CommodityRow label="GOLD" price={result.marketContext.goldContext.price} changePercent={result.marketContext.goldContext.changePercent} signal={result.marketContext.goldContext.signal} />
-                    )}
-                    {result.marketContext.oilContext && (
-                      <CommodityRow label="OIL" price={result.marketContext.oilContext.price} changePercent={result.marketContext.oilContext.changePercent} signal={result.marketContext.oilContext.signal} />
-                    )}
-                  </div>
-                )}
-
-                {result.marketContext.yieldContext && (
-                  <div className="rounded-xl border border-white/5 bg-[#131722] p-5 space-y-2">
-                    <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Rates</h3>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-white/40">US10Y</span>
-                      <span className="text-sm font-black text-white">
-                        {result.marketContext.yieldContext.tenYearYield.toFixed(2)}%
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-white/40">1D Change</span>
-                      <span
-                        className="text-xs font-black"
-                        style={{ color: result.marketContext.yieldContext.tenYearChangeBp >= 0 ? '#ef5350' : '#26a69a' }}
-                      >
-                        {result.marketContext.yieldContext.tenYearChangeBp >= 0 ? '+' : ''}
-                        {result.marketContext.yieldContext.tenYearChangeBp.toFixed(1)} bp
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-white/40">Fed Funds</span>
-                      <span className="text-xs text-white/70">
-                        {result.marketContext.yieldContext.fedFundsRate == null
-                          ? 'n/a'
-                          : `${result.marketContext.yieldContext.fedFundsRate.toFixed(2)}%`}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-white/40">10Y - Fed</span>
-                      <span className="text-xs text-white/70">
-                        {result.marketContext.yieldContext.spread10yMinusFedBp == null
-                          ? 'n/a'
-                          : `${result.marketContext.yieldContext.spread10yMinusFedBp.toFixed(1)} bp`}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-white/35">{result.marketContext.yieldContext.signal}</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Correlations + Headlines */}
-              <div className="space-y-4">
-                {result.marketContext.correlations.length > 0 && (
-                  <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5">
-                      <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Cross-Asset Correlations</h3>
-                    </div>
-                    <div className="p-5 space-y-3">
-                      {result.marketContext.correlations.map((c, i) => (
-                        <CorrelationRow key={i} pair={c.pair} value={c.value} interpretation={c.interpretation} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
-                  <div className="px-5 py-3 border-b border-white/5">
-                    <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">News Theme Scores</h3>
-                  </div>
-                  <div className="p-5 space-y-2">
-                    <ThemeScoreRow label="Tariffs" value={result.marketContext.themeScores.tariffs} />
-                    <ThemeScoreRow label="Rates" value={result.marketContext.themeScores.rates} />
-                    <ThemeScoreRow label="Trump Policy" value={result.marketContext.themeScores.trump} />
-                    <ThemeScoreRow label="Analyst Tone" value={result.marketContext.themeScores.analysts} />
-                    <ThemeScoreRow label="AI/Tech" value={result.marketContext.themeScores.aiTech} />
-                    <ThemeScoreRow label="Event Risk" value={result.marketContext.themeScores.eventRisk} />
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
-                  <div className="px-5 py-3 border-b border-white/5">
-                    <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Shock Reactions</h3>
-                  </div>
-                  <div className="p-5 space-y-2">
-                    <ShockRow
-                      label="VIX > +8%"
-                      sample={result.marketContext.shockReactions.vixSpikeSample}
-                      avg={result.marketContext.shockReactions.vixSpikeAvgNextDayMesPct}
-                      med={result.marketContext.shockReactions.vixSpikeMedianNextDayMesPct}
-                    />
-                    <ShockRow
-                      label="US10Y > +8bp"
-                      sample={result.marketContext.shockReactions.yieldSpikeSample}
-                      avg={result.marketContext.shockReactions.yieldSpikeAvgNextDayMesPct}
-                      med={result.marketContext.shockReactions.yieldSpikeMedianNextDayMesPct}
-                    />
-                  </div>
-                </div>
-
-                {result.marketContext.techLeaders.length > 0 && (
-                  <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5">
-                      <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Top AI/Tech Breadth</h3>
-                    </div>
-                    <div className="p-5 space-y-2">
-                      {result.marketContext.techLeaders.map((leader) => (
-                        <TechLeaderRow
-                          key={leader.symbol}
-                          symbol={leader.symbol}
-                          dayChangePercent={leader.dayChangePercent}
-                          weekChangePercent={leader.weekChangePercent}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {result.marketContext.headlines.length > 0 && (
-                  <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/5">
-                      <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Headlines</h3>
-                    </div>
-                    <div className="p-5 space-y-1.5">
-                      {result.marketContext.headlines.slice(0, 6).map((h, i) => (
-                        <span key={i} className="block text-xs text-white/40">{h}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+        {ctx.headlines.length > 0 && (
+          <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+            <div className="px-5 py-3 border-b border-white/5">
+              <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Headlines</h3>
             </div>
-          )}
-
-          {/* Per-Symbol Detail — real index names */}
-          {result.symbols.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {result.symbols.map((sym) => (
-                <SymbolDetail key={sym.symbol} data={sym} />
+            <div className="p-5 space-y-1.5">
+              {ctx.headlines.slice(0, 6).map((h, i) => (
+                <span key={i} className="block text-xs text-white/40">{h}</span>
               ))}
             </div>
-          )}
-        </>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── TRADES RESULT PANEL ────────────────────────────────────
+
+function TradesResultPanel({ result }: { result: TradesResult }) {
+  return (
+    <div className="space-y-4">
+      {/* Current Active Trade */}
+      {result.currentTrade ? (
+        <div className="rounded-xl border-2 overflow-hidden" style={{
+          borderColor: result.currentTrade.direction === 'BULLISH' ? '#26a69a40' : '#ef535040',
+          background: `linear-gradient(135deg, ${result.currentTrade.direction === 'BULLISH' ? '#26a69a' : '#ef5350'}08, #131722)`,
+        }}>
+          <div className="px-5 py-3 border-b border-white/5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">Active Trade</h3>
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold text-white/50 bg-white/5">
+                {result.currentTrade.timeframe}
+              </span>
+            </div>
+            <DirectionBadge direction={result.currentTrade.direction} />
+          </div>
+          <div className="p-5">
+            <TradeCardContent card={result.currentTrade} />
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-white/5 bg-[#131722] p-5 text-center">
+          <span className="text-sm text-white/25">No active trades</span>
+        </div>
       )}
+
+      {/* 15M Upcoming */}
+      <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+        <div className="px-5 py-3 border-b border-white/5 flex items-center justify-between">
+          <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">15M Entries</h3>
+          <span className="text-[10px] text-white/20">{result.upcoming15m.length} forming</span>
+        </div>
+        {result.upcoming15m.length === 0 ? (
+          <div className="p-5 text-center">
+            <span className="text-xs text-white/20">No 15m entries forming</span>
+          </div>
+        ) : (
+          <div className="p-4 space-y-3">
+            {result.upcoming15m.map((card, i) => (
+              <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-4">
+                <TradeCardContent card={card} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 1H Upcoming */}
+      <div className="rounded-xl border border-white/5 bg-[#131722] overflow-hidden">
+        <div className="px-5 py-3 border-b border-white/5 flex items-center justify-between">
+          <h3 className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">1H Entries</h3>
+          <span className="text-[10px] text-white/20">{result.upcoming1h.length} forming</span>
+        </div>
+        {result.upcoming1h.length === 0 ? (
+          <div className="p-5 text-center">
+            <span className="text-xs text-white/20">No 1h entries forming</span>
+          </div>
+        ) : (
+          <div className="p-4 space-y-3">
+            {result.upcoming1h.map((card, i) => (
+              <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-4">
+                <TradeCardContent card={card} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function DirectionBadge({ direction }: { direction: 'BULLISH' | 'BEARISH' }) {
+  const color = direction === 'BULLISH' ? '#26a69a' : '#ef5350'
+  const arrow = direction === 'BULLISH' ? '\u25B2' : '\u25BC'
+  return (
+    <span
+      className="px-2.5 py-1 rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-1.5"
+      style={{ backgroundColor: `${color}15`, color, border: `1px solid ${color}30` }}
+    >
+      {arrow} {direction}
+    </span>
+  )
+}
+
+function TradeCardContent({ card }: { card: TradeCard }) {
+  const color = card.direction === 'BULLISH' ? '#26a69a' : '#ef5350'
+  const qualityColor = card.quality >= 80 ? '#26a69a' : card.quality >= 60 ? '#ffa726' : '#ef5350'
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <DirectionBadge direction={card.direction} />
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <span className="block text-[9px] text-white/25 uppercase">Quality</span>
+            <span className="text-lg font-black tabular-nums" style={{ color: qualityColor }}>
+              {card.quality}
+            </span>
+          </div>
+          <div className="text-right">
+            <span className="block text-[9px] text-white/25 uppercase">R:R</span>
+            <span className="text-lg font-black text-white tabular-nums">
+              1:{card.riskReward}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 mb-3">
+        <div className="rounded-lg bg-white/[0.03] p-2.5 text-center">
+          <span className="block text-[9px] text-white/25 uppercase tracking-wider mb-1">Entry</span>
+          <span className="text-base font-black text-white tabular-nums">{card.entry.toFixed(2)}</span>
+        </div>
+        <div className="rounded-lg bg-[#ef5350]/[0.05] p-2.5 text-center">
+          <span className="block text-[9px] text-[#ef5350]/50 uppercase tracking-wider mb-1">Stop</span>
+          <span className="text-base font-black text-[#ef5350] tabular-nums">{card.stop.toFixed(2)}</span>
+        </div>
+        <div className="rounded-lg bg-[#26a69a]/[0.05] p-2.5 text-center">
+          <span className="block text-[9px] text-[#26a69a]/50 uppercase tracking-wider mb-1">Target</span>
+          <span className="text-base font-black text-[#26a69a] tabular-nums">{card.target.toFixed(2)}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-2 text-xs">
+        <div className="rounded-lg bg-white/[0.02] p-2">
+          <span className="block text-[9px] text-white/20 uppercase">A</span>
+          <span className="font-bold text-white/60 tabular-nums">{card.pointA.toFixed(2)}</span>
+        </div>
+        <div className="rounded-lg bg-white/[0.02] p-2">
+          <span className="block text-[9px] text-white/20 uppercase">B</span>
+          <span className="font-bold text-white/60 tabular-nums">{card.pointB.toFixed(2)}</span>
+        </div>
+        <div className="rounded-lg bg-white/[0.02] p-2">
+          <span className="block text-[9px] text-white/20 uppercase">C</span>
+          <span className="font-bold text-white/60 tabular-nums">{card.pointC.toFixed(2)}</span>
+        </div>
+        <div className="rounded-lg bg-white/[0.02] p-2">
+          <span className="block text-[9px] text-white/20 uppercase">D (proj)</span>
+          <span className="font-bold tabular-nums" style={{ color }}>{card.projectedD.toFixed(2)}</span>
+        </div>
+      </div>
+
+      <div className="mt-2 flex items-center gap-4 text-[11px] text-white/30">
+        <span>Retrace: {(card.retracementRatio * 100).toFixed(1)}%</span>
+        <span>{card.timeframe}</span>
+        <span className="uppercase">{card.status}</span>
+      </div>
     </div>
   )
 }
@@ -522,172 +893,6 @@ function Breakout7000Card({
 
         <p className="text-xs text-white/60">{breakout.signal}</p>
         <p className="text-xs text-white/40">{breakout.tradePlan}</p>
-      </div>
-    </div>
-  )
-}
-
-// ─── GAUGE CARD ──────────────────────────────────────────────
-
-function GaugeCard({ gauge, expanded, onToggle }: { gauge: TimeframeGauge; expanded: boolean; onToggle: () => void }) {
-  const isBuy = gauge.direction === 'BUY'
-  const color = isBuy ? '#26a69a' : '#ef5350'
-  const totalVoting = gauge.buyCount + gauge.sellCount
-  const buyPct = totalVoting > 0 ? (gauge.buyCount / totalVoting) * 100 : 50
-  const sellPct = totalVoting > 0 ? (gauge.sellCount / totalVoting) * 100 : 50
-
-  return (
-    <div className="rounded-2xl border-2 overflow-hidden" style={{ borderColor: `${color}25`, background: `linear-gradient(180deg, ${color}06 0%, #0d1117 40%)` }}>
-      <div className="h-1.5 w-full" style={{ backgroundColor: `${color}50` }} />
-      <div className="p-5">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-[11px] font-bold text-white/25 uppercase tracking-[0.2em]">{gauge.timeframe}</span>
-          <span className="text-sm font-black tabular-nums" style={{ color: `${color}cc` }}>{gauge.confidence}%</span>
-        </div>
-
-        <div className="flex items-center gap-3 mb-5">
-          <span className="text-5xl font-black leading-none" style={{ color }}>{isBuy ? '\u25B2' : '\u25BC'}</span>
-          <span className="text-4xl font-black tracking-tight leading-none" style={{ color }}>{gauge.direction}</span>
-        </div>
-
-        <div className="mb-5">
-          <div className="h-3 rounded-full bg-white/5 overflow-hidden flex mb-2">
-            <div className="h-full bg-[#26a69a]" style={{ width: `${buyPct}%`, borderRadius: sellPct > 0 ? '9999px 0 0 9999px' : '9999px' }} />
-            <div className="h-full bg-[#ef5350]" style={{ width: `${sellPct}%`, borderRadius: buyPct > 0 ? '0 9999px 9999px 0' : '9999px' }} />
-          </div>
-          <div className="flex justify-between text-[11px] font-bold tabular-nums">
-            <span className="text-[#26a69a]">{gauge.buyCount} BUY</span>
-            {gauge.neutralCount > 0 && <span className="text-white/15">{gauge.neutralCount} N</span>}
-            <span className="text-[#ef5350]">{gauge.sellCount} SELL</span>
-          </div>
-        </div>
-
-        {gauge.entry > 0 && (
-          <div className="grid grid-cols-3 gap-3 mb-5">
-            <div className="rounded-lg bg-white/[0.03] p-2.5 text-center">
-              <span className="block text-[9px] text-white/25 uppercase tracking-wider mb-1">Entry</span>
-              <span className="text-base font-black text-white tabular-nums">{gauge.entry.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-            </div>
-            <div className="rounded-lg bg-[#ef5350]/[0.05] p-2.5 text-center">
-              <span className="block text-[9px] text-[#ef5350]/50 uppercase tracking-wider mb-1">Stop</span>
-              <span className="text-base font-black text-[#ef5350] tabular-nums">{gauge.stop.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-            </div>
-            <div className="rounded-lg bg-[#26a69a]/[0.05] p-2.5 text-center">
-              <span className="block text-[9px] text-[#26a69a]/50 uppercase tracking-wider mb-1">Target</span>
-              <span className="text-base font-black text-[#26a69a] tabular-nums">{gauge.target.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-            </div>
-          </div>
-        )}
-
-        {gauge.reasoning && (
-          <div className="mb-4 p-3 rounded-lg border border-white/5 bg-white/[0.02]">
-            <span className="block text-[9px] font-bold text-white/20 uppercase tracking-wider mb-1.5">Why</span>
-            <p className="text-xs text-white/60 leading-relaxed">{gauge.reasoning}</p>
-          </div>
-        )}
-
-        <button onClick={onToggle} className="w-full py-2 rounded-lg border border-white/5 text-[11px] font-bold text-white/25 uppercase tracking-wider hover:bg-white/[0.03] hover:text-white/40 transition-all">
-          {expanded ? '\u25B2 Hide Signals' : `\u25BC Show ${gauge.totalSignals} Signals`}
-        </button>
-      </div>
-
-      {expanded && (
-        <div className="border-t border-white/5 px-5 py-4 space-y-4">
-          <div>
-            <h4 className="text-[10px] font-bold text-[#26a69a]/80 uppercase tracking-wider mb-2">Buy Signals ({gauge.buyCount})</h4>
-            <div className="space-y-1">
-              {gauge.buySignals.map((s, i) => (
-                <div key={i} className="px-2.5 py-1 rounded text-[11px] font-medium bg-[#26a69a]/[0.06] text-[#26a69a]/90 border border-[#26a69a]/10">{s}</div>
-              ))}
-              {gauge.buySignals.length === 0 && <span className="text-[10px] text-white/15">None</span>}
-            </div>
-          </div>
-          <div>
-            <h4 className="text-[10px] font-bold text-[#ef5350]/80 uppercase tracking-wider mb-2">Sell Signals ({gauge.sellCount})</h4>
-            <div className="space-y-1">
-              {gauge.sellSignals.map((s, i) => (
-                <div key={i} className="px-2.5 py-1 rounded text-[11px] font-medium bg-[#ef5350]/[0.06] text-[#ef5350]/90 border border-[#ef5350]/10">{s}</div>
-              ))}
-              {gauge.sellSignals.length === 0 && <span className="text-[10px] text-white/15">None</span>}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── SYMBOL DETAIL ───────────────────────────────────────────
-
-function SymbolDetail({ data }: { data: InstantSymbolResult }) {
-  const inverseSymbols = new Set(['VX', 'DX', 'US10Y', 'ZN', 'ZB'])
-  const isBuy = data.verdict === 'BUY'
-  const pressureUp = inverseSymbols.has(data.symbol) ? !isBuy : isBuy
-  const color = pressureUp ? '#26a69a' : '#ef5350'
-  const name = INDEX_NAMES[data.symbol] || data.symbol
-
-  return (
-    <div className="rounded-xl border overflow-hidden" style={{ borderColor: `${color}15`, background: 'linear-gradient(180deg, #131722, #0d1117)' }}>
-      <div className="h-[2px] w-full" style={{ background: `linear-gradient(90deg, transparent, ${color}40, transparent)` }} />
-      <div className="p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <span className="block text-lg font-black text-white">{name}</span>
-            <span className="text-[10px] text-white/25 font-bold uppercase">{data.symbol}</span>
-          </div>
-          <div className="text-right">
-            <span className="px-2.5 py-0.5 rounded-md text-xs font-black uppercase" style={{ backgroundColor: `${color}15`, color }}>
-              SPX PRESSURE {pressureUp ? 'UP' : 'DOWN'}
-            </span>
-            <span className="block text-lg font-black tabular-nums mt-1" style={{ color }}>{data.confidence}%</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-3">
-          <div>
-            <span className="text-[10px] text-white/20 uppercase tracking-wider block">Entry</span>
-            <span className="text-sm font-bold text-white tabular-nums">{data.entry.toFixed(2)}</span>
-          </div>
-          <div>
-            <span className="text-[10px] text-white/20 uppercase tracking-wider block">Stop</span>
-            <span className="text-sm font-bold text-[#ef5350] tabular-nums">{data.stop.toFixed(2)}</span>
-          </div>
-          <div>
-            <span className="text-[10px] text-white/20 uppercase tracking-wider block">Target 1</span>
-            <span className="text-sm font-bold text-[#26a69a] tabular-nums">{data.target1.toFixed(2)}</span>
-          </div>
-          <div>
-            <span className="text-[10px] text-white/20 uppercase tracking-wider block">Target 2</span>
-            <span className="text-sm font-bold text-[#26a69a] tabular-nums">{data.target2.toFixed(2)}</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] text-white/20 uppercase">R:R</span>
-          <span className="text-sm font-bold text-white tabular-nums">1:{data.riskReward.toFixed(1)}</span>
-        </div>
-
-        <p className="text-xs text-white/50 leading-relaxed">{data.reasoning}</p>
-
-        {data.signalBreakdown.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-white/5 space-y-1.5">
-            {data.signalBreakdown.map((tf) => {
-              const total = tf.buy + tf.sell
-              const buyW = total > 0 ? (tf.buy / total) * 100 : 50
-              const sellW = total > 0 ? (tf.sell / total) * 100 : 50
-              return (
-                <div key={tf.tf} className="flex items-center gap-2">
-                  <span className="text-[10px] text-white/25 font-mono w-8 uppercase">{tf.tf}</span>
-                  <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden flex">
-                    <div className="h-full bg-[#26a69a]" style={{ width: `${buyW}%` }} />
-                    <div className="h-full bg-[#ef5350]" style={{ width: `${sellW}%` }} />
-                  </div>
-                  <span className="text-[10px] text-white/20 tabular-nums w-16 text-right font-medium">{tf.buy}B/{tf.sell}S</span>
-                </div>
-              )
-            })}
-          </div>
-        )}
       </div>
     </div>
   )

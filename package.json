@@ -27,6 +27,7 @@
     "inngest:dev": "npx inngest-cli dev -u http://localhost:3000/api/inngest"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
     "@prisma/adapter-pg": "^7.4.0",
     "@prisma/client": "^7.4.0",
     "inngest": "^3.52.0",

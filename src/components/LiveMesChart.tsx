@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useEffect, useRef, useState, useMemo, forwardRef, useImperativeHandle } from 'react'
 import {
   CandlestickSeries,
   ColorType,
@@ -52,11 +52,15 @@ function toCandle(point: MesPoint): CandleData {
   }
 }
 
+export interface LiveMesChartHandle {
+  captureScreenshot: () => string | null
+}
+
 interface LiveMesChartProps {
   forecast?: ForecastResponse | null
 }
 
-export default function LiveMesChart({ forecast }: LiveMesChartProps) {
+const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function LiveMesChart({ forecast }, ref) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null)
@@ -76,6 +80,19 @@ export default function LiveMesChart({ forecast }: LiveMesChartProps) {
     const active = forecast.measuredMoves.filter((m) => m.status === 'ACTIVE')
     return active.length > 0 ? active[0] : null
   }, [forecast])
+
+  // Expose screenshot capture for chart analysis
+  useImperativeHandle(ref, () => ({
+    captureScreenshot: () => {
+      if (!chartRef.current) return null
+      try {
+        const canvas = chartRef.current.takeScreenshot()
+        return canvas.toDataURL('image/png')
+      } catch {
+        return null
+      }
+    },
+  }))
 
   // --- Chart setup ---
   useEffect(() => {
@@ -361,4 +378,6 @@ export default function LiveMesChart({ forecast }: LiveMesChartProps) {
       )}
     </div>
   )
-}
+})
+
+export default LiveMesChart

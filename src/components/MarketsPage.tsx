@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import Header from './Header'
 import AnalysePanel from './AnalysePanel'
 import MarketsGrid from './MarketsGrid'
 import ForecastPanel from './ForecastPanel'
-import LiveMesChart from './LiveMesChart'
+import LiveMesChart, { LiveMesChartHandle } from './LiveMesChart'
 import { useMarketBatch } from '@/hooks/useMarketBatch'
 import { useForecast } from '@/hooks/useForecast'
 import { InstantAnalysisResult } from '@/lib/instant-analysis'
@@ -14,6 +14,8 @@ export default function MarketsPage() {
   const { symbols, loading: marketsLoading, error: marketsError } = useMarketBatch()
   const { forecast, loading: forecastLoading, error: forecastError } = useForecast()
   const [analysisResult, setAnalysisResult] = useState<InstantAnalysisResult | null>(null)
+  const chartRef = useRef<LiveMesChartHandle>(null)
+  const captureChart = useCallback(() => chartRef.current?.captureScreenshot() ?? null, [])
 
   return (
     <div className="min-h-screen bg-[#0d1117]">
@@ -28,12 +30,12 @@ export default function MarketsPage() {
 
         {/* Analyse — 3 Timeframe Gauges at the top */}
         <div className="mb-4">
-          <AnalysePanel onResult={setAnalysisResult} />
+          <AnalysePanel onResult={setAnalysisResult} onCaptureChart={captureChart} />
         </div>
 
         {/* Hero Chart — right under Analyse */}
         <div className="mb-10">
-          <LiveMesChart forecast={forecast} />
+          <LiveMesChart ref={chartRef} forecast={forecast} />
         </div>
 
         {/* Markets Grid */}
