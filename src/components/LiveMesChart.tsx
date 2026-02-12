@@ -17,9 +17,11 @@ type MesPoint = {
   high: number
   low: number
   close: number
+  volume?: number
 }
 
 type StreamStatus = 'connecting' | 'live' | 'error'
+type TrendState = 'UP' | 'DOWN' | 'FLAT'
 
 function toChartPoint(point: MesPoint) {
   return {
@@ -31,14 +33,52 @@ function toChartPoint(point: MesPoint) {
   }
 }
 
+function aggregateCandles(points: MesPoint[], periodMinutes: number): MesPoint[] {
+  if (points.length === 0) return []
+  const periodSec = periodMinutes * 60
+  const out: MesPoint[] = []
+  let bucket: MesPoint | null = null
+  let bucketStart = 0
+
+  for (const point of points) {
+    const aligned = Math.floor(point.time / periodSec) * periodSec
+    if (bucket === null || aligned !== bucketStart) {
+      if (bucket) out.push(bucket)
+      bucket = { ...point, time: aligned }
+      bucketStart = aligned
+      continue
+    }
+
+    bucket.high = Math.max(bucket.high, point.high)
+    bucket.low = Math.min(bucket.low, point.low)
+    bucket.close = point.close
+    bucket.volume = (bucket.volume || 0) + (point.volume || 0)
+  }
+
+  if (bucket) out.push(bucket)
+  return out
+}
+
+function computeTrend(points: MesPoint[]): TrendState {
+  if (points.length < 2) return 'FLAT'
+  const last = points[points.length - 1].close
+  const lookback = points[Math.max(0, points.length - 4)].close
+  if (last > lookback) return 'UP'
+  if (last < lookback) return 'DOWN'
+  return 'FLAT'
+}
+
 export default function LiveMesChart() {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null)
+  const pointsRef = useRef<MesPoint[]>([])
 
   const [status, setStatus] = useState<StreamStatus>('connecting')
   const [error, setError] = useState<string | null>(null)
   const [lastPrice, setLastPrice] = useState<number | null>(null)
+  const [trend1h, setTrend1h] = useState<TrendState>('FLAT')
+  const [trend4h, setTrend4h] = useState<TrendState>('FLAT')
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -99,7 +139,7 @@ export default function LiveMesChart() {
   }, [])
 
   useEffect(() => {
-    const eventSource = new EventSource('/api/live/mes?backfill=320')
+    const eventSource = new EventSource('/api/live/mes?backfill=220')
 
     const onSnapshot = (event: MessageEvent) => {
       try {
@@ -107,8 +147,11 @@ export default function LiveMesChart() {
         if (!seriesRef.current) return
         const points = data.points || []
         if (points.length === 0) return
+        pointsRef.current = points
         seriesRef.current.setData(points.map(toChartPoint))
         setLastPrice(points[points.length - 1].close)
+        setTrend1h(computeTrend(aggregateCandles(points, 60)))
+        setTrend4h(computeTrend(aggregateCandles(points, 240)))
         chartRef.current?.timeScale().fitContent()
         setStatus('live')
         setError(null)
@@ -122,15 +165,19 @@ export default function LiveMesChart() {
       try {
         const data = JSON.parse(event.data) as { points: MesPoint[] }
         if (!seriesRef.current) return
-        const points = data.points || []
-        for (const point of points) {
+        const updates = data.points || []
+        if (updates.length === 0) return
+        const byTime = new Map(pointsRef.current.map((p) => [p.time, p] as const))
+        for (const point of updates) {
+          byTime.set(point.time, point)
           seriesRef.current.update(toChartPoint(point))
           setLastPrice(point.close)
         }
-        if (points.length > 0) {
-          setStatus('live')
-          setError(null)
-        }
+        pointsRef.current = [...byTime.values()].sort((a, b) => a.time - b.time)
+        setTrend1h(computeTrend(aggregateCandles(pointsRef.current, 60)))
+        setTrend4h(computeTrend(aggregateCandles(pointsRef.current, 240)))
+        setStatus('live')
+        setError(null)
       } catch (e) {
         setStatus('error')
         setError(e instanceof Error ? e.message : 'Invalid live update payload')
@@ -139,7 +186,7 @@ export default function LiveMesChart() {
 
     const onError = () => {
       setStatus('error')
-      setError('Live stream disconnected. Verify local MES live ingestion process is running.')
+      setError('Live stream disconnected. Verify local MES 15m ingestion process is running.')
     }
 
     eventSource.addEventListener('snapshot', onSnapshot)
@@ -156,8 +203,14 @@ export default function LiveMesChart() {
   return (
     <div className="rounded-xl border border-white/5 bg-[#0d1117] overflow-hidden">
       <div className="px-4 py-2 border-b border-white/5 flex items-center justify-between">
-        <span className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">MES Live 1m</span>
+        <span className="text-xs font-bold text-white/30 uppercase tracking-[0.2em]">MES Live 15m (Entries)</span>
         <div className="flex items-center gap-3">
+          <span className="text-[10px] text-white/45 font-semibold uppercase">
+            1H {trend1h}
+          </span>
+          <span className="text-[10px] text-white/45 font-semibold uppercase">
+            4H {trend4h}
+          </span>
           {lastPrice != null && (
             <span className="text-xs font-mono text-white/80">{lastPrice.toFixed(2)}</span>
           )}

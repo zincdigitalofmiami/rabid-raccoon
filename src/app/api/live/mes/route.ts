@@ -10,6 +10,7 @@ interface MesPricePoint {
   high: number
   low: number
   close: number
+  volume?: number
 }
 
 function encodeSse(event: string, payload: unknown): Uint8Array {
@@ -17,22 +18,23 @@ function encodeSse(event: string, payload: unknown): Uint8Array {
   return new TextEncoder().encode(body)
 }
 
-function asPoint(row: { eventTime: Date; open: number; high: number; low: number; close: number }): MesPricePoint {
+function asPoint(row: { eventTime: Date; open: number; high: number; low: number; close: number; volume: bigint | null }): MesPricePoint {
   return {
     time: Math.floor(row.eventTime.getTime() / 1000),
     open: row.open,
     high: row.high,
     low: row.low,
     close: row.close,
+    volume: row.volume == null ? 0 : Number(row.volume),
   }
 }
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url)
-  const backfill = Number(url.searchParams.get('backfill') || '240')
+  const backfill = Number(url.searchParams.get('backfill') || '160')
   const backfillCount = Number.isFinite(backfill)
-    ? Math.max(60, Math.min(2000, Math.trunc(backfill)))
-    : 240
+    ? Math.max(40, Math.min(1200, Math.trunc(backfill)))
+    : 160
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -47,14 +49,14 @@ export async function GET(request: Request): Promise<Response> {
       }
 
       try {
-        const initial = await prisma.mesPrice1m.findMany({
+        const initial = await prisma.mesPrice15m.findMany({
           orderBy: { eventTime: 'desc' },
           take: backfillCount,
         })
 
         if (initial.length === 0) {
           pushErrorAndClose(
-            'No MES 1m data in DB yet. Start local live ingestion: npm run ingest:mes:live -- --once=true'
+            'No MES 15m data in DB yet. Start local live ingestion: npm run ingest:mes:live -- --once=true'
           )
           return
         }
@@ -76,7 +78,7 @@ export async function GET(request: Request): Promise<Response> {
       const interval = setInterval(async () => {
         if (closed || !lastEventTime) return
         try {
-          const updates = await prisma.mesPrice1m.findMany({
+          const updates = await prisma.mesPrice15m.findMany({
             where: {
               eventTime: {
                 gt: lastEventTime,

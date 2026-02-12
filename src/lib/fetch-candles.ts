@@ -66,7 +66,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
 
   try {
     if (symbol === 'MES') {
-      const rows = await prisma.mesPrice1h.findMany({
+      const rows15m = await prisma.mesPrice15m.findMany({
         where: {
           eventTime: {
             gte: start,
@@ -76,8 +76,24 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
         orderBy: { eventTime: 'asc' },
         take: 20_000,
       })
-      if (rows.length === 0) return null
-      return rows.map((row) =>
+      if (rows15m.length > 0) {
+        return rows15m.map((row) =>
+          toCandle(row.eventTime.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
+        )
+      }
+
+      const rows1h = await prisma.mesPrice1h.findMany({
+        where: {
+          eventTime: {
+            gte: start,
+            lte: end,
+          },
+        },
+        orderBy: { eventTime: 'asc' },
+        take: 20_000,
+      })
+      if (rows1h.length === 0) return null
+      return rows1h.map((row) =>
         toCandle(row.eventTime.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
       )
     }
