@@ -18,8 +18,35 @@ const DB_TF_PRIORITY: Timeframe[] = [
   Timeframe.D1,
 ]
 
+type DbState = 'disabled' | 'probing' | 'enabled' | 'failed'
+
+let dbState: DbState = process.env.DATABASE_URL ? 'probing' : 'disabled'
+let dbProbePromise: Promise<boolean> | null = null
+
+async function canUseDatabase(): Promise<boolean> {
+  if (dbState === 'disabled' || dbState === 'failed') return false
+  if (dbState === 'enabled') return true
+
+  if (!dbProbePromise) {
+    dbProbePromise = (async () => {
+      try {
+        await prisma.$queryRawUnsafe('SELECT 1')
+        dbState = 'enabled'
+        return true
+      } catch {
+        dbState = 'failed'
+        return false
+      } finally {
+        dbProbePromise = null
+      }
+    })()
+  }
+
+  return dbProbePromise
+}
+
 async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: string): Promise<CandleData[] | null> {
-  if (!process.env.DATABASE_URL) return null
+  if (!(await canUseDatabase())) return null
 
   const start = new Date(startIso)
   const end = new Date(endIso)
@@ -51,6 +78,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
       }))
     }
   } catch {
+    dbState = 'failed'
     return null
   }
 
@@ -58,7 +86,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
 }
 
 async function fetchMacroFromDb(indicator: string, startIso: string, endIso: string): Promise<CandleData[] | null> {
-  if (!process.env.DATABASE_URL) return null
+  if (!(await canUseDatabase())) return null
   const start = new Date(startIso)
   const end = new Date(endIso)
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null
@@ -86,6 +114,7 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
       volume: 0,
     }))
   } catch {
+    dbState = 'failed'
     return null
   }
 }
