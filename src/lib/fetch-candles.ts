@@ -53,6 +53,30 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null
 
   try {
+    const futuresBars = await prisma.mktFutures1h.findMany({
+      where: {
+        symbolCode: symbol,
+        eventTime: {
+          gte: start,
+          lte: end,
+        },
+      },
+      orderBy: { eventTime: 'asc' },
+      take: 20_000,
+    })
+
+    if (futuresBars.length > 0) {
+      return futuresBars.map((bar) => ({
+        time: Math.floor(bar.eventTime.getTime() / 1000),
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume ? Number(bar.volume) : 0,
+      }))
+    }
+
+    // Backward-compatible fallback for legacy deployments.
     for (const timeframe of DB_TF_PRIORITY) {
       const bars = await prisma.marketBar.findMany({
         where: {
@@ -92,7 +116,63 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null
 
   try {
-    const rows = await prisma.macroIndicator.findMany({
+    const mapRowsToCandles = <T extends { eventDate: Date; value: number | null }>(rows: T[]) =>
+      rows.map((row) => ({
+        time: Math.floor(row.eventDate.getTime() / 1000),
+        open: row.value ?? 0,
+        high: row.value ?? 0,
+        low: row.value ?? 0,
+        close: row.value ?? 0,
+        volume: 0,
+      }))
+
+    if (indicator === 'VIXCLS') {
+      const rows = await prisma.econVolIndices1d.findMany({
+        where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
+        orderBy: { eventDate: 'asc' },
+        take: 10_000,
+      })
+      if (rows.length > 0) return mapRowsToCandles(rows)
+    } else if (indicator === 'DGS10') {
+      const rows = await prisma.econYields1d.findMany({
+        where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
+        orderBy: { eventDate: 'asc' },
+        take: 10_000,
+      })
+      if (rows.length > 0) return mapRowsToCandles(rows)
+    } else if (indicator === 'DFF') {
+      const rows = await prisma.econRates1d.findMany({
+        where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
+        orderBy: { eventDate: 'asc' },
+        take: 10_000,
+      })
+      if (rows.length > 0) return mapRowsToCandles(rows)
+    } else if (indicator === 'DTWEXBGS') {
+      const rows = await prisma.econFx1d.findMany({
+        where: { seriesId: indicator, eventDate: { gte: start, lte: end } },
+        orderBy: { eventDate: 'asc' },
+        take: 10_000,
+      })
+      if (rows.length > 0) return mapRowsToCandles(rows)
+    }
+
+    // Backward-compatible fallback for older deployments using macro_indicators only.
+    const econRows = await prisma.economicObservation.findMany({
+      where: {
+        seriesId: indicator,
+        eventDate: {
+          gte: start,
+          lte: end,
+        },
+      },
+      orderBy: { eventDate: 'asc' },
+      take: 10_000,
+    })
+    if (econRows.length > 0) {
+      return mapRowsToCandles(econRows)
+    }
+
+    const legacyRows = await prisma.macroIndicator.findMany({
       where: {
         indicator,
         timestamp: {
@@ -103,9 +183,9 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
       orderBy: { timestamp: 'asc' },
       take: 10_000,
     })
-    if (rows.length === 0) return null
+    if (legacyRows.length === 0) return null
 
-    return rows.map((row) => ({
+    return legacyRows.map((row) => ({
       time: Math.floor(row.timestamp.getTime() / 1000),
       open: row.value,
       high: row.value,

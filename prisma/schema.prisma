@@ -14,6 +14,32 @@ enum DataSource {
   INTERNAL
 }
 
+enum EconCategory {
+  RATES
+  INFLATION
+  LABOR
+  ACTIVITY
+  VOLATILITY
+  COMMODITIES
+  FX
+  EQUITY
+  MONEY
+  OTHER
+}
+
+enum ReportCategory {
+  CPI
+  PPI
+  PCE
+  EMPLOYMENT
+  GDP
+  PMI
+  RETAIL
+  HOUSING
+  POLICY
+  OTHER
+}
+
 enum Timeframe {
   M1
   M5
@@ -49,10 +75,30 @@ model Symbol {
   createdAt       DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime    @updatedAt @db.Timestamptz(6)
   bars            MarketBar[]
+  futures1h       MktFutures1h[]
   measuredMoves   MeasuredMoveSignal[]
+  mappings        SymbolMapping[]
 
   @@index([dataSource, isActive], map: "symbols_source_active_idx")
   @@map("symbols")
+}
+
+model SymbolMapping {
+  id              BigInt     @id @default(autoincrement())
+  symbolCode      String     @db.VarChar(16)
+  source          DataSource
+  sourceTable     String     @db.VarChar(64)
+  sourceSymbol    String     @db.VarChar(64)
+  isPrimary       Boolean    @default(false)
+  confidenceScore Float?     @default(1)
+  notes           String?
+  createdAt       DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @db.Timestamptz(6)
+  symbol          Symbol     @relation(fields: [symbolCode], references: [code], onDelete: Cascade)
+
+  @@unique([sourceTable, sourceSymbol], map: "symbol_mappings_source_key")
+  @@index([symbolCode, source], map: "symbol_mappings_symbol_source_idx")
+  @@map("symbol_mappings")
 }
 
 model MarketBar {
@@ -78,6 +124,191 @@ model MarketBar {
   @@map("market_bars")
 }
 
+model MktFutures1h {
+  id            BigInt     @id @default(autoincrement())
+  symbolCode    String     @db.VarChar(16)
+  eventTime     DateTime   @db.Timestamptz(6)
+  open          Float
+  high          Float
+  low           Float
+  close         Float
+  volume        BigInt?
+  openInterest  BigInt?
+  source        DataSource @default(DATABENTO)
+  sourceDataset String?    @db.VarChar(64)
+  sourceSchema  String?    @db.VarChar(32)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+  symbol        Symbol     @relation(fields: [symbolCode], references: [code], onDelete: Cascade)
+
+  @@unique([symbolCode, eventTime], map: "mkt_futures_1h_symbol_time_key")
+  @@index([symbolCode, eventTime], map: "mkt_futures_1h_symbol_time_idx")
+  @@index([eventTime], map: "mkt_futures_1h_time_idx")
+  @@map("mkt_futures_1h")
+}
+
+model EconRates1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_rates_1d_series_date_key")
+  @@index([seriesId, eventDate], map: "econ_rates_1d_series_date_idx")
+  @@index([eventDate], map: "econ_rates_1d_date_idx")
+  @@map("econ_rates_1d")
+}
+
+model EconYields1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_yields_1d_series_date_key")
+  @@index([seriesId, eventDate], map: "econ_yields_1d_series_date_idx")
+  @@index([eventDate], map: "econ_yields_1d_date_idx")
+  @@map("econ_yields_1d")
+}
+
+model EconFx1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_fx_1d_series_date_key")
+  @@index([seriesId, eventDate], map: "econ_fx_1d_series_date_idx")
+  @@index([eventDate], map: "econ_fx_1d_date_idx")
+  @@map("econ_fx_1d")
+}
+
+model EconVolIndices1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_vol_indices_1d_series_date_key")
+  @@index([seriesId, eventDate], map: "econ_vol_indices_1d_series_date_idx")
+  @@index([eventDate], map: "econ_vol_indices_1d_date_idx")
+  @@map("econ_vol_indices_1d")
+}
+
+model MktIndexes1d {
+  id            BigInt     @id @default(autoincrement())
+  symbol        String     @db.VarChar(32)
+  eventDate     DateTime   @db.Date
+  open          Float?
+  high          Float?
+  low           Float?
+  close         Float?
+  volume        BigInt?
+  source        DataSource @default(YAHOO)
+  sourceSymbol  String?    @db.VarChar(50)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([symbol, eventDate], map: "mkt_indexes_1d_symbol_date_key")
+  @@index([symbol, eventDate], map: "mkt_indexes_1d_symbol_date_idx")
+  @@index([eventDate], map: "mkt_indexes_1d_date_idx")
+  @@map("mkt_indexes_1d")
+}
+
+model MktSpot1d {
+  id            BigInt     @id @default(autoincrement())
+  symbol        String     @db.VarChar(32)
+  eventDate     DateTime   @db.Date
+  value         Float?
+  source        DataSource @default(INTERNAL)
+  sourceSymbol  String?    @db.VarChar(50)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([symbol, eventDate], map: "mkt_spot_1d_symbol_date_key")
+  @@index([symbol, eventDate], map: "mkt_spot_1d_symbol_date_idx")
+  @@index([eventDate], map: "mkt_spot_1d_date_idx")
+  @@map("mkt_spot_1d")
+}
+
+model PolicyNews1d {
+  id             BigInt     @id @default(autoincrement())
+  eventDate      DateTime   @db.Date
+  publishedAt    DateTime?  @db.Timestamptz(6)
+  headline       String
+  summary        String?
+  source         String?    @db.VarChar(100)
+  region         String?    @db.VarChar(64)
+  country        String?    @db.VarChar(64)
+  url            String?
+  sentimentScore Float?
+  impactScore    Float?
+  tags           String[]    @default([])
+  ingestedAt     DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime  DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash        String?    @db.VarChar(64)
+  rawPayload     Json?
+
+  @@index([eventDate], map: "policy_news_1d_date_idx")
+  @@index([source], map: "policy_news_1d_source_idx")
+  @@index([tags], map: "policy_news_1d_tags_idx", type: Gin)
+  @@map("policy_news_1d")
+}
+
+model MacroReport1d {
+  id             BigInt         @id @default(autoincrement())
+  reportCode     String         @db.VarChar(50)
+  reportName     String         @db.VarChar(200)
+  category       ReportCategory @default(OTHER)
+  eventDate      DateTime       @db.Date
+  releaseTime    DateTime?      @db.Timestamptz(6)
+  periodLabel    String?        @db.VarChar(32)
+  actual         Float?
+  forecast       Float?
+  previous       Float?
+  revised        Float?
+  surprise       Float?
+  surprisePct    Float?
+  unit           String?        @db.VarChar(24)
+  source         String?        @db.VarChar(100)
+  country        String?        @db.VarChar(64)
+  ingestedAt     DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime  DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash        String?        @db.VarChar(64)
+  rawPayload     Json?
+
+  @@unique([reportCode, eventDate], map: "macro_reports_1d_code_date_key")
+  @@index([eventDate], map: "macro_reports_1d_date_idx")
+  @@index([category, eventDate], map: "macro_reports_1d_category_date_idx")
+  @@map("macro_reports_1d")
+}
+
 model MacroIndicator {
   id           BigInt     @id @default(autoincrement())
   indicator    String     @db.VarChar(32)
@@ -92,6 +323,59 @@ model MacroIndicator {
   @@unique([indicator, timestamp], map: "macro_indicators_indicator_ts_key")
   @@index([indicator, timestamp], map: "macro_indicators_indicator_ts_idx")
   @@map("macro_indicators")
+}
+
+model EconomicSeries {
+  seriesId     String                @id @db.VarChar(50)
+  displayName  String?               @db.VarChar(200)
+  category     EconCategory          @default(OTHER)
+  source       DataSource
+  sourceSymbol String?               @db.VarChar(50)
+  frequency    String?               @db.VarChar(20)
+  units        String?               @db.VarChar(32)
+  isActive     Boolean               @default(true)
+  metadata     Json?
+  createdAt    DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime              @updatedAt @db.Timestamptz(6)
+  observations EconomicObservation[]
+
+  @@index([category, isActive], map: "economic_series_category_active_idx")
+  @@map("economic_series")
+}
+
+model EconomicObservation {
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  eventDate     DateTime       @db.Date
+  value         Float?
+  source        DataSource
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
+  metadata      Json?
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Cascade)
+
+  @@unique([seriesId, eventDate], map: "economic_observations_series_date_key")
+  @@index([seriesId, eventDate], map: "economic_observations_series_date_idx")
+  @@index([eventDate], map: "economic_observations_date_idx")
+  @@map("economic_observations_1d")
+}
+
+model DataSourceRegistry {
+  sourceId        String   @id @db.VarChar(64)
+  sourceName      String   @db.VarChar(128)
+  description     String?
+  targetTable     String   @db.VarChar(64)
+  apiProvider     String   @db.VarChar(64)
+  updateFrequency String   @db.VarChar(32)
+  authEnvVar      String?  @db.VarChar(64)
+  ingestionScript String?  @db.VarChar(128)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([isActive], map: "data_sources_active_idx")
+  @@map("data_source_registry")
 }
 
 model MeasuredMoveSignal {

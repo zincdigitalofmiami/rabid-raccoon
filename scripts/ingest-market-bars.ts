@@ -1,4 +1,5 @@
-import { Prisma } from '@prisma/client'
+import { Prisma, Timeframe } from '@prisma/client'
+import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { fetchOhlcv, toCandles } from '../src/lib/databento'
 import { INGESTION_SYMBOLS } from '../src/lib/ingestion-symbols'
@@ -147,6 +148,39 @@ function hasInvalidRealData(candles: ReturnType<typeof toCandles>): boolean {
   )
 }
 
+function hashFuturesRow(symbolCode: string, eventTime: Date, close: number): string {
+  return createHash('sha256')
+    .update(`${symbolCode}|${eventTime.toISOString()}|${close}`)
+    .digest('hex')
+}
+
+async function upsertDataSourceRegistry(): Promise<void> {
+  await prisma.dataSourceRegistry.upsert({
+    where: { sourceId: 'market-bars-databento' },
+    create: {
+      sourceId: 'market-bars-databento',
+      sourceName: 'Databento Futures OHLCV',
+      description: 'Databento GLBX market bars ingestion for MES universe.',
+      targetTable: 'mkt_futures_1h',
+      apiProvider: 'databento',
+      updateFrequency: 'intraday',
+      authEnvVar: 'DATABENTO_API_KEY',
+      ingestionScript: 'scripts/ingest-market-bars.ts',
+      isActive: true,
+    },
+    update: {
+      sourceName: 'Databento Futures OHLCV',
+      description: 'Databento GLBX market bars ingestion for MES universe.',
+      targetTable: 'mkt_futures_1h',
+      apiProvider: 'databento',
+      updateFrequency: 'intraday',
+      authEnvVar: 'DATABENTO_API_KEY',
+      ingestionScript: 'scripts/ingest-market-bars.ts',
+      isActive: true,
+    },
+  })
+}
+
 async function upsertSymbolCatalog(symbolCodes: string[]): Promise<void> {
   await prisma.symbol.updateMany({
     where: {
@@ -184,6 +218,29 @@ async function upsertSymbolCatalog(symbolCodes: string[]): Promise<void> {
         isActive: true,
       },
     })
+
+    await prisma.symbolMapping.upsert({
+      where: {
+        sourceTable_sourceSymbol: {
+          sourceTable: 'databento.continuous',
+          sourceSymbol: cfg.databentoSymbol,
+        },
+      },
+      create: {
+        symbolCode: cfg.code,
+        source: 'DATABENTO',
+        sourceTable: 'databento.continuous',
+        sourceSymbol: cfg.databentoSymbol,
+        isPrimary: true,
+        confidenceScore: 1,
+      },
+      update: {
+        symbolCode: cfg.code,
+        source: 'DATABENTO',
+        isPrimary: true,
+        confidenceScore: 1,
+      },
+    })
   }
 }
 
@@ -216,6 +273,9 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
 
   const chunks = splitIntoDayChunks(start, end, INGEST_CONFIG.CHUNK_DAYS)
   const tfPrisma = timeframeToPrisma(INGEST_CONFIG.TIMEFRAME)
+  if (tfPrisma !== Timeframe.H1) {
+    hardFail(`TIMEFRAME_VIOLATION: expected H1 only, got ${tfPrisma}`)
+  }
   const minCoverageBars = Math.floor(
     expectedTradableBarsPerSymbol(INGEST_CONFIG.HISTORY_DAYS) * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100)
   )
@@ -244,21 +304,21 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
   let postLoadVerified = false
 
   try {
+    await upsertDataSourceRegistry()
     await upsertSymbolCatalog(INGEST_CONFIG.SYMBOL_UNIVERSE as unknown as string[])
 
     for (const symbol of selected) {
       try {
-        const existingCount = await prisma.marketBar.count({
-          where: {
-            symbolCode: symbol.code,
-            timeframe: tfPrisma,
-          },
+        const existingDomainCount = await prisma.mktFutures1h.count({
+          where: { symbolCode: symbol.code },
         })
-        if (existingCount >= minCoverageBars) {
-          symbolsCoveragePct[symbol.code] = Number(((existingCount / minCoverageBars) * 100).toFixed(2))
+        if (existingDomainCount >= minCoverageBars) {
+          symbolsCoveragePct[symbol.code] = Number(
+            ((existingDomainCount / minCoverageBars) * 100).toFixed(2)
+          )
           symbolsProcessed.push(symbol.code)
           console.log(
-            `[market-bars] SUCCESS: ${symbol.code} already compliant in DB (${existingCount} bars >= ${minCoverageBars}).`
+            `[market-bars] SUCCESS: ${symbol.code} already compliant in DB (${existingDomainCount} bars >= ${minCoverageBars}).`
           )
           continue
         }
@@ -330,25 +390,28 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
           continue
         }
 
-        const data: Prisma.MarketBarCreateManyInput[] = resampled.map((bar) => ({
-          symbolCode: symbol.code,
-          timeframe: tfPrisma,
-          timestamp: asUtcDateFromUnixSeconds(bar.time),
-          open: bar.open,
-          high: bar.high,
-          low: bar.low,
-          close: bar.close,
-          volume: BigInt(Math.max(0, Math.trunc(bar.volume || 0))),
-          source: 'DATABENTO',
-          sourceDataset: symbol.dataset,
-          sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
-        }))
+        const data: Prisma.MktFutures1hCreateManyInput[] = resampled.map((bar) => {
+          const eventTime = asUtcDateFromUnixSeconds(bar.time)
+          return {
+            symbolCode: symbol.code,
+            eventTime,
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+            volume: BigInt(Math.max(0, Math.trunc(bar.volume || 0))),
+            source: 'DATABENTO',
+            sourceDataset: symbol.dataset,
+            sourceSchema: INGEST_CONFIG.RAW_SCHEMA,
+            rowHash: hashFuturesRow(symbol.code, eventTime, bar.close),
+          }
+        })
 
         rowsProcessed += data.length
         if (!dryRun) {
           for (let i = 0; i < data.length; i += INGEST_CONFIG.UPSERT_BATCH_SIZE) {
             const batch = data.slice(i, i + INGEST_CONFIG.UPSERT_BATCH_SIZE)
-            const inserted = await prisma.marketBar.createMany({
+            const inserted = await prisma.mktFutures1h.createMany({
               data: batch,
               skipDuplicates: true,
             })
@@ -373,14 +436,9 @@ export async function runIngestMarketBars(): Promise<MarketIngestSummary> {
     }
 
     if (!dryRun) {
-      const loadedCounts = await prisma.marketBar.groupBy({
+      const loadedCounts = await prisma.mktFutures1h.groupBy({
         by: ['symbolCode'],
-        where: {
-          timeframe: tfPrisma,
-          symbolCode: {
-            in: passingSymbols,
-          },
-        },
+        where: { symbolCode: { in: passingSymbols } },
         _count: {
           _all: true,
         },

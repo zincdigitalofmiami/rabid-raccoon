@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client'
+import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import {
   fetchDollarCandles,
@@ -18,7 +19,9 @@ interface MacroIngestSummary {
   dryRun: boolean
 }
 
-type MacroSource = Prisma.MacroIndicatorCreateManyInput['source']
+type MacroSource = 'FRED' | 'YAHOO'
+type SeriesCategory = 'RATES' | 'VOLATILITY' | 'FX' | 'EQUITY' | 'OTHER'
+type MacroDomain = 'RATES' | 'YIELDS' | 'FX' | 'VOL_INDICES' | 'INDEXES'
 
 function toJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue
@@ -38,21 +41,194 @@ interface YahooChartResult {
   }
 }
 
-function candlesToRows(
-  indicator: string,
+function toUtcDateOnlyFromUnixSeconds(unixSeconds: number): Date {
+  const dt = asUtcDateFromUnixSeconds(unixSeconds)
+  return new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()))
+}
+
+function hashEconomicRow(seriesId: string, eventDate: Date, value: number, source: MacroSource): string {
+  return createHash('sha256')
+    .update(`${seriesId}|${eventDate.toISOString().slice(0, 10)}|${value}|${source}`)
+    .digest('hex')
+}
+
+interface EconValueRow {
+  seriesId: string
+  eventDate: Date
+  value: number
+  source: MacroSource
+  rowHash: string
+}
+
+function candlesToValueRows(
+  seriesId: string,
   candles: CandleData[],
-  source: MacroSource,
-  sourceSymbol: string
-): Prisma.MacroIndicatorCreateManyInput[] {
-  return candles
-    .filter((c) => Number.isFinite(c.close))
-    .map((c) => ({
-      indicator,
-      timestamp: asUtcDateFromUnixSeconds(c.time),
+  source: MacroSource
+): EconValueRow[] {
+  return candles.filter((c) => Number.isFinite(c.close)).map((c) => {
+    const eventDate = toUtcDateOnlyFromUnixSeconds(c.time)
+    return {
+      seriesId,
+      eventDate,
       value: c.close,
       source,
-      sourceSymbol,
-    }))
+      rowHash: hashEconomicRow(seriesId, eventDate, c.close, source),
+    }
+  })
+}
+
+async function upsertDataSourceRegistry(): Promise<void> {
+  await prisma.dataSourceRegistry.upsert({
+    where: { sourceId: 'econ-fred-indicators' },
+    create: {
+      sourceId: 'econ-fred-indicators',
+      sourceName: 'FRED Economic Indicators',
+      description: 'Daily economic indicators sourced from FRED.',
+      targetTable: 'econ_rates_1d,econ_yields_1d,econ_fx_1d,econ_vol_indices_1d',
+      apiProvider: 'fred',
+      updateFrequency: 'daily',
+      authEnvVar: 'FRED_API_KEY',
+      ingestionScript: 'scripts/ingest-macro-indicators.ts',
+      isActive: true,
+    },
+    update: {
+      sourceName: 'FRED Economic Indicators',
+      description: 'Daily economic indicators sourced from FRED.',
+      targetTable: 'econ_rates_1d,econ_yields_1d,econ_fx_1d,econ_vol_indices_1d',
+      apiProvider: 'fred',
+      updateFrequency: 'daily',
+      authEnvVar: 'FRED_API_KEY',
+      ingestionScript: 'scripts/ingest-macro-indicators.ts',
+      isActive: true,
+    },
+  })
+
+  await prisma.dataSourceRegistry.upsert({
+    where: { sourceId: 'econ-yahoo-indicators' },
+    create: {
+      sourceId: 'econ-yahoo-indicators',
+      sourceName: 'Yahoo Macro Proxy Indicators',
+      description: 'Daily macro proxy closes sourced from Yahoo Finance.',
+      targetTable: 'mkt_indexes_1d',
+      apiProvider: 'yahoo',
+      updateFrequency: 'daily',
+      ingestionScript: 'scripts/ingest-macro-indicators.ts',
+      isActive: true,
+    },
+    update: {
+      sourceName: 'Yahoo Macro Proxy Indicators',
+      description: 'Daily macro proxy closes sourced from Yahoo Finance.',
+      targetTable: 'mkt_indexes_1d',
+      apiProvider: 'yahoo',
+      updateFrequency: 'daily',
+      ingestionScript: 'scripts/ingest-macro-indicators.ts',
+      isActive: true,
+    },
+  })
+}
+
+function seriesCategoryForDomain(domain: MacroDomain): SeriesCategory {
+  switch (domain) {
+    case 'RATES':
+    case 'YIELDS':
+      return 'RATES'
+    case 'FX':
+      return 'FX'
+    case 'VOL_INDICES':
+      return 'VOLATILITY'
+    case 'INDEXES':
+      return 'EQUITY'
+    default:
+      return 'OTHER'
+  }
+}
+
+async function insertDomainRows(
+  domain: MacroDomain,
+  sourceSymbol: string,
+  rows: EconValueRow[]
+): Promise<number> {
+  if (rows.length === 0) return 0
+
+  switch (domain) {
+    case 'RATES': {
+      const inserted = await prisma.econRates1d.createMany({
+        data: rows.map((row) => ({
+          seriesId: row.seriesId,
+          eventDate: row.eventDate,
+          value: row.value,
+          source: row.source,
+          rowHash: row.rowHash,
+          metadata: toJson({ sourceSymbol }),
+        })),
+        skipDuplicates: true,
+      })
+      return inserted.count
+    }
+    case 'YIELDS': {
+      const inserted = await prisma.econYields1d.createMany({
+        data: rows.map((row) => ({
+          seriesId: row.seriesId,
+          eventDate: row.eventDate,
+          value: row.value,
+          source: row.source,
+          rowHash: row.rowHash,
+          metadata: toJson({ sourceSymbol }),
+        })),
+        skipDuplicates: true,
+      })
+      return inserted.count
+    }
+    case 'FX': {
+      const inserted = await prisma.econFx1d.createMany({
+        data: rows.map((row) => ({
+          seriesId: row.seriesId,
+          eventDate: row.eventDate,
+          value: row.value,
+          source: row.source,
+          rowHash: row.rowHash,
+          metadata: toJson({ sourceSymbol }),
+        })),
+        skipDuplicates: true,
+      })
+      return inserted.count
+    }
+    case 'VOL_INDICES': {
+      const inserted = await prisma.econVolIndices1d.createMany({
+        data: rows.map((row) => ({
+          seriesId: row.seriesId,
+          eventDate: row.eventDate,
+          value: row.value,
+          source: row.source,
+          rowHash: row.rowHash,
+          metadata: toJson({ sourceSymbol }),
+        })),
+        skipDuplicates: true,
+      })
+      return inserted.count
+    }
+    case 'INDEXES': {
+      const inserted = await prisma.mktIndexes1d.createMany({
+        data: rows.map((row) => ({
+          symbol: sourceSymbol,
+          eventDate: row.eventDate,
+          open: row.value,
+          high: row.value,
+          low: row.value,
+          close: row.value,
+          volume: BigInt(0),
+          source: row.source,
+          sourceSymbol,
+          rowHash: row.rowHash,
+          metadata: toJson({ seriesId: row.seriesId }),
+        })),
+        skipDuplicates: true,
+      })
+      return inserted.count
+    }
+    default:
+      return 0
+  }
 }
 
 async function fetchYahooDailyClose(symbol: string, daysBack: number): Promise<CandleData[]> {
@@ -124,62 +300,111 @@ export async function runIngestMacroIndicators(): Promise<MacroIngestSummary> {
   const endDate = now.toISOString().slice(0, 10)
 
   const jobs: Array<{
-    indicator: string
+    seriesId: string
+    displayName: string
+    domain: MacroDomain
     source: MacroSource
     sourceSymbol: string
+    frequency: string
+    units: string
     fetcher: () => Promise<CandleData[]>
   }> = [
     {
-      indicator: 'VIXCLS',
+      seriesId: 'VIXCLS',
+      displayName: 'CBOE Volatility Index',
+      domain: 'VOL_INDICES',
       source: 'FRED',
       sourceSymbol: 'VIXCLS',
+      frequency: 'daily',
+      units: 'index',
       fetcher: () => fetchVixCandles(startDate, endDate),
     },
     {
-      indicator: 'FEDFUNDS',
+      seriesId: 'DFF',
+      displayName: 'Federal Funds Effective Rate',
+      domain: 'RATES',
       source: 'FRED',
-      sourceSymbol: 'FEDFUNDS',
+      sourceSymbol: 'DFF',
+      frequency: 'daily',
+      units: 'percent',
       fetcher: () => fetchFedFundsCandles(startDate, endDate),
     },
     {
-      indicator: 'DTWEXBGS',
+      seriesId: 'DTWEXBGS',
+      displayName: 'Trade Weighted U.S. Dollar Index: Broad',
+      domain: 'FX',
       source: 'FRED',
       sourceSymbol: 'DTWEXBGS',
+      frequency: 'daily',
+      units: 'index',
       fetcher: () => fetchDollarCandles(startDate, endDate),
     },
     {
-      indicator: 'DGS10',
+      seriesId: 'DGS10',
+      displayName: '10-Year Treasury Constant Maturity Rate',
+      domain: 'YIELDS',
       source: 'FRED',
       sourceSymbol: 'DGS10',
+      frequency: 'daily',
+      units: 'percent',
       fetcher: () => fetchTenYearYieldCandles(startDate, endDate),
     },
     {
-      indicator: 'FXI_CLOSE',
+      seriesId: 'FXI_CLOSE',
+      displayName: 'iShares China Large-Cap ETF Close',
+      domain: 'INDEXES',
       source: 'YAHOO',
       sourceSymbol: 'FXI',
+      frequency: 'daily',
+      units: 'price',
       fetcher: () => fetchYahooDailyClose('FXI', daysBack),
     },
   ]
 
   try {
+    if (!dryRun) {
+      await upsertDataSourceRegistry()
+    }
+
     for (const job of jobs) {
       try {
-        console.log(`[macro] ingesting ${job.indicator}`)
+        console.log(`[macro] ingesting ${job.seriesId}`)
         const candles = await job.fetcher()
-        const rows = candlesToRows(job.indicator, candles, job.source, job.sourceSymbol)
+        const rows = candlesToValueRows(job.seriesId, candles, job.source)
         rowsProcessed += rows.length
-        if (!dryRun && rows.length > 0) {
-          const inserted = await prisma.macroIndicator.createMany({
-            data: rows,
-            skipDuplicates: true,
+        if (!dryRun) {
+          await prisma.economicSeries.upsert({
+            where: { seriesId: job.seriesId },
+            create: {
+              seriesId: job.seriesId,
+              displayName: job.displayName,
+              category: seriesCategoryForDomain(job.domain),
+              source: job.source,
+              sourceSymbol: job.sourceSymbol,
+              frequency: job.frequency,
+              units: job.units,
+              isActive: true,
+              metadata: toJson({ providerSymbol: job.sourceSymbol, domainTable: job.domain }),
+            },
+            update: {
+              displayName: job.displayName,
+              category: seriesCategoryForDomain(job.domain),
+              source: job.source,
+              sourceSymbol: job.sourceSymbol,
+              frequency: job.frequency,
+              units: job.units,
+              isActive: true,
+              metadata: toJson({ providerSymbol: job.sourceSymbol, domainTable: job.domain }),
+            },
           })
-          rowsInserted += inserted.count
+
+          rowsInserted += await insertDomainRows(job.domain, job.sourceSymbol, rows)
         }
-        indicatorsProcessed.push(job.indicator)
+        indicatorsProcessed.push(job.seriesId)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        indicatorsFailed[job.indicator] = message.slice(0, 400)
-        console.error(`[macro] failed ${job.indicator}: ${indicatorsFailed[job.indicator]}`)
+        indicatorsFailed[job.seriesId] = message.slice(0, 400)
+        console.error(`[macro] failed ${job.seriesId}: ${indicatorsFailed[job.seriesId]}`)
       }
     }
 

@@ -71,34 +71,64 @@ export async function runIngestMeasuredMoveSignals(): Promise<MmIngestSummary> {
   const symbolsFailed: Record<string, string> = {}
 
   try {
-    const whereClause: Prisma.MarketBarWhereInput = {
-      timeframe: tfPrisma,
-      timestamp: { gte: start },
-      ...(symbolsRequested.length ? { symbolCode: { in: symbolsRequested } } : {}),
-    }
-
-    const bars = await prisma.marketBar.findMany({
-      where: whereClause,
-      orderBy: [{ symbolCode: 'asc' }, { timestamp: 'asc' }],
-    })
-    if (bars.length === 0) {
-      throw new Error(
-        `No market bars found for timeframe=${timeframe}. Ingest market bars before MM signals.`
-      )
-    }
-
     const perSymbol = new Map<string, CandleData[]>()
-    for (const bar of bars) {
-      const list = perSymbol.get(bar.symbolCode) || []
-      list.push({
-        time: Math.floor(bar.timestamp.getTime() / 1000),
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume ? Number(bar.volume) : 0,
+
+    if (timeframe === '1h') {
+      const futuresBars = await prisma.mktFutures1h.findMany({
+        where: {
+          eventTime: { gte: start },
+          ...(symbolsRequested.length ? { symbolCode: { in: symbolsRequested } } : {}),
+        },
+        orderBy: [{ symbolCode: 'asc' }, { eventTime: 'asc' }],
       })
-      perSymbol.set(bar.symbolCode, list)
+
+      if (futuresBars.length === 0) {
+        throw new Error(
+          `No futures bars found in mkt_futures_1h for timeframe=${timeframe}. Ingest market bars before MM signals.`
+        )
+      }
+
+      for (const bar of futuresBars) {
+        const list = perSymbol.get(bar.symbolCode) || []
+        list.push({
+          time: Math.floor(bar.eventTime.getTime() / 1000),
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+          volume: bar.volume ? Number(bar.volume) : 0,
+        })
+        perSymbol.set(bar.symbolCode, list)
+      }
+    } else {
+      const whereClause: Prisma.MarketBarWhereInput = {
+        timeframe: tfPrisma,
+        timestamp: { gte: start },
+        ...(symbolsRequested.length ? { symbolCode: { in: symbolsRequested } } : {}),
+      }
+
+      const bars = await prisma.marketBar.findMany({
+        where: whereClause,
+        orderBy: [{ symbolCode: 'asc' }, { timestamp: 'asc' }],
+      })
+      if (bars.length === 0) {
+        throw new Error(
+          `No market bars found for timeframe=${timeframe}. Ingest market bars before MM signals.`
+        )
+      }
+
+      for (const bar of bars) {
+        const list = perSymbol.get(bar.symbolCode) || []
+        list.push({
+          time: Math.floor(bar.timestamp.getTime() / 1000),
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+          volume: bar.volume ? Number(bar.volume) : 0,
+        })
+        perSymbol.set(bar.symbolCode, list)
+      }
     }
 
     for (const [symbolCode, candles] of perSymbol.entries()) {
