@@ -224,7 +224,7 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
   
   const categoryMap: Record<EconDomain, string> = {
     RATES: 'RATES',
-    YIELDS: 'MONEY',
+    YIELDS: 'YIELDS',
     FX: 'FX',
     VOL_INDICES: 'VOLATILITY',
     INFLATION: 'INFLATION',
@@ -399,7 +399,7 @@ async function run() {
 function domainToCategory(domain: EconDomain) {
   const map: Record<EconDomain, string> = {
     RATES: 'RATES',
-    YIELDS: 'MONEY',
+    YIELDS: 'YIELDS',
     FX: 'FX',
     VOL_INDICES: 'VOLATILITY',
     INFLATION: 'INFLATION',

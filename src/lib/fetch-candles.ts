@@ -209,7 +209,7 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
 
     if (indicator === 'DGS10') {
       const rows = await prisma.econObservation1d.findMany({
-        where: { category: 'MONEY', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
+        where: { category: 'YIELDS', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
