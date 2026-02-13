@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { computeAlignmentScore } from '@/lib/correlation-filter'
+import { toNum } from '@/lib/decimal'
 import type { CorrelationAlignment } from '@/lib/correlation-filter'
 import type { CandleData } from '@/lib/types'
 
@@ -31,30 +32,31 @@ const DAILY_LOOKBACK_DAYS = 180
 
 function rowToCandle(row: {
   eventTime: Date
-  open: number
-  high: number
-  low: number
-  close: number
+  open: any
+  high: any
+  low: any
+  close: any
   volume: bigint | null
 }): CandleData {
   return {
     time: Math.floor(row.eventTime.getTime() / 1000),
-    open: row.open,
-    high: row.high,
-    low: row.low,
-    close: row.close,
+    open: toNum(row.open),
+    high: toNum(row.high),
+    low: toNum(row.low),
+    close: toNum(row.close),
     volume: row.volume == null ? 0 : Number(row.volume),
   }
 }
 
-function valueToCandle(eventDate: Date, value: number | null): CandleData | null {
-  if (value == null || !Number.isFinite(value)) return null
+function valueToCandle(eventDate: Date, value: any): CandleData | null {
+  const numValue = toNum(value)
+  if (!Number.isFinite(numValue)) return null
   return {
     time: Math.floor(eventDate.getTime() / 1000),
-    open: value,
-    high: value,
-    low: value,
-    close: value,
+    open: numValue,
+    high: numValue,
+    low: numValue,
+    close: numValue,
     volume: 0,
   }
 }
@@ -103,10 +105,10 @@ async function loadIntradayMap(): Promise<Map<string, CandleData[]>> {
       'NQ',
       [...nqRows].reverse().map((r) => ({
         time: Math.floor(r.eventTime.getTime() / 1000),
-        open: r.open,
-        high: r.high,
-        low: r.low,
-        close: r.close,
+        open: toNum(r.open),
+        high: toNum(r.high),
+        low: toNum(r.low),
+        close: toNum(r.close),
         volume: r.volume == null ? 0 : Number(r.volume),
       }))
     )
@@ -139,13 +141,13 @@ async function loadDailyMap(): Promise<Map<string, CandleData[]>> {
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, open: true, high: true, low: true, close: true, volume: true },
     }),
-    prisma.econVolIndices1d.findMany({
-      where: { seriesId: 'VIXCLS', eventDate: { gte: cutoffDay } },
+    prisma.econObservation1d.findMany({
+      where: { category: 'VOLATILITY', seriesId: 'VIXCLS', eventDate: { gte: cutoffDay } },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
-    prisma.econFx1d.findMany({
-      where: { seriesId: 'DTWEXBGS', eventDate: { gte: cutoffDay } },
+    prisma.econObservation1d.findMany({
+      where: { category: 'FX', seriesId: 'DTWEXBGS', eventDate: { gte: cutoffDay } },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
@@ -159,16 +161,16 @@ async function loadDailyMap(): Promise<Map<string, CandleData[]>> {
       if (!existing) {
         byDay.set(dayKey, {
           time: Math.floor(new Date(`${dayKey}T00:00:00Z`).getTime() / 1000),
-          open: row.open,
-          high: row.high,
-          low: row.low,
-          close: row.close,
+          open: toNum(row.open),
+          high: toNum(row.high),
+          low: toNum(row.low),
+          close: toNum(row.close),
           volume: row.volume == null ? 0 : Number(row.volume),
         })
       } else {
-        existing.high = Math.max(existing.high, row.high)
-        existing.low = Math.min(existing.low, row.low)
-        existing.close = row.close
+        existing.high = Math.max(existing.high, toNum(row.high))
+        existing.low = Math.min(existing.low, toNum(row.low))
+        existing.close = toNum(row.close)
         existing.volume = (existing.volume ?? 0) + (row.volume == null ? 0 : Number(row.volume))
       }
     }
@@ -183,10 +185,10 @@ async function loadDailyMap(): Promise<Map<string, CandleData[]>> {
       'NQ',
       nqRows.map((row) => ({
         time: Math.floor(row.eventDate.getTime() / 1000),
-        open: row.open,
-        high: row.high,
-        low: row.low,
-        close: row.close,
+        open: toNum(row.open),
+        high: toNum(row.high),
+        low: toNum(row.low),
+        close: toNum(row.close),
         volume: row.volume == null ? 0 : Number(row.volume),
       }))
     )

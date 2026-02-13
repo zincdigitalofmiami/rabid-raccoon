@@ -221,7 +221,21 @@ interface ValueRow {
 
 async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<number> {
   if (rows.length === 0) return 0
+  
+  const categoryMap: Record<EconDomain, string> = {
+    RATES: 'RATES',
+    YIELDS: 'MONEY',
+    FX: 'FX',
+    VOL_INDICES: 'VOLATILITY',
+    INFLATION: 'INFLATION',
+    LABOR: 'LABOR',
+    ACTIVITY: 'ACTIVITY',
+    MONEY: 'MONEY',
+    COMMODITIES: 'COMMODITIES',
+  }
+  
   const data = rows.map((r) => ({
+    category: categoryMap[domain],
     seriesId: r.seriesId,
     eventDate: r.eventDate,
     value: r.value,
@@ -230,28 +244,7 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
     metadata: toJson({ provider: r.source }),
   }))
 
-  switch (domain) {
-    case 'RATES':
-      return (await prisma.econRates1d.createMany({ data, skipDuplicates: true })).count
-    case 'YIELDS':
-      return (await prisma.econYields1d.createMany({ data, skipDuplicates: true })).count
-    case 'FX':
-      return (await prisma.econFx1d.createMany({ data, skipDuplicates: true })).count
-    case 'VOL_INDICES':
-      return (await prisma.econVolIndices1d.createMany({ data, skipDuplicates: true })).count
-    case 'INFLATION':
-      return (await prisma.econInflation1d.createMany({ data, skipDuplicates: true })).count
-    case 'LABOR':
-      return (await prisma.econLabor1d.createMany({ data, skipDuplicates: true })).count
-    case 'ACTIVITY':
-      return (await prisma.econActivity1d.createMany({ data, skipDuplicates: true })).count
-    case 'MONEY':
-      return (await prisma.econMoney1d.createMany({ data, skipDuplicates: true })).count
-    case 'COMMODITIES':
-      return (await prisma.econCommodities1d.createMany({ data, skipDuplicates: true })).count
-    default:
-      return 0
-  }
+  return (await prisma.econObservation1d.createMany({ data, skipDuplicates: true })).count
 }
 
 // ─── TRUNCATE ──────────────────────────────────────────────────────────────
@@ -259,15 +252,7 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
 async function truncateEconTables(): Promise<void> {
   console.log('[fred-complete] deleting all econ rows...')
   const results = await Promise.all([
-    prisma.econRates1d.deleteMany(),
-    prisma.econYields1d.deleteMany(),
-    prisma.econFx1d.deleteMany(),
-    prisma.econVolIndices1d.deleteMany(),
-    prisma.econInflation1d.deleteMany(),
-    prisma.econLabor1d.deleteMany(),
-    prisma.econActivity1d.deleteMany(),
-    prisma.econMoney1d.deleteMany(),
-    prisma.econCommodities1d.deleteMany(),
+    prisma.econObservation1d.deleteMany(),
     prisma.economicSeries.deleteMany(),
   ])
   const total = results.reduce((sum, r) => sum + r.count, 0)
@@ -382,7 +367,7 @@ async function run() {
   await prisma.ingestionRun.create({
     data: {
       job: 'fred-complete',
-      status: Object.keys(failed).length === 0 ? 'SUCCEEDED' : 'PARTIAL',
+      status: Object.keys(failed).length === 0 ? 'COMPLETED' : 'FAILED',
       finishedAt: new Date(),
       rowsProcessed: totalFetched,
       rowsInserted: totalInserted,
@@ -414,7 +399,7 @@ async function run() {
 function domainToCategory(domain: EconDomain) {
   const map: Record<EconDomain, string> = {
     RATES: 'RATES',
-    YIELDS: 'RATES',
+    YIELDS: 'MONEY',
     FX: 'FX',
     VOL_INDICES: 'VOLATILITY',
     INFLATION: 'INFLATION',

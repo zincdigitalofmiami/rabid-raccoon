@@ -41,15 +41,15 @@ async function run(): Promise<void> {
     prisma.futuresExMes1h.count(),
     prisma.futuresExMes1d.count(),
     prisma.futuresExMes1h.count({ where: { symbolCode: 'MES' } }),
-    prisma.econRates1d.count(),
-    prisma.econYields1d.count(),
-    prisma.econFx1d.count(),
-    prisma.econVolIndices1d.count(),
-    prisma.econInflation1d.count(),
-    prisma.econLabor1d.count(),
-    prisma.econActivity1d.count(),
-    prisma.econMoney1d.count(),
-    prisma.econCommodities1d.count(),
+    prisma.econObservation1d.count({ where: { category: 'RATES' } }),
+    prisma.econObservation1d.count({ where: { category: 'MONEY' } }),
+    prisma.econObservation1d.count({ where: { category: 'FX' } }),
+    prisma.econObservation1d.count({ where: { category: 'VOLATILITY' } }),
+    prisma.econObservation1d.count({ where: { category: 'INFLATION' } }),
+    prisma.econObservation1d.count({ where: { category: 'LABOR' } }),
+    prisma.econObservation1d.count({ where: { category: 'ACTIVITY' } }),
+    prisma.econObservation1d.count({ where: { category: 'MONEY' } }),
+    prisma.econObservation1d.count({ where: { category: 'COMMODITIES' } }),
     prisma.mktIndexes1d.count(),
     prisma.mktSpot1d.count(),
     prisma.econNews1d.count(),
@@ -102,40 +102,46 @@ async function run(): Promise<void> {
         _count: { _all: true },
         orderBy: [{ symbolCode: 'asc' }],
       }),
-      prisma.econRates1d.groupBy({ by: ['seriesId'], _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
-      prisma.econYields1d.groupBy({ by: ['seriesId'], _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
-      prisma.econFx1d.groupBy({ by: ['seriesId'], _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
-      prisma.econVolIndices1d.groupBy({
+      prisma.econObservation1d.groupBy({ by: ['seriesId'], where: { category: 'RATES' }, _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
+      prisma.econObservation1d.groupBy({ by: ['seriesId'], where: { category: 'MONEY' }, _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
+      prisma.econObservation1d.groupBy({ by: ['seriesId'], where: { category: 'FX' }, _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
+      prisma.econObservation1d.groupBy({
         by: ['seriesId'],
+        where: { category: 'VOLATILITY' },
         _count: { _all: true },
         orderBy: { seriesId: 'asc' },
       }),
-      prisma.econInflation1d.groupBy({
+      prisma.econObservation1d.groupBy({
         by: ['seriesId'],
+        where: { category: 'INFLATION' },
         _count: { _all: true },
         orderBy: { seriesId: 'asc' },
       }),
-      prisma.econLabor1d.groupBy({
+      prisma.econObservation1d.groupBy({
         by: ['seriesId'],
+        where: { category: 'LABOR' },
         _count: { _all: true },
         orderBy: { seriesId: 'asc' },
       }),
-      prisma.econActivity1d.groupBy({
+      prisma.econObservation1d.groupBy({
         by: ['seriesId'],
+        where: { category: 'ACTIVITY' },
         _count: { _all: true },
         orderBy: { seriesId: 'asc' },
       }),
-      prisma.econMoney1d.groupBy({
+      prisma.econObservation1d.groupBy({
         by: ['seriesId'],
+        where: { category: 'MONEY' },
         _count: { _all: true },
         orderBy: { seriesId: 'asc' },
       }),
-      prisma.econCommodities1d.groupBy({
+      prisma.econObservation1d.groupBy({
         by: ['seriesId'],
+        where: { category: 'COMMODITIES' },
         _count: { _all: true },
         orderBy: { seriesId: 'asc' },
       }),
-      prisma.mktIndexes1d.groupBy({ by: ['symbol'], _count: { _all: true }, orderBy: { symbol: 'asc' } }),
+      prisma.mktIndexes1d.groupBy({ by: ['symbolCode'], _count: { _all: true }, orderBy: { symbolCode: 'asc' } }),
     ])
 
   console.log('\n=== Futures 1H Coverage (Non-MES, should be empty) ===')
@@ -201,9 +207,9 @@ async function run(): Promise<void> {
       key: row.seriesId,
       rows: row._count._all,
     })),
-    ...indexGrouped.map((row: { symbol: string; _count: { _all: number } }) => ({
+    ...indexGrouped.map((row: { symbolCode: string; _count: { _all: number } }) => ({
       domain: 'INDEXES',
-      key: row.symbol,
+      key: row.symbolCode,
       rows: row._count._all,
     })),
   ])

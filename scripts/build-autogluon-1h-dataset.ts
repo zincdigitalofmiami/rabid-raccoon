@@ -1,10 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { Timeframe } from '@prisma/client'
+import { Timeframe, Decimal } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
+import { toNum } from '../src/lib/decimal'
 import { loadDotEnvFiles, parseArg } from './ingest-utils'
 
-type DailyPoint = { eventDate: Date; value: number | null }
+type DailyPoint = { eventDate: Date; value: Decimal | number | null }
 type SignalPoint = { timestamp: Date; target100: number; target1236: number; direction: 'BULLISH' | 'BEARISH' }
 type NewsPoint = { eventDate: Date; count: number }
 type PolicyPoint = { eventDate: Date; sentiment: number | null; impact: number | null }
@@ -44,7 +45,7 @@ function asofValue(points: DailyPoint[], date: Date): number | null {
   let best: number | null = null
   for (const point of points) {
     if (toDateKeyUtc(point.eventDate) <= targetKey) {
-      best = point.value ?? null
+      best = point.value !== null ? toNum(point.value) : null
     } else {
       break
     }
@@ -190,23 +191,23 @@ async function run(): Promise<void> {
         close: true,
       },
     }),
-    prisma.econVolIndices1d.findMany({
-      where: { seriesId: 'VIXCLS' },
+    prisma.econObservation1d.findMany({
+      where: { category: 'VOLATILITY', seriesId: 'VIXCLS' },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
-    prisma.econYields1d.findMany({
-      where: { seriesId: 'DGS10' },
+    prisma.econObservation1d.findMany({
+      where: { category: 'MONEY', seriesId: 'DGS10' },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
-    prisma.econRates1d.findMany({
-      where: { seriesId: 'DFF' },
+    prisma.econObservation1d.findMany({
+      where: { category: 'RATES', seriesId: 'DFF' },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
-    prisma.econFx1d.findMany({
-      where: { seriesId: 'DTWEXBGS' },
+    prisma.econObservation1d.findMany({
+      where: { category: 'FX', seriesId: 'DTWEXBGS' },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
@@ -280,8 +281,8 @@ async function run(): Promise<void> {
     const dff = asofValue(dffRows, ts)
     const dxy = asofValue(dxyRows, ts)
 
-    const target100Delta = mm ? mm.target100 - row.close : null
-    const target1236Delta = mm ? mm.target1236 - row.close : null
+    const target100Delta = mm ? toNum(mm.target100) - toNum(row.close) : null
+    const target1236Delta = mm ? toNum(mm.target1236) - toNum(row.close) : null
 
     const newsCount7d = countNewsLast7d(newsPoints, ts)
     const newsFedCount7d = countNewsLast7d(newsFedPoints, ts)
@@ -300,7 +301,7 @@ async function run(): Promise<void> {
     return {
       item_id: 'MES_1H',
       timestamp: ts.toISOString(),
-      target: row.close,
+      target: toNum(row.close),
       hour_utc: ts.getUTCHours(),
       day_of_week_utc: ts.getUTCDay(),
       is_month_start: utcDay === 1 ? 1 : 0,

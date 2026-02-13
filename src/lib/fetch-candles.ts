@@ -1,6 +1,7 @@
 import { prisma } from './prisma'
 import { SYMBOLS } from './symbols'
 import { CandleData } from './types'
+import { toNum } from './decimal'
 
 type DbState = 'disabled' | 'probing' | 'enabled' | 'failed'
 
@@ -144,7 +145,14 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
 
     if (rows.length > 0) {
       return rows.map((row) =>
-        toCandle(row.eventDate.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
+        toCandle(
+          row.eventDate.getTime(),
+          toNum(row.open),
+          toNum(row.high),
+          toNum(row.low),
+          toNum(row.close),
+          row.volume ? Number(row.volume) : 0
+        )
       )
     }
 
@@ -153,7 +161,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
 
     const proxyRows = await prisma.mktIndexes1d.findMany({
       where: {
-        symbol: proxy,
+        symbolCode: proxy,
         eventDate: {
           gte: startOfUtcDay(start),
           lte: startOfUtcDay(end),
@@ -167,10 +175,10 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
     return proxyRows.map((row) =>
       toCandle(
         row.eventDate.getTime(),
-        row.open ?? row.close ?? 0,
-        row.high ?? row.close ?? 0,
-        row.low ?? row.close ?? 0,
-        row.close ?? 0,
+        toNum(row.open ?? row.close ?? 0),
+        toNum(row.high ?? row.close ?? 0),
+        toNum(row.low ?? row.close ?? 0),
+        toNum(row.close ?? 0),
         row.volume ? Number(row.volume) : 0
       )
     )
@@ -189,43 +197,47 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
 
   try {
     if (indicator === 'VIXCLS') {
-      const rows = await prisma.econVolIndices1d.findMany({
-        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
+      const rows = await prisma.econObservation1d.findMany({
+        where: { category: 'VOLATILITY', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
       if (rows.length === 0) return null
-      return rows.map((row) => toCandle(row.eventDate.getTime(), row.value ?? 0, row.value ?? 0, row.value ?? 0, row.value ?? 0, 0))
+      const val = (row: typeof rows[0]) => toNum(row.value ?? 0)
+      return rows.map((row) => toCandle(row.eventDate.getTime(), val(row), val(row), val(row), val(row), 0))
     }
 
     if (indicator === 'DGS10') {
-      const rows = await prisma.econYields1d.findMany({
-        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
+      const rows = await prisma.econObservation1d.findMany({
+        where: { category: 'MONEY', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
       if (rows.length === 0) return null
-      return rows.map((row) => toCandle(row.eventDate.getTime(), row.value ?? 0, row.value ?? 0, row.value ?? 0, row.value ?? 0, 0))
+      const val = (row: typeof rows[0]) => toNum(row.value ?? 0)
+      return rows.map((row) => toCandle(row.eventDate.getTime(), val(row), val(row), val(row), val(row), 0))
     }
 
     if (indicator === 'DFF') {
-      const rows = await prisma.econRates1d.findMany({
-        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
+      const rows = await prisma.econObservation1d.findMany({
+        where: { category: 'RATES', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
       if (rows.length === 0) return null
-      return rows.map((row) => toCandle(row.eventDate.getTime(), row.value ?? 0, row.value ?? 0, row.value ?? 0, row.value ?? 0, 0))
+      const val = (row: typeof rows[0]) => toNum(row.value ?? 0)
+      return rows.map((row) => toCandle(row.eventDate.getTime(), val(row), val(row), val(row), val(row), 0))
     }
 
     if (indicator === 'DTWEXBGS') {
-      const rows = await prisma.econFx1d.findMany({
-        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
+      const rows = await prisma.econObservation1d.findMany({
+        where: { category: 'FX', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
       if (rows.length === 0) return null
-      return rows.map((row) => toCandle(row.eventDate.getTime(), row.value ?? 0, row.value ?? 0, row.value ?? 0, row.value ?? 0, 0))
+      const val = (row: typeof rows[0]) => toNum(row.value ?? 0)
+      return rows.map((row) => toCandle(row.eventDate.getTime(), val(row), val(row), val(row), val(row), 0))
     }
 
     return null

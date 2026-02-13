@@ -155,85 +155,51 @@ async function insertDomainRows(
 ): Promise<number> {
   if (rows.length === 0) return 0
 
-  switch (domain) {
-    case 'RATES': {
-      const inserted = await prisma.econRates1d.createMany({
-        data: rows.map((row) => ({
-          seriesId: row.seriesId,
-          eventDate: row.eventDate,
-          value: row.value,
-          source: row.source,
-          rowHash: row.rowHash,
-          metadata: toJson({ sourceSymbol }),
-        })),
-        skipDuplicates: true,
-      })
-      return inserted.count
-    }
-    case 'YIELDS': {
-      const inserted = await prisma.econYields1d.createMany({
-        data: rows.map((row) => ({
-          seriesId: row.seriesId,
-          eventDate: row.eventDate,
-          value: row.value,
-          source: row.source,
-          rowHash: row.rowHash,
-          metadata: toJson({ sourceSymbol }),
-        })),
-        skipDuplicates: true,
-      })
-      return inserted.count
-    }
-    case 'FX': {
-      const inserted = await prisma.econFx1d.createMany({
-        data: rows.map((row) => ({
-          seriesId: row.seriesId,
-          eventDate: row.eventDate,
-          value: row.value,
-          source: row.source,
-          rowHash: row.rowHash,
-          metadata: toJson({ sourceSymbol }),
-        })),
-        skipDuplicates: true,
-      })
-      return inserted.count
-    }
-    case 'VOL_INDICES': {
-      const inserted = await prisma.econVolIndices1d.createMany({
-        data: rows.map((row) => ({
-          seriesId: row.seriesId,
-          eventDate: row.eventDate,
-          value: row.value,
-          source: row.source,
-          rowHash: row.rowHash,
-          metadata: toJson({ sourceSymbol }),
-        })),
-        skipDuplicates: true,
-      })
-      return inserted.count
-    }
-    case 'INDEXES': {
-      const inserted = await prisma.mktIndexes1d.createMany({
-        data: rows.map((row) => ({
-          symbol: sourceSymbol,
-          eventDate: row.eventDate,
-          open: row.value,
-          high: row.value,
-          low: row.value,
-          close: row.value,
-          volume: BigInt(0),
-          source: row.source,
-          sourceSymbol,
-          rowHash: row.rowHash,
-          metadata: toJson({ seriesId: row.seriesId }),
-        })),
-        skipDuplicates: true,
-      })
-      return inserted.count
-    }
-    default:
-      return 0
+  const categoryMap: Record<MacroDomain, string | null> = {
+    RATES: 'RATES',
+    YIELDS: 'MONEY',
+    FX: 'FX',
+    VOL_INDICES: 'VOLATILITY',
+    INDEXES: null,
   }
+
+  const category = categoryMap[domain]
+  if (category !== null) {
+    // Econ observation
+    const inserted = await prisma.econObservation1d.createMany({
+      data: rows.map((row) => ({
+        category,
+        seriesId: row.seriesId,
+        eventDate: row.eventDate,
+        value: row.value,
+        source: row.source,
+        rowHash: row.rowHash,
+        metadata: toJson({ sourceSymbol }),
+      })),
+      skipDuplicates: true,
+    })
+    return inserted.count
+  } else if (domain === 'INDEXES') {
+    // Market index
+    const inserted = await prisma.mktIndexes1d.createMany({
+      data: rows.map((row) => ({
+        symbolCode: sourceSymbol,
+        eventDate: row.eventDate,
+        open: row.value,
+        high: row.value,
+        low: row.value,
+        close: row.value,
+        volume: BigInt(0),
+        source: row.source,
+        sourceSymbol,
+        rowHash: row.rowHash,
+        metadata: toJson({ seriesId: row.seriesId }),
+      })),
+      skipDuplicates: true,
+    })
+    return inserted.count
+  }
+  return 0
 }
 
 async function fetchYahooDailyClose(symbol: string, daysBack: number): Promise<CandleData[]> {
