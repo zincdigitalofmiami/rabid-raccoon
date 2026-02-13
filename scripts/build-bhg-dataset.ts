@@ -32,6 +32,8 @@ import { detectMeasuredMoves } from '../src/lib/measured-move'
 import { advanceBhgSetups, BhgSetup } from '../src/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '../src/lib/risk-engine'
 import type { CandleData, FibResult } from '../src/lib/types'
+import { toNum } from '../src/lib/decimal'
+import type { Decimal } from '@prisma/client/runtime/client'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -581,18 +583,18 @@ function enrichWithFred(
 
 function rowToCandle(row: {
   eventTime: Date
-  open: number
-  high: number
-  low: number
-  close: number
+  open: Decimal | number
+  high: Decimal | number
+  low: Decimal | number
+  close: Decimal | number
   volume: bigint | null
 }): CandleData {
   return {
     time: Math.floor(row.eventTime.getTime() / 1000),
-    open: row.open,
-    high: row.high,
-    low: row.low,
-    close: row.close,
+    open: toNum(row.open),
+    high: toNum(row.high),
+    low: toNum(row.low),
+    close: toNum(row.close),
     volume: row.volume == null ? 0 : Number(row.volume),
   }
 }
@@ -760,8 +762,8 @@ async function main() {
           where: { setupId },
           create: {
             setupId,
-            direction: event.direction,
-            timeframe: '15m',
+            direction: event.direction as 'BULLISH' | 'BEARISH',
+            timeframe: 'M15',
             phase: 'GO_FIRED',
             fibLevel: event.fib_touch_level,
             fibRatio: event.fib_ratio,

@@ -14,7 +14,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { Prisma, DataSource } from '@prisma/client'
+import { Prisma, DataSource, EconCategory } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
 import { fetchFredSeries } from '../src/lib/fred'
 import { loadDotEnvFiles } from './ingest-utils'
@@ -222,16 +222,16 @@ interface ValueRow {
 async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<number> {
   if (rows.length === 0) return 0
   
-  const categoryMap: Record<EconDomain, string> = {
-    RATES: 'RATES',
-    YIELDS: 'YIELDS',
-    FX: 'FX',
-    VOL_INDICES: 'VOLATILITY',
-    INFLATION: 'INFLATION',
-    LABOR: 'LABOR',
-    ACTIVITY: 'ACTIVITY',
-    MONEY: 'MONEY',
-    COMMODITIES: 'COMMODITIES',
+  const categoryMap: Record<EconDomain, EconCategory> = {
+    RATES: EconCategory.RATES,
+    YIELDS: EconCategory.YIELDS,
+    FX: EconCategory.FX,
+    VOL_INDICES: EconCategory.VOLATILITY,
+    INFLATION: EconCategory.INFLATION,
+    LABOR: EconCategory.LABOR,
+    ACTIVITY: EconCategory.ACTIVITY,
+    MONEY: EconCategory.MONEY,
+    COMMODITIES: EconCategory.COMMODITIES,
   }
   
   const data = rows.map((r) => ({

@@ -679,7 +679,7 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
       console.log('ALL CLEAR: Full 2y ingestion complete – no lies, no fakes, ready for training.')
     }
 
-    const status = Object.keys(symbolsFailed).length === 0 ? 'SUCCEEDED' : 'PARTIAL'
+    const status = Object.keys(symbolsFailed).length === 0 ? 'COMPLETED' : 'FAILED'
     const summary: PriceIngestSummary = {
       timeframe: `MES=${INGEST_CONFIG.MES_TIMEFRAME};NON_MES=${INGEST_CONFIG.NON_MES_TIMEFRAME}`,
       sourceSchema: `MES=${INGEST_CONFIG.MES_RAW_SCHEMA};NON_MES=${INGEST_CONFIG.NON_MES_RAW_SCHEMA}`,

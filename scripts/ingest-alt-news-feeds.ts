@@ -500,7 +500,7 @@ export async function runIngestAltNewsFeeds(): Promise<RunStats> {
     await prisma.ingestionRun.update({
       where: { id: run.id },
       data: {
-        status: 'SUCCEEDED',
+        status: 'COMPLETED',
         finishedAt: new Date(),
         rowsProcessed: stats.totals.parsedItems,
         rowsInserted: stats.totals.econInserted + stats.totals.policyInserted + stats.totals.reportInserted,

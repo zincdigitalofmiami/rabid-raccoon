@@ -19,6 +19,7 @@
  */
 
 import { prisma } from '../src/lib/prisma'
+import { toNum } from '../src/lib/decimal'
 import { loadDotEnvFiles, parseArg } from './ingest-utils'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -207,11 +208,18 @@ async function run(): Promise<void> {
   console.log(`[dataset] Days back: ${daysBack}, Start: ${start.toISOString().slice(0, 10)}`)
 
   // ── 1. Load MES 1h candles ──
-  const candles = await prisma.mesPrice1h.findMany({
+  const candles: MesCandle[] = (await prisma.mesPrice1h.findMany({
     where: { eventTime: { gte: start } },
     orderBy: { eventTime: 'asc' },
     select: { eventTime: true, open: true, high: true, low: true, close: true, volume: true },
-  }) as MesCandle[]
+  })).map(r => ({
+    eventTime: r.eventTime,
+    open: toNum(r.open),
+    high: toNum(r.high),
+    low: toNum(r.low),
+    close: toNum(r.close),
+    volume: r.volume,
+  }))
 
   if (candles.length < 200) {
     throw new Error(`Insufficient MES 1h data (${candles.length} rows, need 200+)`)

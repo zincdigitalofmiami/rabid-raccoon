@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client'
+import { Prisma, EconCategory } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import {
@@ -155,11 +155,11 @@ async function insertDomainRows(
 ): Promise<number> {
   if (rows.length === 0) return 0
 
-  const categoryMap: Record<MacroDomain, string | null> = {
-    RATES: 'RATES',
-    YIELDS: 'MONEY',
-    FX: 'FX',
-    VOL_INDICES: 'VOLATILITY',
+  const categoryMap: Record<MacroDomain, EconCategory | null> = {
+    RATES: EconCategory.RATES,
+    YIELDS: EconCategory.MONEY,
+    FX: EconCategory.FX,
+    VOL_INDICES: EconCategory.VOLATILITY,
     INDEXES: null,
   }
 
@@ -381,7 +381,7 @@ export async function runIngestMacroIndicators(options?: MacroIngestOptions): Pr
       }
     }
 
-    const status = Object.keys(indicatorsFailed).length === 0 ? 'SUCCEEDED' : 'PARTIAL'
+    const status = Object.keys(indicatorsFailed).length === 0 ? 'COMPLETED' : 'FAILED'
     const summary: MacroIngestSummary = {
       daysBack,
       rowsInserted,
