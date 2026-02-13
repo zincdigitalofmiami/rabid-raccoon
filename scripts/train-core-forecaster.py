@@ -19,7 +19,7 @@ Outputs:
   - Console: OOF MAE, RMSE, R^2 per horizon
 
 Setup:
-  pip install autogluon==1.2 pandas scikit-learn
+  pip install -r mes_hft_halsey/requirements.txt
   python scripts/train-core-forecaster.py
 """
 
@@ -90,7 +90,7 @@ def main():
         from autogluon.tabular import TabularPredictor
     except ImportError:
         print("ERROR: AutoGluon not installed.")
-        print("Install with: pip install autogluon==1.2 pandas scikit-learn")
+        print("Install with: pip install -r mes_hft_halsey/requirements.txt")
         sys.exit(1)
 
     print(f"Loading dataset from {DATASET_PATH}")

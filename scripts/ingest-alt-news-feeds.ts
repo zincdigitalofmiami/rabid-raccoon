@@ -447,6 +447,11 @@ export async function runIngestAltNewsFeeds(): Promise<RunStats> {
               eventDate,
               releaseTime: publishedAt,
               periodLabel: null,
+              // NOTE: actual/forecast/surprise/surprisePct are NULL because RSS feeds
+              // do not carry numeric economic release data. These fields require an
+              // economic calendar API (e.g., Trading Economics, Investing.com calendar).
+              // The macro_surprise_avg_7d feature was removed from the 1h dataset builder
+              // until a real surprise source is integrated.
               actual: null,
               forecast: null,
               previous: null,

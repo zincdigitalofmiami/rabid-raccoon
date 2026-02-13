@@ -614,8 +614,15 @@ def train_real_mes_model(
     forecast_csv.parent.mkdir(parents=True, exist_ok=True)
     mes_forecast.to_csv(forecast_csv)
 
+    # Holdout evaluation: predict() forecasts prediction_length steps forward
+    # from the end of train_data, which overlaps the test window. This is NOT
+    # in-sample — AutoGluon TimeSeries always forecasts forward, never in-sample.
+    # Guard against length mismatch if prediction_length != len(test window).
     holdout_preds = predictor.predict(train_data).loc["MES"]["mean"].reset_index(drop=True)
     holdout_actual = test_data.loc["MES"]["target"].reset_index(drop=True)
+    _holdout_len = min(len(holdout_preds), len(holdout_actual))
+    holdout_preds = holdout_preds.iloc[:_holdout_len]
+    holdout_actual = holdout_actual.iloc[:_holdout_len]
 
     mes_history = tsdf.loc["MES"]["target"]
     last_close = float(mes_history.iloc[-1])
@@ -642,7 +649,7 @@ def train_real_mes_model(
         horizon_delta_pct[h] = round(dpct, 4)
         horizon_bias[h] = _bias_from_delta(dpct)
 
-        if step <= len(holdout_actual):
+        if step <= len(holdout_actual) and step <= len(holdout_preds):
             pred_v = float(holdout_preds.iloc[step - 1])
             act_v = float(holdout_actual.iloc[step - 1])
             if act_v != 0:

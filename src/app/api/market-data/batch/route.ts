@@ -66,9 +66,17 @@ export async function GET() {
     )
 
     const summaries: MarketSummary[] = []
+    const failedSymbols: { symbol: string; error: string }[] = []
 
-    for (const result of results) {
-      if (result.status === 'rejected') continue
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i]
+      if (result.status === 'rejected') {
+        failedSymbols.push({
+          symbol: SYMBOL_KEYS[i],
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        })
+        continue
+      }
       const data = result.value
       const config = SYMBOLS[data.symbol]
       if (!config) continue
@@ -123,6 +131,7 @@ export async function GET() {
     return NextResponse.json(
       {
         symbols: summaries,
+        ...(failedSymbols.length > 0 ? { failedSymbols } : {}),
         timestamp: new Date().toISOString(),
       },
       {

@@ -1,3 +1,8 @@
+// NOTE: macro_surprise_avg_7d was removed in stabilization pass #2.
+// The macro_reports_1d table has no actual surprise values (all null from RSS feeds).
+// Re-add this feature when an economic calendar surprise source is integrated
+// (e.g., Trading Economics API or Investing.com calendar).
+// See: scripts/ingest-alt-news-feeds.ts lines 449-455.
 import fs from 'node:fs'
 import path from 'node:path'
 import { Timeframe } from '@prisma/client'
@@ -8,7 +13,6 @@ type DailyPoint = { eventDate: Date; value: number | null }
 type SignalPoint = { timestamp: Date; target100: number; target1236: number; direction: 'BULLISH' | 'BEARISH' }
 type NewsPoint = { eventDate: Date; count: number }
 type PolicyPoint = { eventDate: Date; sentiment: number | null; impact: number | null }
-type MacroPoint = { eventDate: Date; surprise: number | null }
 
 interface OutputRow {
   item_id: string
@@ -32,7 +36,6 @@ interface OutputRow {
   policy_count_7d: number
   policy_avg_sentiment: number | null
   policy_avg_impact: number | null
-  macro_surprise_avg_7d: number | null
 }
 
 function toDateKeyUtc(date: Date): string {
@@ -85,18 +88,6 @@ function avgPolicyLast7d(points: PolicyPoint[], ts: Date, field: 'sentiment' | '
   return sum / relevant.length
 }
 
-function avgMacroSurpriseLast7d(points: MacroPoint[], ts: Date): number | null {
-  const ts7dAgo = new Date(ts.getTime() - 7 * 24 * 60 * 60 * 1000)
-  const targetKey = toDateKeyUtc(ts)
-  const relevant = points.filter((p) => {
-    const pKey = toDateKeyUtc(p.eventDate)
-    return pKey >= toDateKeyUtc(ts7dAgo) && pKey <= targetKey && p.surprise != null
-  })
-  if (relevant.length === 0) return null
-  const sum = relevant.reduce((acc, p) => acc + (p.surprise ?? 0), 0)
-  return sum / relevant.length
-}
-
 function quoteCsv(value: string | number | null): string {
   if (value == null) return ''
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : ''
@@ -127,7 +118,6 @@ function writeCsv(filePath: string, rows: OutputRow[]): void {
     'policy_count_7d',
     'policy_avg_sentiment',
     'policy_avg_impact',
-    'macro_surprise_avg_7d',
   ]
 
   const lines: string[] = [header.join(',')]
@@ -155,7 +145,6 @@ function writeCsv(filePath: string, rows: OutputRow[]): void {
         row.policy_count_7d,
         row.policy_avg_sentiment,
         row.policy_avg_impact,
-        row.macro_surprise_avg_7d,
       ]
         .map(quoteCsv)
         .join(',')
@@ -181,7 +170,7 @@ async function run(): Promise<void> {
 
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
 
-  const [mesRows, vixRows, y10Rows, dffRows, dxyRows, mmRows, newsRows, policyRows, macroRows] = await Promise.all([
+  const [mesRows, vixRows, y10Rows, dffRows, dxyRows, mmRows, newsRows, policyRows] = await Promise.all([
     prisma.mesPrice1h.findMany({
       where: { eventTime: { gte: start } },
       orderBy: { eventTime: 'asc' },
@@ -242,23 +231,13 @@ async function run(): Promise<void> {
       GROUP BY "eventDate"
       ORDER BY "eventDate" ASC
     `,
-    // Macro reports aggregated by day
-    prisma.$queryRaw<{ eventDate: Date; avgSurprise: number | null }[]>`
-      SELECT
-        "eventDate"::date as "eventDate",
-        AVG("surprisePct") as "avgSurprise"
-      FROM "macro_reports_1d"
-      WHERE "surprisePct" IS NOT NULL
-      GROUP BY "eventDate"
-      ORDER BY "eventDate" ASC
-    `,
   ])
 
   if (mesRows.length < 200) {
     throw new Error(`Insufficient MES 1h history (${mesRows.length} rows). Ingest prices first.`)
   }
 
-  console.log(`[dataset] Loaded ${newsRows.length} econ news days, ${policyRows.length} policy news days, ${macroRows.length} macro report days`)
+  console.log(`[dataset] Loaded ${newsRows.length} econ news days, ${policyRows.length} policy news days`)
 
   const newsPoints: NewsPoint[] = newsRows.map((r) => ({ eventDate: r.eventDate, count: r.total_count }))
   const newsFedPoints: NewsPoint[] = newsRows.map((r) => ({ eventDate: r.eventDate, count: r.fed_count }))
@@ -269,8 +248,6 @@ async function run(): Promise<void> {
     sentiment: r.avgSentiment,
     impact: r.avgImpact,
   }))
-  const macroPoints: MacroPoint[] = macroRows.map((r) => ({ eventDate: r.eventDate, surprise: r.avgSurprise }))
-
   const output: OutputRow[] = mesRows.map((row) => {
     const ts = row.eventTime
     const mm = asofSignal(mmRows, ts)
@@ -290,7 +267,6 @@ async function run(): Promise<void> {
     const policyCount7d = countNewsLast7d(policyPoints.map((p) => ({ eventDate: p.eventDate, count: 1 })), ts)
     const policyAvgSentiment = avgPolicyLast7d(policyPoints, ts, 'sentiment')
     const policyAvgImpact = avgPolicyLast7d(policyPoints, ts, 'impact')
-    const macroSurpriseAvg7d = avgMacroSurpriseLast7d(macroPoints, ts)
 
     const utcDay = ts.getUTCDate()
     const utcMonth = ts.getUTCMonth()
@@ -319,7 +295,6 @@ async function run(): Promise<void> {
       policy_count_7d: policyCount7d,
       policy_avg_sentiment: policyAvgSentiment,
       policy_avg_impact: policyAvgImpact,
-      macro_surprise_avg_7d: macroSurpriseAvg7d,
     }
   })
 
@@ -360,7 +335,6 @@ async function run(): Promise<void> {
       policy_count_7d: 'int32',
       policy_avg_sentiment: 'float64|null',
       policy_avg_impact: 'float64|null',
-      macro_surprise_avg_7d: 'float64|null',
     },
     predictor: {
       target: 'target',
@@ -380,7 +354,6 @@ async function run(): Promise<void> {
         'policy_count_7d',
         'policy_avg_sentiment',
         'policy_avg_impact',
-        'macro_surprise_avg_7d',
       ],
       item_id_column: 'item_id',
       timestamp_column: 'timestamp',
