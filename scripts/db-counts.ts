@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { prisma } from '../src/lib/prisma'
 import { loadDotEnvFiles } from './ingest-utils'
 
@@ -207,6 +209,32 @@ async function run(): Promise<void> {
       rows: row._count._all,
     })),
   ])
+
+  // Validate data source registry entries: flag stale scripts
+  const registryEntries = await prisma.dataSourceRegistry.findMany({
+    select: { sourceId: true, targetTable: true, ingestionScript: true, isActive: true },
+  })
+
+  const staleEntries: { sourceId: string; targetTable: string; reason: string }[] = []
+  for (const entry of registryEntries) {
+    if (entry.ingestionScript) {
+      const scriptPath = path.resolve(process.cwd(), entry.ingestionScript)
+      if (!fs.existsSync(scriptPath)) {
+        staleEntries.push({
+          sourceId: entry.sourceId,
+          targetTable: entry.targetTable,
+          reason: `Script not found: ${entry.ingestionScript}`,
+        })
+      }
+    }
+  }
+
+  if (staleEntries.length > 0) {
+    console.log('\n=== STALE Registry Entries (script missing) ===')
+    console.table(staleEntries)
+  } else {
+    console.log(`\n=== Registry: all ${registryEntries.length} entries valid ===`)
+  }
 }
 
 run()

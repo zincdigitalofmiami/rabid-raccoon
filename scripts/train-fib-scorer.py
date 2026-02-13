@@ -22,7 +22,7 @@ Outputs:
   datasets/autogluon/fib_scorer_oof.csv  (OOF predictions + grades)
 
 Setup:
-  pip install autogluon==1.2 pandas scikit-learn
+  pip install -r mes_hft_halsey/requirements.txt
   npx tsx scripts/build-bhg-dataset.ts   # Build dataset first
   python scripts/train-fib-scorer.py
 """
@@ -128,7 +128,7 @@ def main():
         from autogluon.tabular import TabularPredictor
     except ImportError:
         print("ERROR: AutoGluon not installed.")
-        print("Install with: pip install autogluon==1.2 pandas scikit-learn")
+        print("Install with: pip install -r mes_hft_halsey/requirements.txt")
         sys.exit(1)
 
     print(f"Loading dataset from {DATASET_PATH}")
@@ -280,14 +280,16 @@ def main():
         w1 = TARGETS["y1272"]["weight"]
         w2 = TARGETS["y1618"]["weight"]
 
-        oof_df["composite_score"] = (
-            oof_df["oof_y1272"].fillna(0) * w1 +
-            oof_df["oof_y1618"].fillna(0) * w2
+        mask = oof_df["oof_y1272"].notna() & oof_df["oof_y1618"].notna()
+        oof_df["composite_score"] = float("nan")
+        oof_df.loc[mask, "composite_score"] = (
+            oof_df.loc[mask, "oof_y1272"] * w1 +
+            oof_df.loc[mask, "oof_y1618"] * w2
         )
 
         # Grade assignment
         def assign_grade(score):
-            if pd.isna(score) or score == 0:
+            if pd.isna(score):
                 return "--"
             if score >= GRADE_THRESHOLDS["A"]:
                 return "A"

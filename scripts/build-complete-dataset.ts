@@ -418,7 +418,7 @@ async function run(): Promise<void> {
     let newsCount7d = 0, newsFedCount7d = 0
     for (const n of newsRows) {
       const nk = dateKey(n.eventDate)
-      if (nk >= ts7dKey && nk <= tsKey) {
+      if (nk >= ts7dKey && nk < tsKey) {
         newsCount7d += n.total_count
         newsFedCount7d += n.fed_count
       }
@@ -428,7 +428,7 @@ async function run(): Promise<void> {
     let policySentimentSum = 0, policySentimentN = 0
     for (const p of policyRows) {
       const pk = dateKey(p.eventDate)
-      if (pk >= ts7dKey && pk <= tsKey) {
+      if (pk >= ts7dKey && pk < tsKey) {
         policyCount7d += p.count
         if (p.avgSentiment != null) {
           policySentimentSum += p.avgSentiment * p.count

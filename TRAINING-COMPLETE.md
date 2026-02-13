@@ -1,6 +1,6 @@
-# COMPLETE AUTOGLUON TRAINING - ALL DATA SOURCES
+# AUTOGLUON TRAINING PIPELINE - CONFIGURATION REFERENCE
 
-This is the FULL PRODUCTION training pipeline pulling **EVERY** data source and training **ALL** models.
+Training pipeline configuration for MES time-series forecasting with AutoGluon.
 
 ## Data Sources Included
 
@@ -28,9 +28,9 @@ This is the FULL PRODUCTION training pipeline pulling **EVERY** data source and 
 
 **Total: 22 tables, 60+ symbols, 10,000+ economic series**
 
-## AutoGluon 1.5 Model Zoo (ALL 35+ Models)
+## AutoGluon 1.5 Model Zoo (26 Configured Models)
 
-### Statistical Models (11):
+### Statistical Models (10):
 - Naive, SeasonalNaive, Average, SeasonalAverage, Zero
 - Theta, AutoETS, AutoARIMA, DynamicOptimizedTheta, ADIDA
 
@@ -64,7 +64,25 @@ This is the FULL PRODUCTION training pipeline pulling **EVERY** data source and 
 ### Ensemble (1):
 - WeightedEnsemble (auto-generated)
 
-**Total: 28+ individual models + ensemble**
+**Total: 26 individual models + auto-ensemble**
+
+## Known Limitations
+
+- **Holdout metrics**: The holdout evaluation forecasts forward from the
+  end of the training window into the test window. Metrics are only valid
+  when `prediction_length` matches the test window size. A length alignment
+  guard was added in stabilization pass #2 to prevent silent misalignment.
+- **Macro surprise feature**: `macro_surprise_avg_7d` has been removed from
+  the 1h dataset builder because `macro_reports_1d` rows have no actual
+  surprise values (RSS feeds only). Re-add when an economic calendar API
+  is integrated (e.g., Trading Economics, Investing.com calendar).
+- **Symbol coverage**: ZN, ZB, GC, CL symbols are configured in
+  `src/lib/symbols.ts` but may have zero database rows depending on
+  Databento ingestion state. Batch and forecast endpoints now surface
+  which symbols failed instead of silently skipping them.
+- **MASE targets**: The < 0.3 figure below is aspirational, not a measured
+  baseline. Actual performance depends on data quality, symbol coverage,
+  and training time.
 
 ## Training Pipeline
 
@@ -85,7 +103,7 @@ Features generated:
 - VIX level
 - News counts (7-day rolling): total, Fed, SEC, ECB
 - Policy sentiment & impact (7-day rolling)
-- Macro surprise averages (7-day rolling)
+- ~~Macro surprise averages~~ (removed — no surprise source; see Known Limitations)
 
 ### Step 2: Train on ALL Symbols from Database
 
@@ -144,7 +162,7 @@ With complete data sources and full model zoo:
 - **Models trained**: 25-35 (depends on time limit and data)
 - **Symbols**: 60+ (from database) or 65+ (from Databento)
 - **Features**: 35+ (all economic + news + policy)
-- **MASE score**: < 0.3 (lower is better)
+- **MASE score**: Varies by data and training time (lower is better; < 1.0 beats naive baseline)
 
 ## Performance Optimization
 
@@ -188,7 +206,7 @@ cat mes_hft_halsey/models/autogluon_mes_1h/logs/predictor_log.txt | grep "Valida
 ## Production Deployment
 
 1. **Train**: Run with `--quality extreme --use-database`
-2. **Validate**: Check leaderboard, verify MASE < 0.3
+2. **Validate**: Check leaderboard, verify MASE < 1.0 (beats naive)
 3. **Deploy**: Use `predictor.predict()` for inference
 4. **Retrain**: Weekly or when new data available
 

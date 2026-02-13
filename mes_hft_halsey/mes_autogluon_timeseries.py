@@ -171,7 +171,6 @@ class MesRealModelSummary:
     modeled_horizons: List[str]
     skipped_horizons: Dict[str, str]
     horizon_steps_bars: Dict[str, int]
-    synthetic_data_used: bool
     last_close: float
     first_forecast: float
     delta_points: float
@@ -199,7 +198,6 @@ class MesSymbolAuditSummary:
     source_schema_per_symbol: Dict[str, str]
     first_timestamp_utc: Dict[str, str]
     last_timestamp_utc: Dict[str, str]
-    synthetic_data_used: bool
 
 
 def _normalize_root_symbol(symbol: str) -> str:
@@ -614,8 +612,15 @@ def train_real_mes_model(
     forecast_csv.parent.mkdir(parents=True, exist_ok=True)
     mes_forecast.to_csv(forecast_csv)
 
+    # Holdout evaluation: predict() forecasts prediction_length steps forward
+    # from the end of train_data, which overlaps the test window. This is NOT
+    # in-sample — AutoGluon TimeSeries always forecasts forward, never in-sample.
+    # Guard against length mismatch if prediction_length != len(test window).
     holdout_preds = predictor.predict(train_data).loc["MES"]["mean"].reset_index(drop=True)
     holdout_actual = test_data.loc["MES"]["target"].reset_index(drop=True)
+    _holdout_len = min(len(holdout_preds), len(holdout_actual))
+    holdout_preds = holdout_preds.iloc[:_holdout_len]
+    holdout_actual = holdout_actual.iloc[:_holdout_len]
 
     mes_history = tsdf.loc["MES"]["target"]
     last_close = float(mes_history.iloc[-1])
@@ -642,7 +647,7 @@ def train_real_mes_model(
         horizon_delta_pct[h] = round(dpct, 4)
         horizon_bias[h] = _bias_from_delta(dpct)
 
-        if step <= len(holdout_actual):
+        if step <= len(holdout_actual) and step <= len(holdout_preds):
             pred_v = float(holdout_preds.iloc[step - 1])
             act_v = float(holdout_actual.iloc[step - 1])
             if act_v != 0:
@@ -662,7 +667,6 @@ def train_real_mes_model(
         modeled_horizons=modeled_horizons,
         skipped_horizons=skipped_horizons,
         horizon_steps_bars=horizon_steps,
-        synthetic_data_used=False,
         last_close=round(last_close, 4),
         first_forecast=round(first_forecast, 4),
         delta_points=round(delta_points, 4),
@@ -701,7 +705,6 @@ def audit_symbol_universe(
         source_schema_per_symbol=schema_per_symbol,
         first_timestamp_utc=first_ts,
         last_timestamp_utc=last_ts,
-        synthetic_data_used=False,
     )
 
 
