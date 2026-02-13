@@ -30,3 +30,4 @@ mes_hft_halsey/output/
 /tsconfig.tsbuildinfo
 
 /src/generated/prisma
+.env*.local

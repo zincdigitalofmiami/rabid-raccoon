@@ -10,7 +10,7 @@ export interface IngestionSymbol {
 
 const GLBX = 'GLBX.MDP3'
 
-const SYMBOL_UNIVERSE_32 = [
+const SYMBOL_UNIVERSE_25 = [
   'ES',
   'MES',
   'NQ',
@@ -20,7 +20,6 @@ const SYMBOL_UNIVERSE_32 = [
   'RTY',
   'M2K',
   'EMD',
-  'NIY',
   'NKD',
   'XAE',
   'XAF',
@@ -33,13 +32,7 @@ const SYMBOL_UNIVERSE_32 = [
   'XAY',
   'XAP',
   'XAZ',
-  'SXB',
-  'SXI',
   'SXT',
-  'SXO',
-  'SXR',
-  'SOX',
-  'BIO',
   'RS1',
   'RSG',
   'RSV',
@@ -55,7 +48,6 @@ const META: Record<string, { shortName: string; description: string; tickSize: n
   RTY: { shortName: 'E-mini Russell', description: 'E-mini Russell 2000 Futures', tickSize: 0.1 },
   M2K: { shortName: 'Micro Russell', description: 'Micro E-mini Russell 2000 Futures', tickSize: 0.1 },
   EMD: { shortName: 'S&P Midcap', description: 'S&P MidCap 400 Futures', tickSize: 0.1 },
-  NIY: { shortName: 'Nikkei USD', description: 'Nikkei 225 USD Futures', tickSize: 5.0 },
   NKD: { shortName: 'Nikkei JPY', description: 'Nikkei 225 JPY Futures', tickSize: 5.0 },
   XAE: { shortName: 'XA E', description: 'XA E Futures', tickSize: 0.01 },
   XAF: { shortName: 'XA F', description: 'XA F Futures', tickSize: 0.01 },
@@ -68,19 +60,13 @@ const META: Record<string, { shortName: string; description: string; tickSize: n
   XAY: { shortName: 'XA Y', description: 'XA Y Futures', tickSize: 0.01 },
   XAP: { shortName: 'XA P', description: 'XA P Futures', tickSize: 0.01 },
   XAZ: { shortName: 'XA Z', description: 'XA Z Futures', tickSize: 0.01 },
-  SXB: { shortName: 'SX B', description: 'SX B Futures', tickSize: 0.01 },
-  SXI: { shortName: 'SX I', description: 'SX I Futures', tickSize: 0.01 },
   SXT: { shortName: 'SX T', description: 'SX T Futures', tickSize: 0.01 },
-  SXO: { shortName: 'SX O', description: 'SX O Futures', tickSize: 0.01 },
-  SXR: { shortName: 'SX R', description: 'SX R Futures', tickSize: 0.01 },
-  SOX: { shortName: 'SOX', description: 'SOX Futures', tickSize: 0.01 },
-  BIO: { shortName: 'BIO', description: 'BIO Futures', tickSize: 0.01 },
   RS1: { shortName: 'RS1', description: 'RS1 Futures', tickSize: 0.01 },
   RSG: { shortName: 'RSG', description: 'RSG Futures', tickSize: 0.01 },
   RSV: { shortName: 'RSV', description: 'RSV Futures', tickSize: 0.01 },
 }
 
-export const INGESTION_SYMBOLS: IngestionSymbol[] = SYMBOL_UNIVERSE_32.map((code) => {
+export const INGESTION_SYMBOLS: IngestionSymbol[] = SYMBOL_UNIVERSE_25.map((code) => {
   const meta = META[code]
   return {
     code,
