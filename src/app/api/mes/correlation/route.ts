@@ -50,6 +50,7 @@ function rowToCandle(row: {
 }
 
 function valueToCandle(eventDate: Date, value: Decimal | number | null): CandleData | null {
+  if (value === null || value === undefined) return null
   const numValue = toNum(value)
   if (!Number.isFinite(numValue)) return null
   return {

@@ -5,6 +5,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 enum DataSource {
@@ -20,6 +21,7 @@ enum EconCategory {
   LABOR
   ACTIVITY
   VOLATILITY
+  YIELDS
   COMMODITIES
   FX
   EQUITY
