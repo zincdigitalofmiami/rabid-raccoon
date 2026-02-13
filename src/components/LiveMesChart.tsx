@@ -11,7 +11,9 @@ import {
   UTCTimestamp,
 } from 'lightweight-charts'
 import type { ForecastResponse, MeasuredMove, CandleData } from '@/lib/types'
+import type { BhgSetup } from '@/lib/bhg-engine'
 import { ForecastTargetsPrimitive } from '@/lib/charts/ForecastTargetsPrimitive'
+import { BhgMarkersPrimitive } from '@/lib/charts/BhgMarkersPrimitive'
 import { mapMeasuredMoveAndCoreToTargets } from '@/lib/charts/blendTargets'
 import { ensureFutureWhitespace } from '@/lib/charts/ensureFutureWhitespace'
 import { detectSwings } from '@/lib/swing-detection'
@@ -58,13 +60,15 @@ export interface LiveMesChartHandle {
 
 interface LiveMesChartProps {
   forecast?: ForecastResponse | null
+  setups?: BhgSetup[]
 }
 
-const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function LiveMesChart({ forecast }, ref) {
+const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function LiveMesChart({ forecast, setups }, ref) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null)
   const primitiveRef = useRef<ForecastTargetsPrimitive | null>(null)
+  const bhgPrimitiveRef = useRef<BhgMarkersPrimitive | null>(null)
   const pointsRef = useRef<MesPoint[]>([])
 
   const [status, setStatus] = useState<StreamStatus>('connecting')
@@ -140,9 +144,14 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
     const primitive = new ForecastTargetsPrimitive()
     series.attachPrimitive(primitive)
 
+    // Attach BHG markers primitive
+    const bhgPrimitive = new BhgMarkersPrimitive()
+    series.attachPrimitive(bhgPrimitive)
+
     chartRef.current = chart
     seriesRef.current = series
     primitiveRef.current = primitive
+    bhgPrimitiveRef.current = bhgPrimitive
 
     const resizeObserver = new ResizeObserver(() => {
       chart.timeScale().fitContent()
@@ -152,10 +161,12 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
     return () => {
       resizeObserver.disconnect()
       series.detachPrimitive(primitive)
+      series.detachPrimitive(bhgPrimitive)
       chart.remove()
       chartRef.current = null
       seriesRef.current = null
       primitiveRef.current = null
+      bhgPrimitiveRef.current = null
     }
   }, [])
 
@@ -276,6 +287,25 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
     primitiveRef.current.setTargets(targets)
   }, [activeMove, lastPrice])
 
+  // --- Wire BHG setups to primitive ---
+  useEffect(() => {
+    if (!bhgPrimitiveRef.current) return
+
+    if (!setups || setups.length === 0 || pointsRef.current.length === 0) {
+      bhgPrimitiveRef.current.setMarkers(null)
+      return
+    }
+
+    const lastTime = pointsRef.current[pointsRef.current.length - 1].time
+
+    bhgPrimitiveRef.current.setMarkers({
+      setups,
+      lastTime,
+      futureBars: 8,
+      barInterval: BAR_INTERVAL_SEC,
+    })
+  }, [setups, lastPrice])
+
   const changeColor = priceChange >= 0 ? TV.bull.bright : TV.bear.bright
 
   return (
@@ -365,6 +395,22 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
             <div className="flex items-center gap-2">
               <div className="w-4 h-0.5 border-t border-dashed" style={{ borderColor: TV.blue.primary }} />
               <span className="text-[10px] text-white/40 uppercase tracking-wider">Entry</span>
+            </div>
+          </>
+        )}
+        {setups && setups.length > 0 && (
+          <>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: '#787b86' }} />
+              <span className="text-[10px] text-white/40 uppercase tracking-wider">Touch</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-0 h-0 border-l-[4px] border-r-[4px] border-b-[6px] border-transparent border-b-[#ff9800]" />
+              <span className="text-[10px] text-white/40 uppercase tracking-wider">Hook</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rotate-45" style={{ backgroundColor: TV.bull.bright }} />
+              <span className="text-[10px] text-white/40 uppercase tracking-wider">GO</span>
             </div>
           </>
         )}

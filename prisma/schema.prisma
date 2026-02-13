@@ -560,3 +560,76 @@ model IngestionRun {
   @@index([job, startedAt], map: "ingestion_runs_job_started_idx")
   @@map("ingestion_runs")
 }
+
+// ─── BHG (Break-Hook-Go) Setups ───────────────────────────────────────────
+
+model BhgSetup {
+  id               BigInt    @id @default(autoincrement())
+  setupId          String    @unique @db.VarChar(128)
+  direction        String    @db.VarChar(10)
+  timeframe        String    @db.VarChar(10)
+  phase            String    @db.VarChar(20)
+  fibLevel         Float
+  fibRatio         Float
+
+  touchTime        DateTime? @db.Timestamptz(6)
+  hookTime         DateTime? @db.Timestamptz(6)
+  hookLow          Float?
+  hookHigh         Float?
+  hookClose        Float?
+  goTime           DateTime? @db.Timestamptz(6)
+  goType           String?   @db.VarChar(10)
+
+  entry            Float?
+  stopLoss         Float?
+  tp1              Float?
+  tp2              Float?
+
+  // Outcome tracking (filled after horizon)
+  tp1Hit           Boolean?
+  tp2Hit           Boolean?
+  slHit            Boolean?
+  tp1HitTime       DateTime? @db.Timestamptz(6)
+  tp2HitTime       DateTime? @db.Timestamptz(6)
+  slHitTime        DateTime? @db.Timestamptz(6)
+  maxFavorable     Float?
+  maxAdverse       Float?
+
+  // Model scoring
+  pTp1             Float?
+  pTp2             Float?
+  modelVersion     String?   @db.VarChar(64)
+
+  // Alignment at GO time
+  correlationScore Float?
+  vixLevel         Float?
+
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([direction, phase], map: "bhg_setups_direction_phase_idx")
+  @@index([goTime], map: "bhg_setups_go_time_idx")
+  @@index([timeframe, goTime], map: "bhg_setups_tf_go_time_idx")
+  @@map("bhg_setups")
+}
+
+// ─── MES Model Registry ───────────────────────────────────────────────────
+
+model MesModelRegistry {
+  id             BigInt   @id @default(autoincrement())
+  modelName      String   @db.VarChar(128)
+  version        String   @db.VarChar(64)
+  trainedAt      DateTime @db.Timestamptz(6)
+  oofBrier       Float?
+  oofLogLoss     Float?
+  oofAuc         Float?
+  trainRows      Int
+  features       Json
+  hyperparams    Json?
+  artifactPath   String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([modelName, version], map: "mes_model_registry_name_version_key")
+  @@map("mes_model_registry")
+}

@@ -11,7 +11,7 @@ interface FredResponse {
   observations: FredObservation[]
 }
 
-async function fetchFredSeries(
+export async function fetchFredSeries(
   seriesId: string,
   startDate: string,
   endDate?: string

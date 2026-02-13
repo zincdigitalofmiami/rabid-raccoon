@@ -125,3 +125,12 @@ export interface SymbolForecast {
 }
 
 export type { ForecastTarget, ForecastTargetKind } from './charts/types'
+
+// BHG Engine types
+export type { GoType, SetupPhase, SetupDirection, BhgSetup } from './bhg-engine'
+
+// Risk Engine types
+export type { RiskParams, RiskResult, RiskGrade } from './risk-engine'
+
+// Correlation Filter types
+export type { CorrelationAlignment } from './correlation-filter'
