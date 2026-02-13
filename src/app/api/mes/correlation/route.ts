@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { Decimal } from '@prisma/client/runtime/library'
+import { Decimal } from '@prisma/client/runtime/client'
 import { prisma } from '@/lib/prisma'
 import { computeAlignmentScore } from '@/lib/correlation-filter'
 import { toNum } from '@/lib/decimal'

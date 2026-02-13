@@ -265,9 +265,9 @@ async function importRatesDomain(source: Client): Promise<{ processed: number; i
     if (rows.length === 0) break
     lastId = Number(rows[rows.length - 1].id)
 
-    const rateRows: Prisma.EconRates1dCreateManyInput[] = []
-    const yieldRows: Prisma.EconYields1dCreateManyInput[] = []
-    const fxRows: Prisma.EconFx1dCreateManyInput[] = []
+    const rateRows: Omit<Prisma.EconObservation1dCreateManyInput, 'category'>[] = []
+    const yieldRows: Omit<Prisma.EconObservation1dCreateManyInput, 'category'>[] = []
+    const fxRows: Omit<Prisma.EconObservation1dCreateManyInput, 'category'>[] = []
 
     for (const row of rows) {
       const seriesId = String(row.series_id)
@@ -296,17 +296,17 @@ async function importRatesDomain(source: Client): Promise<{ processed: number; i
 
     processed += rows.length
     if (rateRows.length) {
-      inserted += await createManyBatched('econObservation1d', rateRows.map(r => ({ ...r, category: 'RATES' })), async (batch) =>
+      inserted += await createManyBatched('econObservation1d', rateRows.map(r => ({ ...r, category: EconCategory.RATES })), async (batch) =>
         (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
     if (yieldRows.length) {
-      inserted += await createManyBatched('econObservation1d', yieldRows.map(r => ({ ...r, category: 'MONEY' })), async (batch) =>
+      inserted += await createManyBatched('econObservation1d', yieldRows.map(r => ({ ...r, category: EconCategory.MONEY })), async (batch) =>
         (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
     if (fxRows.length) {
-      inserted += await createManyBatched('econObservation1d', fxRows.map(r => ({ ...r, category: 'FX' })), async (batch) =>
+      inserted += await createManyBatched('econObservation1d', fxRows.map(r => ({ ...r, category: EconCategory.FX })), async (batch) =>
         (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
@@ -799,7 +799,7 @@ export async function runImportFusionEcon(): Promise<void> {
     await withRetry('ingestionRun.update.success', () => prisma.ingestionRun.update({
       where: { id: run.id },
       data: {
-        status: 'SUCCEEDED',
+        status: 'COMPLETED',
         finishedAt: new Date(),
         rowsProcessed,
         rowsInserted,

@@ -5,6 +5,8 @@ import { calculateFibonacci } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
 import { advanceBhgSetups } from '@/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
+import { toNum } from '@/lib/decimal'
+import type { Decimal } from '@prisma/client/runtime/client'
 import type { CandleData } from '@/lib/types'
 
 export const runtime = 'nodejs'
@@ -12,18 +14,18 @@ export const dynamic = 'force-dynamic'
 
 function rowToCandle(row: {
   eventTime: Date
-  open: number
-  high: number
-  low: number
-  close: number
+  open: Decimal | number
+  high: Decimal | number
+  low: Decimal | number
+  close: Decimal | number
   volume: bigint | null
 }): CandleData {
   return {
     time: Math.floor(row.eventTime.getTime() / 1000),
-    open: row.open,
-    high: row.high,
-    low: row.low,
-    close: row.close,
+    open: toNum(row.open),
+    high: toNum(row.high),
+    low: toNum(row.low),
+    close: toNum(row.close),
     volume: row.volume == null ? 0 : Number(row.volume),
   }
 }

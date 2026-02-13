@@ -2,6 +2,9 @@
   "name": "rabid-raccoon",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "postinstall": "prisma generate",
     "dev": "next dev",
@@ -12,8 +15,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "db:up": "bash scripts/dev-db-up.sh",
-    "db:down": "bash scripts/dev-db-down.sh",
+    "db:migrate": "prisma migrate deploy",
     "db:counts": "tsx scripts/db-counts.ts",
     "ingest:market": "tsx scripts/ingest-market-prices.ts",
     "ingest:market:daily": "tsx scripts/ingest-market-prices-daily.ts",

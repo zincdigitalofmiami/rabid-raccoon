@@ -1,12 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { Timeframe, Decimal } from '@prisma/client'
+import { Timeframe } from '@prisma/client'
+import { Decimal } from '@prisma/client/runtime/client'
 import { prisma } from '../src/lib/prisma'
 import { toNum } from '../src/lib/decimal'
 import { loadDotEnvFiles, parseArg } from './ingest-utils'
 
 type DailyPoint = { eventDate: Date; value: Decimal | number | null }
-type SignalPoint = { timestamp: Date; target100: number; target1236: number; direction: 'BULLISH' | 'BEARISH' }
+type SignalPoint = { timestamp: Date; target100: Decimal | number; target1236: Decimal | number; direction: 'BULLISH' | 'BEARISH' }
 type NewsPoint = { eventDate: Date; count: number }
 type PolicyPoint = { eventDate: Date; sentiment: number | null; impact: number | null }
 type MacroPoint = { eventDate: Date; surprise: number | null }

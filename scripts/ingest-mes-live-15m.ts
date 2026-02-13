@@ -140,7 +140,7 @@ export async function runMesLiveIngestion15m(): Promise<void> {
     await prisma.ingestionRun.update({
       where: { id: run.id },
       data: {
-        status: 'SUCCEEDED',
+        status: 'COMPLETED',
         finishedAt: new Date(),
         rowsProcessed: totalProcessed,
         rowsInserted: totalInserted,

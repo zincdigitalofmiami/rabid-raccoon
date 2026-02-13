@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { aggregateCandles } from '@/lib/analyse-data'
+import { toNum } from '@/lib/decimal'
+import type { Decimal } from '@prisma/client/runtime/client'
 import type { CandleData } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -35,18 +37,18 @@ interface ChartAnalysisResponse {
 
 function prismaRowToCandle(row: {
   eventTime: Date
-  open: number
-  high: number
-  low: number
-  close: number
+  open: Decimal | number
+  high: Decimal | number
+  low: Decimal | number
+  close: Decimal | number
   volume: bigint | null
 }): CandleData {
   return {
     time: Math.floor(row.eventTime.getTime() / 1000),
-    open: row.open,
-    high: row.high,
-    low: row.low,
-    close: row.close,
+    open: toNum(row.open),
+    high: toNum(row.high),
+    low: toNum(row.low),
+    close: toNum(row.close),
     volume: row.volume == null ? 0 : Number(row.volume),
   }
 }

@@ -2,6 +2,7 @@ import { Prisma, SignalDirection, SignalStatus } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
 import { detectMeasuredMoves } from '../src/lib/measured-move'
 import { detectSwings } from '../src/lib/swing-detection'
+import { toNum } from '../src/lib/decimal'
 import { CandleData } from '../src/lib/types'
 import { loadDotEnvFiles, parseArg, parseTimeframe, timeframeToPrisma } from './ingest-utils'
 
@@ -105,10 +106,10 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
           'MES',
           mesCandles.map((row) => ({
             time: Math.floor(row.eventTime.getTime() / 1000),
-            open: row.open,
-            high: row.high,
-            low: row.low,
-            close: row.close,
+            open: toNum(row.open),
+            high: toNum(row.high),
+            low: toNum(row.low),
+            close: toNum(row.close),
             volume: row.volume ? Number(row.volume) : 0,
           }))
         )
@@ -137,10 +138,10 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
         const list = perSymbol.get(row.symbolCode) || []
         list.push({
           time: Math.floor(row.eventTime.getTime() / 1000),
-          open: row.open,
-          high: row.high,
-          low: row.low,
-          close: row.close,
+          open: toNum(row.open),
+          high: toNum(row.high),
+          low: toNum(row.low),
+          close: toNum(row.close),
           volume: row.volume ? Number(row.volume) : 0,
         })
         perSymbol.set(row.symbolCode, list)
@@ -202,7 +203,7 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
       }
     }
 
-    const status = Object.keys(symbolsFailed).length === 0 ? 'SUCCEEDED' : 'PARTIAL'
+    const status = Object.keys(symbolsFailed).length === 0 ? 'COMPLETED' : 'FAILED'
     const summary: MmIngestSummary = {
       timeframe,
       daysBack,

@@ -114,6 +114,6 @@ CREATE INDEX "econ_commodities_1d_date_idx" ON "econ_commodities_1d"("eventDate"
 CREATE UNIQUE INDEX "econ_news_1d_row_hash_key" ON "econ_news_1d"("rowHash");
 CREATE INDEX "econ_news_1d_date_idx" ON "econ_news_1d"("eventDate");
 CREATE INDEX "econ_news_1d_source_idx" ON "econ_news_1d"("source");
-CREATE INDEX "econ_news_1d_tags_idx" ON "econ_news_1d" USING GIN ("tags");
+CREATE INDEX "econ_news_1d_tags_idx" ON "econ_news_1d"("tags");
 
 CREATE UNIQUE INDEX "policy_news_1d_row_hash_key" ON "policy_news_1d"("rowHash");

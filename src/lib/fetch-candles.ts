@@ -111,7 +111,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
       })
       if (rows15m.length > 0) {
         return rows15m.map((row) =>
-          toCandle(row.eventTime.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
+          toCandle(row.eventTime.getTime(), toNum(row.open), toNum(row.high), toNum(row.low), toNum(row.close), row.volume ? Number(row.volume) : 0)
         )
       }
 
@@ -127,7 +127,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
       })
       if (rows1h.length === 0) return null
       return rows1h.map((row) =>
-        toCandle(row.eventTime.getTime(), row.open, row.high, row.low, row.close, row.volume ? Number(row.volume) : 0)
+        toCandle(row.eventTime.getTime(), toNum(row.open), toNum(row.high), toNum(row.low), toNum(row.close), row.volume ? Number(row.volume) : 0)
       )
     }
 

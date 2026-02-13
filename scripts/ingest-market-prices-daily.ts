@@ -268,7 +268,7 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
       }
     }
 
-    const status = Object.keys(symbolsFailed).length === 0 ? 'SUCCEEDED' : 'PARTIAL'
+    const status = Object.keys(symbolsFailed).length === 0 ? 'COMPLETED' : 'FAILED'
     const summary: DailyIngestSummary = {
       lookbackHours: resolved.lookbackHours,
       rowsInserted,

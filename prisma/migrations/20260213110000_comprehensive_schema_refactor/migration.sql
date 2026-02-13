@@ -16,33 +16,14 @@
 -- STEP 1: Create new enums
 -- ============================================================================
 
--- Create BhgPhase enum
-DO $$ BEGIN
-    CREATE TYPE "BhgPhase" AS ENUM ('TOUCHED', 'HOOKED', 'GO_FIRED', 'EXPIRED', 'STOPPED', 'TP1_HIT', 'TP2_HIT');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+-- Create BhgPhase enum (first definition)
+CREATE TYPE "BhgPhase" AS ENUM ('TOUCHED', 'HOOKED', 'GO_FIRED', 'EXPIRED', 'STOPPED', 'TP1_HIT', 'TP2_HIT');
 
--- Create SignalDirection enum
-DO $$ BEGIN
-    CREATE TYPE "SignalDirection" AS ENUM ('BULLISH', 'BEARISH');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+-- SignalDirection already created in 20260211221224_init_market_data
+-- Timeframe already created in 20260211221224_init_market_data
 
--- Create Timeframe enum
-DO $$ BEGIN
-    CREATE TYPE "Timeframe" AS ENUM ('M1', 'M5', 'M15', 'H1', 'H4', 'D1');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
--- Create IngestionStatus enum
-DO $$ BEGIN
-    CREATE TYPE "IngestionStatus" AS ENUM ('RUNNING', 'COMPLETED', 'FAILED');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+-- Create IngestionStatus enum (first definition)
+CREATE TYPE "IngestionStatus" AS ENUM ('RUNNING', 'COMPLETED', 'FAILED');
 
 -- ============================================================================
 -- STEP 2: Convert Float to Decimal for symbols table
@@ -351,13 +332,8 @@ ALTER TABLE "measured_move_signals" ALTER COLUMN "retracementRatio" TYPE DECIMAL
 DROP INDEX IF EXISTS "mm_signals_dedupe_key";
 ALTER TABLE "measured_move_signals" DROP CONSTRAINT IF EXISTS "mm_signals_dedupe_key";
 ALTER TABLE "measured_move_signals" DROP CONSTRAINT IF EXISTS "measured_move_signals_symbolCode_timeframe_timestamp_direction_key";
-DO $$ BEGIN
-    ALTER TABLE "measured_move_signals" ADD CONSTRAINT "mm_signals_dedupe_key"
-        UNIQUE ("symbolCode", "timeframe", "timestamp", "direction");
-EXCEPTION
-    WHEN duplicate_object THEN null;
-    WHEN duplicate_table THEN null;
-END $$;
+ALTER TABLE "measured_move_signals" ADD CONSTRAINT "mm_signals_dedupe_key"
+    UNIQUE ("symbolCode", "timeframe", "timestamp", "direction");
 
 -- ============================================================================
 -- STEP 14: Update BhgSetup - convert to enums and Decimal
@@ -432,16 +408,8 @@ ALTER TABLE "ingestion_runs" ALTER COLUMN "status" SET DEFAULT 'RUNNING'::"Inges
 -- STEP 16: Update MesModelRegistry - add updatedAt and convert Float to Decimal
 -- ============================================================================
 
--- Add updatedAt column if it doesn't exist
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'mes_model_registry' AND column_name = 'updatedAt'
-    ) THEN
-        ALTER TABLE "mes_model_registry" ADD COLUMN "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP;
-    END IF;
-END $$;
+-- Add updatedAt column (not present in original table definition from migration 10)
+ALTER TABLE "mes_model_registry" ADD COLUMN "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
 -- Convert Float to Decimal
 ALTER TABLE "mes_model_registry" ALTER COLUMN "oofBrier" TYPE DECIMAL(10,8) USING "oofBrier"::DECIMAL(10,8);
