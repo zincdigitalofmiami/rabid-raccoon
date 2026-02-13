@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { Decimal } from '@prisma/client/runtime/library'
 import { prisma } from '@/lib/prisma'
 import { computeAlignmentScore } from '@/lib/correlation-filter'
 import { toNum } from '@/lib/decimal'
@@ -32,10 +33,10 @@ const DAILY_LOOKBACK_DAYS = 180
 
 function rowToCandle(row: {
   eventTime: Date
-  open: any
-  high: any
-  low: any
-  close: any
+  open: Decimal | number
+  high: Decimal | number
+  low: Decimal | number
+  close: Decimal | number
   volume: bigint | null
 }): CandleData {
   return {
@@ -48,7 +49,7 @@ function rowToCandle(row: {
   }
 }
 
-function valueToCandle(eventDate: Date, value: any): CandleData | null {
+function valueToCandle(eventDate: Date, value: Decimal | number | null): CandleData | null {
   const numValue = toNum(value)
   if (!Number.isFinite(numValue)) return null
   return {
