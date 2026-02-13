@@ -305,7 +305,7 @@ model EconNews1d {
 
   @@index([eventDate], map: "econ_news_1d_date_idx")
   @@index([source], map: "econ_news_1d_source_idx")
-  @@index([tags], map: "econ_news_1d_tags_idx", type: Gin)
+  @@index([tags], map: "econ_news_1d_tags_idx")
   @@map("econ_news_1d")
 }
 
@@ -330,7 +330,7 @@ model PolicyNews1d {
   @@unique([rowHash], map: "policy_news_1d_row_hash_key")
   @@index([eventDate], map: "policy_news_1d_date_idx")
   @@index([source], map: "policy_news_1d_source_idx")
-  @@index([tags], map: "policy_news_1d_tags_idx", type: Gin)
+  @@index([tags], map: "policy_news_1d_tags_idx")
   @@map("policy_news_1d")
 }
 

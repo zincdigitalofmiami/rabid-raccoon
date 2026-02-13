@@ -248,7 +248,7 @@ CREATE INDEX "policy_news_1d_date_idx" ON "policy_news_1d"("eventDate");
 CREATE INDEX "policy_news_1d_source_idx" ON "policy_news_1d"("source");
 
 -- CreateIndex
-CREATE INDEX "policy_news_1d_tags_idx" ON "policy_news_1d" USING GIN ("tags");
+CREATE INDEX "policy_news_1d_tags_idx" ON "policy_news_1d"("tags");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "macro_reports_1d_code_date_key" ON "macro_reports_1d"("reportCode", "eventDate");
