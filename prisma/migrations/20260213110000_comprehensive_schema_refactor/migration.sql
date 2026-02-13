@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS "econ_observations_1d" (
     "rowHash" VARCHAR(64),
     "metadata" JSONB,
     CONSTRAINT "econ_obs_1d_cat_series_date_key" UNIQUE ("category", "seriesId", "eventDate"),
-    CONSTRAINT "econ_observations_1d_seriesId_fkey" FOREIGN KEY ("seriesId") 
+    CONSTRAINT "econ_observations_1d_seriesId_fkey" FOREIGN KEY ("seriesId")
         REFERENCES "economic_series"("seriesId") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
@@ -139,7 +139,7 @@ CREATE INDEX IF NOT EXISTS "econ_obs_1d_category_idx" ON "econ_observations_1d"(
 
 -- Migrate econ_rates_1d → category: RATES
 INSERT INTO "econ_observations_1d" ("category", "seriesId", "eventDate", "value", "source", "ingestedAt", "knowledgeTime", "rowHash", "metadata")
-SELECT 
+SELECT
     'RATES'::"EconCategory",
     "seriesId",
     "eventDate",
@@ -154,7 +154,7 @@ ON CONFLICT ("category", "seriesId", "eventDate") DO NOTHING;
 
 -- Migrate econ_yields_1d → category: MONEY
 INSERT INTO "econ_observations_1d" ("category", "seriesId", "eventDate", "value", "source", "ingestedAt", "knowledgeTime", "rowHash", "metadata")
-SELECT 
+SELECT
     'MONEY'::"EconCategory",
     "seriesId",
     "eventDate",
@@ -169,7 +169,7 @@ ON CONFLICT ("category", "seriesId", "eventDate") DO NOTHING;
 
 -- Migrate econ_fx_1d → category: FX
 INSERT INTO "econ_observations_1d" ("category", "seriesId", "eventDate", "value", "source", "ingestedAt", "knowledgeTime", "rowHash", "metadata")
-SELECT 
+SELECT
     'FX'::"EconCategory",
     "seriesId",
     "eventDate",
@@ -184,7 +184,7 @@ ON CONFLICT ("category", "seriesId", "eventDate") DO NOTHING;
 
 -- Migrate econ_vol_indices_1d → category: VOLATILITY
 INSERT INTO "econ_observations_1d" ("category", "seriesId", "eventDate", "value", "source", "ingestedAt", "knowledgeTime", "rowHash", "metadata")
-SELECT 
+SELECT
     'VOLATILITY'::"EconCategory",
     "seriesId",
     "eventDate",
@@ -199,7 +199,7 @@ ON CONFLICT ("category", "seriesId", "eventDate") DO NOTHING;
 
 -- Migrate econ_inflation_1d → category: INFLATION
 INSERT INTO "econ_observations_1d" ("category", "seriesId", "eventDate", "value", "source", "ingestedAt", "knowledgeTime", "rowHash", "metadata")
-SELECT 
+SELECT
     'INFLATION'::"EconCategory",
     "seriesId",
     "eventDate",
@@ -214,7 +214,7 @@ ON CONFLICT ("category", "seriesId", "eventDate") DO NOTHING;
 
 -- Migrate econ_labor_1d → category: LABOR
 INSERT INTO "econ_observations_1d" ("category", "seriesId", "eventDate", "value", "source", "ingestedAt", "knowledgeTime", "rowHash", "metadata")
-SELECT 
+SELECT
     'LABOR'::"EconCategory",
     "seriesId",
     "eventDate",
@@ -229,7 +229,7 @@ ON CONFLICT ("category", "seriesId", "eventDate") DO NOTHING;
 
 -- Migrate econ_activity_1d → category: ACTIVITY
 INSERT INTO "econ_observations_1d" ("category", "seriesId", "eventDate", "value", "source", "ingestedAt", "knowledgeTime", "rowHash", "metadata")
-SELECT 
+SELECT
     'ACTIVITY'::"EconCategory",
     "seriesId",
     "eventDate",
@@ -244,7 +244,7 @@ ON CONFLICT ("category", "seriesId", "eventDate") DO NOTHING;
 
 -- Migrate econ_money_1d → category: MONEY
 INSERT INTO "econ_observations_1d" ("category", "seriesId", "eventDate", "value", "source", "ingestedAt", "knowledgeTime", "rowHash", "metadata")
-SELECT 
+SELECT
     'MONEY'::"EconCategory",
     "seriesId",
     "eventDate",
@@ -259,7 +259,7 @@ ON CONFLICT ("category", "seriesId", "eventDate") DO NOTHING;
 
 -- Migrate econ_commodities_1d → category: COMMODITIES
 INSERT INTO "econ_observations_1d" ("category", "seriesId", "eventDate", "value", "source", "ingestedAt", "knowledgeTime", "rowHash", "metadata")
-SELECT 
+SELECT
     'COMMODITIES'::"EconCategory",
     "seriesId",
     "eventDate",
@@ -352,7 +352,7 @@ DROP INDEX IF EXISTS "mm_signals_dedupe_key";
 ALTER TABLE "measured_move_signals" DROP CONSTRAINT IF EXISTS "mm_signals_dedupe_key";
 ALTER TABLE "measured_move_signals" DROP CONSTRAINT IF EXISTS "measured_move_signals_symbolCode_timeframe_timestamp_direction_key";
 DO $$ BEGIN
-    ALTER TABLE "measured_move_signals" ADD CONSTRAINT "mm_signals_dedupe_key" 
+    ALTER TABLE "measured_move_signals" ADD CONSTRAINT "mm_signals_dedupe_key"
         UNIQUE ("symbolCode", "timeframe", "timestamp", "direction");
 EXCEPTION
     WHEN duplicate_object THEN null;
@@ -420,8 +420,8 @@ UPDATE "ingestion_runs" SET "status" = 'FAILED' WHERE "status" IN ('PARTIAL', 'E
 -- Drop existing default before type change
 ALTER TABLE "ingestion_runs" ALTER COLUMN "status" DROP DEFAULT;
 
-ALTER TABLE "ingestion_runs" ALTER COLUMN "status" TYPE "IngestionStatus" 
-    USING CASE 
+ALTER TABLE "ingestion_runs" ALTER COLUMN "status" TYPE "IngestionStatus"
+    USING CASE
         WHEN "status" = 'RUNNING' THEN 'RUNNING'::"IngestionStatus"
         WHEN "status" = 'COMPLETED' THEN 'COMPLETED'::"IngestionStatus"
         ELSE 'FAILED'::"IngestionStatus"
@@ -433,10 +433,10 @@ ALTER TABLE "ingestion_runs" ALTER COLUMN "status" SET DEFAULT 'RUNNING'::"Inges
 -- ============================================================================
 
 -- Add updatedAt column if it doesn't exist
-DO $$ 
+DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
+        SELECT 1 FROM information_schema.columns
         WHERE table_name = 'mes_model_registry' AND column_name = 'updatedAt'
     ) THEN
         ALTER TABLE "mes_model_registry" ADD COLUMN "updatedAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP;
