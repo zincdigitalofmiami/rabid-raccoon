@@ -280,14 +280,16 @@ def main():
         w1 = TARGETS["y1272"]["weight"]
         w2 = TARGETS["y1618"]["weight"]
 
-        oof_df["composite_score"] = (
-            oof_df["oof_y1272"].fillna(0) * w1 +
-            oof_df["oof_y1618"].fillna(0) * w2
+        mask = oof_df["oof_y1272"].notna() & oof_df["oof_y1618"].notna()
+        oof_df["composite_score"] = float("nan")
+        oof_df.loc[mask, "composite_score"] = (
+            oof_df.loc[mask, "oof_y1272"] * w1 +
+            oof_df.loc[mask, "oof_y1618"] * w2
         )
 
         # Grade assignment
         def assign_grade(score):
-            if pd.isna(score) or score == 0:
+            if pd.isna(score):
                 return "--"
             if score >= GRADE_THRESHOLDS["A"]:
                 return "A"

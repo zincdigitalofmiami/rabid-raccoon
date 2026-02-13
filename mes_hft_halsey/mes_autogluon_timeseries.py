@@ -171,7 +171,6 @@ class MesRealModelSummary:
     modeled_horizons: List[str]
     skipped_horizons: Dict[str, str]
     horizon_steps_bars: Dict[str, int]
-    synthetic_data_used: bool
     last_close: float
     first_forecast: float
     delta_points: float
@@ -199,7 +198,6 @@ class MesSymbolAuditSummary:
     source_schema_per_symbol: Dict[str, str]
     first_timestamp_utc: Dict[str, str]
     last_timestamp_utc: Dict[str, str]
-    synthetic_data_used: bool
 
 
 def _normalize_root_symbol(symbol: str) -> str:
@@ -669,7 +667,6 @@ def train_real_mes_model(
         modeled_horizons=modeled_horizons,
         skipped_horizons=skipped_horizons,
         horizon_steps_bars=horizon_steps,
-        synthetic_data_used=False,
         last_close=round(last_close, 4),
         first_forecast=round(first_forecast, 4),
         delta_points=round(delta_points, 4),
@@ -708,7 +705,6 @@ def audit_symbol_universe(
         source_schema_per_symbol=schema_per_symbol,
         first_timestamp_utc=first_ts,
         last_timestamp_utc=last_ts,
-        synthetic_data_used=False,
     )
 
 

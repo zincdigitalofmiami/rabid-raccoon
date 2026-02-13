@@ -28,9 +28,9 @@ Training pipeline configuration for MES time-series forecasting with AutoGluon.
 
 **Total: 22 tables, 60+ symbols, 10,000+ economic series**
 
-## AutoGluon 1.5 Model Zoo (28 Configured Models)
+## AutoGluon 1.5 Model Zoo (26 Configured Models)
 
-### Statistical Models (11):
+### Statistical Models (10):
 - Naive, SeasonalNaive, Average, SeasonalAverage, Zero
 - Theta, AutoETS, AutoARIMA, DynamicOptimizedTheta, ADIDA
 
@@ -64,7 +64,7 @@ Training pipeline configuration for MES time-series forecasting with AutoGluon.
 ### Ensemble (1):
 - WeightedEnsemble (auto-generated)
 
-**Total: 28 individual models + ensemble**
+**Total: 26 individual models + auto-ensemble**
 
 ## Known Limitations
 

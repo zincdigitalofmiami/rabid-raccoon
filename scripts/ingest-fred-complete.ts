@@ -254,26 +254,6 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
   }
 }
 
-// ─── TRUNCATE ──────────────────────────────────────────────────────────────
-
-async function truncateEconTables(): Promise<void> {
-  console.log('[fred-complete] deleting all econ rows...')
-  const results = await Promise.all([
-    prisma.econRates1d.deleteMany(),
-    prisma.econYields1d.deleteMany(),
-    prisma.econFx1d.deleteMany(),
-    prisma.econVolIndices1d.deleteMany(),
-    prisma.econInflation1d.deleteMany(),
-    prisma.econLabor1d.deleteMany(),
-    prisma.econActivity1d.deleteMany(),
-    prisma.econMoney1d.deleteMany(),
-    prisma.econCommodities1d.deleteMany(),
-    prisma.economicSeries.deleteMany(),
-  ])
-  const total = results.reduce((sum, r) => sum + r.count, 0)
-  console.log(`[fred-complete] deleted ${total.toLocaleString()} rows.`)
-}
-
 // ─── MAIN ──────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -283,18 +263,13 @@ async function run() {
 
   const args = process.argv.slice(2)
   const daysBack = Number(args.find((a) => a.startsWith('--days-back='))?.split('=')[1] ?? '730')
-  const noTruncate = args.includes('--no-truncate')
 
   const startDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   const endDate = new Date().toISOString().slice(0, 10)
 
-  console.log(`[fred-complete] ${FRED_SERIES.length} FRED series (zero Yahoo)`)
+  console.log(`[fred-complete] ${FRED_SERIES.length} FRED series`)
   console.log(`[fred-complete] range: ${startDate} → ${endDate} (${daysBack} days)`)
-  console.log(`[fred-complete] truncate: ${!noTruncate}`)
-
-  if (!noTruncate) {
-    await truncateEconTables()
-  }
+  console.log(`[fred-complete] mode: append (skipDuplicates)`)
 
   // ── Fetch all FRED series ──
   const domainCounts: Record<string, { fetched: number; inserted: number }> = {}

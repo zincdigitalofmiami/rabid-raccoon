@@ -58,7 +58,7 @@ function asofValue(points: DailyPoint[], date: Date): number | null {
 function asofSignal(points: SignalPoint[], ts: Date): SignalPoint | null {
   let best: SignalPoint | null = null
   for (const point of points) {
-    if (point.timestamp <= ts) {
+    if (point.timestamp < ts) {
       best = point
     } else {
       break
@@ -72,7 +72,7 @@ function countNewsLast7d(points: NewsPoint[], ts: Date): number {
   const targetKey = toDateKeyUtc(ts)
   return points.filter((p) => {
     const pKey = toDateKeyUtc(p.eventDate)
-    return pKey >= toDateKeyUtc(ts7dAgo) && pKey <= targetKey
+    return pKey >= toDateKeyUtc(ts7dAgo) && pKey < targetKey
   }).reduce((sum, p) => sum + p.count, 0)
 }
 
@@ -81,7 +81,7 @@ function avgPolicyLast7d(points: PolicyPoint[], ts: Date, field: 'sentiment' | '
   const targetKey = toDateKeyUtc(ts)
   const relevant = points.filter((p) => {
     const pKey = toDateKeyUtc(p.eventDate)
-    return pKey >= toDateKeyUtc(ts7dAgo) && pKey <= targetKey && p[field] != null
+    return pKey >= toDateKeyUtc(ts7dAgo) && pKey < targetKey && p[field] != null
   })
   if (relevant.length === 0) return null
   const sum = relevant.reduce((acc, p) => acc + (p[field] ?? 0), 0)
