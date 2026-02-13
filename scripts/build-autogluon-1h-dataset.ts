@@ -222,35 +222,35 @@ async function run(): Promise<void> {
     // Econ news with source-specific counts
     prisma.$queryRaw<{ eventDate: Date; total_count: number; fed_count: number; sec_count: number; ecb_count: number }[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         COUNT(*)::int as total_count,
-        COUNT(*) FILTER (WHERE source ILIKE '%fed%' OR headline ILIKE '%federal reserve%')::int as fed_count,
-        COUNT(*) FILTER (WHERE source ILIKE '%sec%' OR headline ILIKE '%securities and exchange%')::int as sec_count,
-        COUNT(*) FILTER (WHERE source ILIKE '%ecb%' OR headline ILIKE '%european central bank%')::int as ecb_count
-      FROM econ_news_1d
-      GROUP BY event_date
-      ORDER BY event_date ASC
+        COUNT(*) FILTER (WHERE "source" ILIKE '%fed%' OR "headline" ILIKE '%federal reserve%')::int as fed_count,
+        COUNT(*) FILTER (WHERE "source" ILIKE '%sec%' OR "headline" ILIKE '%securities and exchange%')::int as sec_count,
+        COUNT(*) FILTER (WHERE "source" ILIKE '%ecb%' OR "headline" ILIKE '%european central bank%')::int as ecb_count
+      FROM "econ_news_1d"
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
     // Policy news aggregated by day
     prisma.$queryRaw<{ eventDate: Date; count: number; avgSentiment: number | null; avgImpact: number | null }[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         COUNT(*)::int as count,
-        AVG(sentiment_score) as "avgSentiment",
-        AVG(impact_score) as "avgImpact"
-      FROM policy_news_1d
-      GROUP BY event_date
-      ORDER BY event_date ASC
+        AVG("sentimentScore") as "avgSentiment",
+        AVG("impactScore") as "avgImpact"
+      FROM "policy_news_1d"
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
     // Macro reports aggregated by day
     prisma.$queryRaw<{ eventDate: Date; avgSurprise: number | null }[]>`
       SELECT
-        event_date::date as "eventDate",
-        AVG(surprise_pct) as "avgSurprise"
-      FROM macro_reports_1d
-      WHERE surprise_pct IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+        "eventDate"::date as "eventDate",
+        AVG("surprisePct") as "avgSurprise"
+      FROM "macro_reports_1d"
+      WHERE "surprisePct" IS NOT NULL
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
   ])
 

@@ -497,6 +497,14 @@ interface FredSnapshot {
   nq: number | null
 }
 
+async function tableExists(tableName: string): Promise<boolean> {
+  const rows = await prisma.$queryRawUnsafe<{ regclass: string | null }[]>(
+    'SELECT to_regclass($1)::text as regclass',
+    `public.${tableName}`
+  )
+  return rows[0]?.regclass != null
+}
+
 async function loadFredSnapshots(): Promise<Map<string, FredSnapshot>> {
   const map = new Map<string, FredSnapshot>()
 
@@ -596,6 +604,7 @@ async function main() {
 
   const daysBack = parseInt(parseArg('days-back', '730'), 10)
   const outPath = parseArg('out', 'datasets/autogluon/bhg_setups.csv')
+  const shouldPersist = parseArg('persist', 'true').toLowerCase() !== 'false'
 
   console.log(`Building BHG setup dataset (last ${daysBack} days)`)
   console.log(`  Output: ${outPath}`)
@@ -728,46 +737,72 @@ async function main() {
   console.log(`\n  Written to ${outPath} (${goEvents.length} rows x ${header.length} columns)`)
 
   // 6. Also persist to bhg_setups table
-  console.log('  Persisting GO events to bhg_setups table...')
-  let persisted = 0
-  for (const event of goEvents) {
-    const setupId = `${event.direction}-${event.fib_ratio}-${event.go_time}`
-    const sign = event.direction === 'BULLISH' ? 1 : -1
+  if (shouldPersist) {
+    console.log('  Persisting GO events to bhg_setups table...')
 
-    try {
-      await prisma.bhgSetup.upsert({
-        where: { setupId },
-        create: {
-          setupId,
-          direction: event.direction,
-          timeframe: '15m',
-          phase: 'GO_FIRED',
-          fibLevel: event.fib_touch_level,
-          fibRatio: event.fib_ratio,
-          goTime: new Date(event.go_time * 1000),
-          goType: event.go_type,
-          entry: event.close,
-          stopLoss: event.close - event.stop_distance_pts * sign,
-          tp1: event.close + event.dist_entry_to_tp1_ticks * MES_TICK_SIZE * sign,
-          tp2: event.close + event.dist_entry_to_tp2_ticks * MES_TICK_SIZE * sign,
-          tp1Hit: event.tp1_before_sl_4h === 1,
-          tp2Hit: event.tp2_before_sl_8h === 1,
-          slHit: event.tp1_before_sl_4h === 0 && event.tp2_before_sl_8h === 0,
-          vixLevel: event.vix_level,
-        },
-        update: {
-          tp1Hit: event.tp1_before_sl_4h === 1,
-          tp2Hit: event.tp2_before_sl_8h === 1,
-          slHit: event.tp1_before_sl_4h === 0 && event.tp2_before_sl_8h === 0,
-          vixLevel: event.vix_level,
-        },
-      })
-      persisted++
-    } catch {
-      // Silently skip upsert failures
+    const bhgTablePresent = await tableExists('bhg_setups')
+    if (!bhgTablePresent) {
+      throw new Error(
+        'Persistence target table public.bhg_setups is missing. Run Prisma migration before using --persist=true.'
+      )
     }
+
+    let persisted = 0
+    let failed = 0
+    const sampleErrors: string[] = []
+
+    for (const event of goEvents) {
+      const setupId = `${event.direction}-${event.fib_ratio}-${event.go_time}`
+      const sign = event.direction === 'BULLISH' ? 1 : -1
+
+      try {
+        await prisma.bhgSetup.upsert({
+          where: { setupId },
+          create: {
+            setupId,
+            direction: event.direction,
+            timeframe: '15m',
+            phase: 'GO_FIRED',
+            fibLevel: event.fib_touch_level,
+            fibRatio: event.fib_ratio,
+            goTime: new Date(event.go_time * 1000),
+            goType: event.go_type,
+            entry: event.close,
+            stopLoss: event.close - event.stop_distance_pts * sign,
+            tp1: event.close + event.dist_entry_to_tp1_ticks * MES_TICK_SIZE * sign,
+            tp2: event.close + event.dist_entry_to_tp2_ticks * MES_TICK_SIZE * sign,
+            tp1Hit: event.tp1_before_sl_4h === 1,
+            tp2Hit: event.tp2_before_sl_8h === 1,
+            slHit: event.tp1_before_sl_4h === 0 && event.tp2_before_sl_8h === 0,
+            vixLevel: event.vix_level,
+          },
+          update: {
+            tp1Hit: event.tp1_before_sl_4h === 1,
+            tp2Hit: event.tp2_before_sl_8h === 1,
+            slHit: event.tp1_before_sl_4h === 0 && event.tp2_before_sl_8h === 0,
+            vixLevel: event.vix_level,
+          },
+        })
+        persisted++
+      } catch (err) {
+        failed++
+        if (sampleErrors.length < 5) {
+          sampleErrors.push(err instanceof Error ? err.message : String(err))
+        }
+      }
+    }
+
+    console.log(`  Persisted: ${persisted} / ${goEvents.length}`)
+    if (failed > 0) {
+      console.error(`  Persistence failures: ${failed}`)
+      for (const msg of sampleErrors) {
+        console.error(`   - ${msg}`)
+      }
+      throw new Error(`Failed to persist ${failed}/${goEvents.length} GO events to bhg_setups.`)
+    }
+  } else {
+    console.log('  Skipping DB persistence (--persist=false).')
   }
-  console.log(`  Persisted: ${persisted} / ${goEvents.length}`)
 
   await prisma.$disconnect()
   console.log('\nDone.')

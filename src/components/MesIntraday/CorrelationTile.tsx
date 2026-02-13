@@ -3,9 +3,19 @@
 import { useState, useEffect } from 'react'
 import type { CorrelationAlignment } from '@/lib/correlation-filter'
 
+interface CorrelationMeta {
+  cadence: 'intraday' | 'daily' | 'unavailable'
+  lookbackBars: number
+  observations: number
+  availableSymbols: string[]
+  missingSymbols: string[]
+  reason: string | null
+}
+
 interface CorrelationResponse {
   bullish: CorrelationAlignment
   bearish: CorrelationAlignment
+  meta: CorrelationMeta
   timestamp: string
 }
 
@@ -28,14 +38,21 @@ function Badge({ label, value }: { label: string; value: number }) {
 
 export default function CorrelationTile() {
   const [data, setData] = useState<CorrelationResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchCorrelation = async () => {
       try {
         const res = await fetch('/api/mes/correlation')
-        if (res.ok) setData(await res.json())
-      } catch {
-        // Silently fail — tile shows placeholders
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+          throw new Error(err.error || `HTTP ${res.status}`)
+        }
+        const json: CorrelationResponse = await res.json()
+        setData(json)
+        setError(null)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown correlation error')
       }
     }
     fetchCorrelation()
@@ -70,6 +87,8 @@ export default function CorrelationTile() {
           <Badge label="NQ" value={alignment.nq} />
           <Badge label="DXY" value={alignment.dxy} />
         </div>
+      ) : error ? (
+        <div className="text-xs text-red-400/80">{error}</div>
       ) : (
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 border border-white/10 border-t-white/30 rounded-full animate-spin" />
@@ -78,8 +97,12 @@ export default function CorrelationTile() {
       )}
 
       {alignment && (
-        <div className="mt-2 text-[10px] text-white/20 font-mono">
-          composite {alignment.composite.toFixed(3)}
+        <div className="mt-2 space-y-1 text-[10px] text-white/20 font-mono">
+          <div>composite {alignment.composite.toFixed(3)}</div>
+          <div>
+            cadence {data?.meta.cadence ?? 'unknown'} • n={data?.meta.observations ?? 0}
+          </div>
+          {data?.meta.reason && <div>{data.meta.reason}</div>}
         </div>
       )}
     </div>
