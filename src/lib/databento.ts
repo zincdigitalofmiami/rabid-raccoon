@@ -3,6 +3,7 @@ import { CandleData, DatabentoOhlcvRecord } from './types'
 const DATABENTO_BASE = 'https://hist.databento.com/v0'
 const FIXED_PRICE_SCALE = 1_000_000_000
 const DATABENTO_REQUEST_TIMEOUT_MS = 90_000
+const DATABENTO_MAX_ATTEMPTS = 4
 
 export async function fetchOhlcv(params: {
   dataset: string
@@ -11,6 +12,8 @@ export async function fetchOhlcv(params: {
   start: string
   end: string
   schema?: string
+  timeoutMs?: number
+  maxAttempts?: number
 }): Promise<DatabentoOhlcvRecord[]> {
   const apiKey = process.env.DATABENTO_API_KEY
   if (!apiKey) {
@@ -23,8 +26,16 @@ export async function fetchOhlcv(params: {
   let lastErrorText = ''
   let lastStatus = 500
   let lastStatusText = 'Unknown'
+  const requestTimeoutMs =
+    Number.isFinite(params.timeoutMs) && (params.timeoutMs as number) > 0
+      ? Math.max(5_000, Math.trunc(params.timeoutMs as number))
+      : DATABENTO_REQUEST_TIMEOUT_MS
+  const maxAttempts =
+    Number.isFinite(params.maxAttempts) && (params.maxAttempts as number) > 0
+      ? Math.max(1, Math.trunc(params.maxAttempts as number))
+      : DATABENTO_MAX_ATTEMPTS
 
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const body = new URLSearchParams({
       dataset: params.dataset,
       symbols: params.symbol,
@@ -36,7 +47,7 @@ export async function fetchOhlcv(params: {
     })
 
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), DATABENTO_REQUEST_TIMEOUT_MS)
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
     let response: Response
     try {
       response = await fetch(`${DATABENTO_BASE}/timeseries.get_range`, {
@@ -54,7 +65,7 @@ export async function fetchOhlcv(params: {
       if (message.toLowerCase().includes('aborted')) {
         lastStatus = 408
         lastStatusText = 'Request Timeout'
-        lastErrorText = `Databento request timed out after ${DATABENTO_REQUEST_TIMEOUT_MS}ms`
+        lastErrorText = `Databento request timed out after ${requestTimeoutMs}ms`
         continue
       }
       throw error

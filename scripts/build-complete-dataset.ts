@@ -151,129 +151,129 @@ async function run(): Promise<void> {
     ] = await Promise.all([
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         AVG(value) as "avgValue",
         MIN(value) as "minValue",
         MAX(value) as "maxValue",
         COUNT(*)::int as count
       FROM econ_rates_1d
       WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         AVG(value) as "avgValue",
         MIN(value) as "minValue",
         MAX(value) as "maxValue",
         COUNT(*)::int as count
       FROM econ_yields_1d
       WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         AVG(value) as "avgValue",
         MIN(value) as "minValue",
         MAX(value) as "maxValue",
         COUNT(*)::int as count
       FROM econ_fx_1d
       WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<Array<{ eventDate: Date; value: number | null }>>`
-      SELECT event_date::date as "eventDate", value
+      SELECT "eventDate"::date as "eventDate", value
       FROM econ_vol_indices_1d
-      WHERE series_id = 'VIXCLS'
-      ORDER BY event_date ASC
+      WHERE "seriesId" = 'VIXCLS'
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         AVG(value) as "avgValue",
         MIN(value) as "minValue",
         MAX(value) as "maxValue",
         COUNT(*)::int as count
       FROM econ_inflation_1d
       WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         AVG(value) as "avgValue",
         MIN(value) as "minValue",
         MAX(value) as "maxValue",
         COUNT(*)::int as count
       FROM econ_labor_1d
       WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         AVG(value) as "avgValue",
         MIN(value) as "minValue",
         MAX(value) as "maxValue",
         COUNT(*)::int as count
       FROM econ_activity_1d
       WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         AVG(value) as "avgValue",
         MIN(value) as "minValue",
         MAX(value) as "maxValue",
         COUNT(*)::int as count
       FROM econ_money_1d
       WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         AVG(value) as "avgValue",
         MIN(value) as "minValue",
         MAX(value) as "maxValue",
         COUNT(*)::int as count
       FROM econ_commodities_1d
       WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
-        AVG(value) as "avgValue",
-        MIN(value) as "minValue",
-        MAX(value) as "maxValue",
+        "eventDate"::date as "eventDate",
+        AVG(close) as "avgValue",
+        MIN(close) as "minValue",
+        MAX(close) as "maxValue",
         COUNT(*)::int as count
       FROM mkt_indexes_1d
-      WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      WHERE close IS NOT NULL
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<SeriesAggregate[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         AVG(value) as "avgValue",
         MIN(value) as "minValue",
         MAX(value) as "maxValue",
         COUNT(*)::int as count
       FROM mkt_spot_1d
       WHERE value IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
     ])
 
@@ -297,34 +297,34 @@ async function run(): Promise<void> {
             { eventDate: Date; total_count: number; fed_count: number; sec_count: number; ecb_count: number }[]
         >`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         COUNT(*)::int as total_count,
         COUNT(*) FILTER (WHERE source ILIKE '%fed%' OR headline ILIKE '%federal reserve%')::int as fed_count,
         COUNT(*) FILTER (WHERE source ILIKE '%sec%' OR headline ILIKE '%securities and exchange%')::int as sec_count,
         COUNT(*) FILTER (WHERE source ILIKE '%ecb%' OR headline ILIKE '%european central bank%')::int as ecb_count
       FROM econ_news_1d
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<{ eventDate: Date; count: number; avgSentiment: number | null; avgImpact: number | null }[]>`
       SELECT
-        event_date::date as "eventDate",
+        "eventDate"::date as "eventDate",
         COUNT(*)::int as count,
-        AVG(sentiment_score) as "avgSentiment",
-        AVG(impact_score) as "avgImpact"
+        AVG("sentimentScore") as "avgSentiment",
+        AVG("impactScore") as "avgImpact"
       FROM policy_news_1d
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
         prisma.$queryRaw<{ eventDate: Date; avgSurprise: number | null; count: number }[]>`
       SELECT
-        event_date::date as "eventDate",
-        AVG(surprise_pct) as "avgSurprise",
+        "eventDate"::date as "eventDate",
+        AVG("surprisePct") as "avgSurprise",
         COUNT(*)::int as count
       FROM macro_reports_1d
-      WHERE surprise_pct IS NOT NULL
-      GROUP BY event_date
-      ORDER BY event_date ASC
+      WHERE "surprisePct" IS NOT NULL
+      GROUP BY "eventDate"
+      ORDER BY "eventDate" ASC
     `,
     ])
 

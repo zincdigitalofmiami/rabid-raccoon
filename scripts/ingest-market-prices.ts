@@ -56,10 +56,11 @@ const INGEST_CONFIG = {
   DATABENTO_ONLY: true,
   EXPECTED_H1_CANDLES_PER_SYMBOL: Math.floor(730 * 23),
   EXPECTED_D1_CANDLES_PER_SYMBOL: Math.floor((730 * 5) / 7),
-  MES_RAW_SCHEMA: 'ohlcv-1m',
+  MES_RAW_SCHEMA: 'ohlcv-1h',
   NON_MES_RAW_SCHEMA: 'ohlcv-1d',
   CHUNK_DAYS: 14,
   INSERT_BATCH_SIZE: 1000,
+  NON_MES_CONCURRENCY: 6,
 }
 
 interface PriceIngestSummary {
@@ -77,26 +78,20 @@ interface PriceIngestSummary {
   postLoadVerified: boolean
 }
 
+interface SymbolIngestResult {
+  symbolCode: string
+  processed: number
+  inserted: number
+  coveragePct: number | null
+  failedMessage: string | null
+}
+
 function toJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue
 }
 
 function hardFail(message: string): never {
   throw new Error(`FULL_2Y_REQUIRED_VIOLATION: ${message}`)
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timeoutId: NodeJS.Timeout | null = null
-  try {
-    return (await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(`TIMEOUT: ${label} exceeded ${ms}ms`)), ms)
-      }),
-    ])) as T
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId)
-  }
 }
 
 function assertNoForbiddenOverrides(): boolean {
@@ -183,7 +178,7 @@ async function upsertDataSourceRegistry(): Promise<void> {
       sourceId: 'market-prices-databento',
       sourceName: 'Databento Futures OHLCV',
       description:
-        'Databento GLBX futures ingestion with MES (1m->1h) and non-MES (native 1d) in dedicated daily training table.',
+        'Databento GLBX futures ingestion with MES (native 1h) and non-MES (native 1d) in dedicated training tables.',
       targetTable: 'mes_prices_1h,futures_ex_mes_1d',
       apiProvider: 'databento',
       updateFrequency: 'mixed',
@@ -194,7 +189,7 @@ async function upsertDataSourceRegistry(): Promise<void> {
     update: {
       sourceName: 'Databento Futures OHLCV',
       description:
-        'Databento GLBX futures ingestion with MES (1m->1h) and non-MES (native 1d) in dedicated daily training table.',
+        'Databento GLBX futures ingestion with MES (native 1h) and non-MES (native 1d) in dedicated training tables.',
       targetTable: 'mes_prices_1h,futures_ex_mes_1d',
       apiProvider: 'databento',
       updateFrequency: 'mixed',
@@ -376,6 +371,183 @@ async function verifyLoadedCoverage(
   }
 }
 
+async function runWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return []
+  const results: R[] = new Array(items.length)
+  let cursor = 0
+
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, async () => {
+    while (true) {
+      const index = cursor
+      cursor += 1
+      if (index >= items.length) return
+      results[index] = await worker(items[index], index)
+    }
+  })
+
+  await Promise.all(workers)
+  return results
+}
+
+async function ingestSingleSymbol(params: {
+  symbol: (typeof INGESTION_SYMBOLS)[number]
+  start: Date
+  end: Date
+  chunks: Array<{ start: Date; end: Date }>
+  minCoverageHourly: number
+  minCoverageDaily: number
+  dryRun: boolean
+}): Promise<SymbolIngestResult> {
+  const { symbol, start, end, chunks, minCoverageHourly, minCoverageDaily, dryRun } = params
+
+  try {
+    const symbolMinCoverage = symbol.code === 'MES' ? minCoverageHourly : minCoverageDaily
+    const symbolTimeframe = symbol.code === 'MES' ? INGEST_CONFIG.MES_TIMEFRAME : INGEST_CONFIG.NON_MES_TIMEFRAME
+    const sourceSchema = symbol.code === 'MES' ? INGEST_CONFIG.MES_RAW_SCHEMA : INGEST_CONFIG.NON_MES_RAW_SCHEMA
+    const rawMinCoverage =
+      symbol.code === 'MES'
+        ? sourceSchema === 'ohlcv-1h'
+          ? minCoverageHourly
+          : Math.floor(INGEST_CONFIG.EXPECTED_H1_CANDLES_PER_SYMBOL * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100))
+        : Math.floor(INGEST_CONFIG.EXPECTED_D1_CANDLES_PER_SYMBOL * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100))
+
+    const existingCount = await existingCountForSymbol(symbol.code)
+    if (existingCount >= symbolMinCoverage) {
+      const coveragePct = Number(((existingCount / symbolMinCoverage) * 100).toFixed(2))
+      console.log(
+        `[market-prices] SUCCESS: ${symbol.code} already compliant in DB (${existingCount} ${symbolTimeframe} rows >= ${symbolMinCoverage}).`
+      )
+      return {
+        symbolCode: symbol.code,
+        processed: 0,
+        inserted: 0,
+        coveragePct,
+        failedMessage: null,
+      }
+    }
+
+    const symbolChunks =
+      symbol.code === 'MES'
+        ? sourceSchema === 'ohlcv-1h'
+          ? [{ start, end }]
+          : chunks
+        : [{ start, end }]
+    console.log(`\n[market-prices] ${symbol.code} ingest start (${symbolChunks.length} chunks)`)
+    const rawCandlesAll: ReturnType<typeof toCandles> = []
+
+    for (let chunkIndex = 0; chunkIndex < symbolChunks.length; chunkIndex++) {
+      const chunk = symbolChunks[chunkIndex]
+      if (chunkIndex === 0 || (chunkIndex + 1) % 5 === 0 || chunkIndex === symbolChunks.length - 1) {
+        console.log(`[market-prices] ${symbol.code} chunk ${chunkIndex + 1}/${symbolChunks.length}`)
+      }
+
+      const records = await fetchOhlcv({
+        dataset: symbol.dataset,
+        symbol: symbol.databentoSymbol,
+        stypeIn: 'continuous',
+        start: formatUtcIso(chunk.start),
+        end: formatUtcIso(chunk.end),
+        schema: sourceSchema,
+        timeoutMs: symbol.code === 'MES' ? 120_000 : 45_000,
+        maxAttempts: symbol.code === 'MES' ? 3 : 2,
+      })
+
+      if (records.length === 0) continue
+      const chunkCandles = toCandles(records)
+
+      if (hasInvalidRealData(chunkCandles)) {
+        return {
+          symbolCode: symbol.code,
+          processed: 0,
+          inserted: 0,
+          coveragePct: null,
+          failedMessage: `FAKE_DATA_DETECTED: invalid/zero OHLCV in raw candles for ${symbol.code}; zero tolerance.`,
+        }
+      }
+
+      rawCandlesAll.push(...chunkCandles)
+    }
+
+    if (rawCandlesAll.length === 0) {
+      return {
+        symbolCode: symbol.code,
+        processed: 0,
+        inserted: 0,
+        coveragePct: null,
+        failedMessage: `AUDIT_FAIL: ${symbol.code} returned zero raw rows for ${sourceSchema}.`,
+      }
+    }
+
+    if (rawCandlesAll.length < rawMinCoverage) {
+      return {
+        symbolCode: symbol.code,
+        processed: 0,
+        inserted: 0,
+        coveragePct: null,
+        failedMessage: `AUDIT_FAIL: ${symbol.code} raw count=${rawCandlesAll.length} below enforced ${sourceSchema} threshold ${rawMinCoverage}.`,
+      }
+    }
+
+    const uniqueCandles = sanitizeCandles(rawCandlesAll)
+    const aggregated =
+      sourceSchema === 'ohlcv-1h' || sourceSchema === 'ohlcv-1d'
+        ? uniqueCandles
+        : aggregateCandles(uniqueCandles, symbol.code === 'MES' ? 60 : 1440)
+    if (aggregated.some((candle) => candle.close == null || !Number.isFinite(candle.close))) {
+      return {
+        symbolCode: symbol.code,
+        processed: 0,
+        inserted: 0,
+        coveragePct: null,
+        failedMessage: `GAP_DETECTED_IN_RESAMPLE: ${symbol.code} has null/invalid close after aggregation.`,
+      }
+    }
+
+    const coveragePct = Number(((aggregated.length / symbolMinCoverage) * 100).toFixed(2))
+    if (aggregated.length < symbolMinCoverage) {
+      return {
+        symbolCode: symbol.code,
+        processed: 0,
+        inserted: 0,
+        coveragePct,
+        failedMessage: `AUDIT_FAIL: ${symbol.code} has ${aggregated.length} ${symbolTimeframe} rows (< ${symbolMinCoverage}, ${INGEST_CONFIG.MIN_COVERAGE_PCT}% coverage). Excluding.`,
+      }
+    }
+
+    const result = await insertCandlesForSymbol(
+      symbol.code,
+      symbol.dataset,
+      sourceSchema,
+      aggregated,
+      dryRun
+    )
+
+    console.log(
+      `[market-prices] SUCCESS: ${symbol.code} full 2y ${symbolTimeframe} loaded – ${aggregated.length} rows, no fake data.`
+    )
+    return {
+      symbolCode: symbol.code,
+      processed: result.processed,
+      inserted: result.inserted,
+      coveragePct,
+      failedMessage: null,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      symbolCode: symbol.code,
+      processed: 0,
+      inserted: 0,
+      coveragePct: null,
+      failedMessage: message.slice(0, 400),
+    }
+  }
+}
+
 export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
   loadDotEnvFiles()
   assertHardConfigIntegrity()
@@ -447,118 +619,53 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
     await upsertDataSourceRegistry()
     await upsertSymbolCatalog(INGEST_CONFIG.SYMBOL_UNIVERSE as unknown as string[])
 
-    for (const symbol of selected) {
-      try {
-        const symbolMinCoverage = symbol.code === 'MES' ? minCoverageHourly : minCoverageDaily
-        const symbolTimeframe = symbol.code === 'MES' ? INGEST_CONFIG.MES_TIMEFRAME : INGEST_CONFIG.NON_MES_TIMEFRAME
-        const sourceSchema = symbol.code === 'MES' ? INGEST_CONFIG.MES_RAW_SCHEMA : INGEST_CONFIG.NON_MES_RAW_SCHEMA
-        const rawMinCoverage =
-          symbol.code === 'MES'
-            ? Math.floor(INGEST_CONFIG.EXPECTED_H1_CANDLES_PER_SYMBOL * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100))
-            : Math.floor(INGEST_CONFIG.EXPECTED_D1_CANDLES_PER_SYMBOL * (INGEST_CONFIG.MIN_COVERAGE_PCT / 100))
-
-        const existingCount = await existingCountForSymbol(symbol.code)
-        if (existingCount >= symbolMinCoverage) {
-          symbolsCoveragePct[symbol.code] = Number(((existingCount / symbolMinCoverage) * 100).toFixed(2))
-          symbolsProcessed.push(symbol.code)
-          console.log(
-            `[market-prices] SUCCESS: ${symbol.code} already compliant in DB (${existingCount} ${symbolTimeframe} rows >= ${symbolMinCoverage}).`
-          )
-          continue
-        }
-
-        const symbolChunks = symbol.code === 'MES' ? chunks : [{ start, end }]
-        console.log(`\n[market-prices] ${symbol.code} ingest start (${symbolChunks.length} chunks)`)
-        const rawCandlesAll: ReturnType<typeof toCandles> = []
-
-        for (let chunkIndex = 0; chunkIndex < symbolChunks.length; chunkIndex++) {
-          const chunk = symbolChunks[chunkIndex]
-          if (
-            chunkIndex === 0 ||
-            (chunkIndex + 1) % 5 === 0 ||
-            chunkIndex === symbolChunks.length - 1
-          ) {
-            console.log(`[market-prices] ${symbol.code} chunk ${chunkIndex + 1}/${symbolChunks.length}`)
-          }
-
-          const records = await withTimeout(
-            fetchOhlcv({
-              dataset: symbol.dataset,
-              symbol: symbol.databentoSymbol,
-              stypeIn: 'continuous',
-              start: formatUtcIso(chunk.start),
-              end: formatUtcIso(chunk.end),
-              schema: sourceSchema,
-            }),
-            symbol.code === 'MES' ? 120_000 : 60_000,
-            `Databento ${symbol.code} ${sourceSchema}`
-          )
-
-          if (records.length === 0) continue
-          const chunkCandles = toCandles(records)
-
-          if (hasInvalidRealData(chunkCandles)) {
-            symbolsFailed[symbol.code] =
-              `FAKE_DATA_DETECTED: invalid/zero OHLCV in raw candles for ${symbol.code}; zero tolerance.`
-            console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
-            rawCandlesAll.length = 0
-            break
-          }
-
-          rawCandlesAll.push(...chunkCandles)
-        }
-
-        if (symbolsFailed[symbol.code]) continue
-        if (rawCandlesAll.length === 0) {
-          symbolsFailed[symbol.code] = `AUDIT_FAIL: ${symbol.code} returned zero raw 1m rows.`
-          console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
-          continue
-        }
-
-        if (rawCandlesAll.length < rawMinCoverage) {
-          symbolsFailed[symbol.code] =
-            `AUDIT_FAIL: ${symbol.code} raw count=${rawCandlesAll.length} below enforced ${sourceSchema} threshold ${rawMinCoverage}.`
-          console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
-          continue
-        }
-
-        const uniqueCandles = sanitizeCandles(rawCandlesAll)
-        const aggregated = aggregateCandles(uniqueCandles, symbol.code === 'MES' ? 60 : 1440)
-        if (aggregated.some((candle) => candle.close == null || !Number.isFinite(candle.close))) {
-          symbolsFailed[symbol.code] =
-            `GAP_DETECTED_IN_RESAMPLE: ${symbol.code} has null/invalid close after aggregation.`
-          console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
-          continue
-        }
-
-        const coveragePct = (aggregated.length / symbolMinCoverage) * 100
-        symbolsCoveragePct[symbol.code] = Number(coveragePct.toFixed(2))
-        if (aggregated.length < symbolMinCoverage) {
-          symbolsFailed[symbol.code] =
-            `AUDIT_FAIL: ${symbol.code} has ${aggregated.length} ${symbolTimeframe} rows (< ${symbolMinCoverage}, ${INGEST_CONFIG.MIN_COVERAGE_PCT}% coverage). Excluding.`
-          console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
-          continue
-        }
-
-        const result = await insertCandlesForSymbol(
-          symbol.code,
-          symbol.dataset,
-          sourceSchema,
-          aggregated,
-          dryRun
-        )
-        rowsProcessed += result.processed
-        rowsInserted += result.inserted
-
-        symbolsProcessed.push(symbol.code)
-        console.log(
-          `[market-prices] SUCCESS: ${symbol.code} full 2y ${symbolTimeframe} loaded – ${aggregated.length} rows, no fake data.`
-        )
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        symbolsFailed[symbol.code] = message.slice(0, 400)
-        console.error(`[market-prices] ${symbol.code} failed: ${symbolsFailed[symbol.code]}`)
+    const applyResult = (result: SymbolIngestResult): void => {
+      if (result.coveragePct != null) {
+        symbolsCoveragePct[result.symbolCode] = result.coveragePct
       }
+      rowsProcessed += result.processed
+      rowsInserted += result.inserted
+
+      if (result.failedMessage) {
+        symbolsFailed[result.symbolCode] = result.failedMessage
+        console.error(`[market-prices] ${result.symbolCode} failed: ${result.failedMessage}`)
+      } else {
+        symbolsProcessed.push(result.symbolCode)
+      }
+    }
+
+    const mesSymbol = selected.find((symbol) => symbol.code === 'MES')
+    if (mesSymbol) {
+      const mesResult = await ingestSingleSymbol({
+        symbol: mesSymbol,
+        start,
+        end,
+        chunks,
+        minCoverageHourly,
+        minCoverageDaily,
+        dryRun,
+      })
+      applyResult(mesResult)
+    }
+
+    const nonMesSymbols = selected.filter((symbol) => symbol.code !== 'MES')
+    const nonMesResults = await runWithConcurrency(
+      nonMesSymbols,
+      INGEST_CONFIG.NON_MES_CONCURRENCY,
+      async (symbol) =>
+        ingestSingleSymbol({
+          symbol,
+          start,
+          end,
+          chunks,
+          minCoverageHourly,
+          minCoverageDaily,
+          dryRun,
+        })
+    )
+
+    for (const result of nonMesResults) {
+      applyResult(result)
     }
 
     const passingSymbols = symbolsProcessed
