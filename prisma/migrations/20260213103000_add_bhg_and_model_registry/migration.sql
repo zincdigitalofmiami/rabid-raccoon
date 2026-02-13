@@ -1,5 +1,5 @@
 -- Create missing BHG setup persistence table.
-CREATE TABLE "bhg_setups" (
+CREATE TABLE IF NOT EXISTS "bhg_setups" (
     "id" BIGSERIAL NOT NULL,
     "setupId" VARCHAR(128) NOT NULL,
     "direction" VARCHAR(10) NOT NULL,
@@ -36,13 +36,13 @@ CREATE TABLE "bhg_setups" (
     CONSTRAINT "bhg_setups_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "bhg_setups_setupId_key" ON "bhg_setups"("setupId");
-CREATE INDEX "bhg_setups_direction_phase_idx" ON "bhg_setups"("direction", "phase");
-CREATE INDEX "bhg_setups_go_time_idx" ON "bhg_setups"("goTime");
-CREATE INDEX "bhg_setups_tf_go_time_idx" ON "bhg_setups"("timeframe", "goTime");
+CREATE UNIQUE INDEX IF NOT EXISTS "bhg_setups_setupId_key" ON "bhg_setups"("setupId");
+CREATE INDEX IF NOT EXISTS "bhg_setups_direction_phase_idx" ON "bhg_setups"("direction", "phase");
+CREATE INDEX IF NOT EXISTS "bhg_setups_go_time_idx" ON "bhg_setups"("goTime");
+CREATE INDEX IF NOT EXISTS "bhg_setups_tf_go_time_idx" ON "bhg_setups"("timeframe", "goTime");
 
 -- Create missing model registry table.
-CREATE TABLE "mes_model_registry" (
+CREATE TABLE IF NOT EXISTS "mes_model_registry" (
     "id" BIGSERIAL NOT NULL,
     "modelName" VARCHAR(128) NOT NULL,
     "version" VARCHAR(64) NOT NULL,
@@ -59,4 +59,4 @@ CREATE TABLE "mes_model_registry" (
     CONSTRAINT "mes_model_registry_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "mes_model_registry_name_version_key" ON "mes_model_registry"("modelName", "version");
+CREATE UNIQUE INDEX IF NOT EXISTS "mes_model_registry_name_version_key" ON "mes_model_registry"("modelName", "version");

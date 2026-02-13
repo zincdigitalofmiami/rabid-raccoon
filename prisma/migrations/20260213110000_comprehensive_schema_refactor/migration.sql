@@ -23,6 +23,20 @@ EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
+-- Create SignalDirection enum
+DO $$ BEGIN
+    CREATE TYPE "SignalDirection" AS ENUM ('BULLISH', 'BEARISH');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- Create Timeframe enum
+DO $$ BEGIN
+    CREATE TYPE "Timeframe" AS ENUM ('M1', 'M5', 'M15', 'H1', 'H4', 'D1');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
 -- Create IngestionStatus enum
 DO $$ BEGIN
     CREATE TYPE "IngestionStatus" AS ENUM ('RUNNING', 'COMPLETED', 'FAILED');
@@ -334,15 +348,46 @@ ALTER TABLE "measured_move_signals" ALTER COLUMN "target1236" TYPE DECIMAL(18,6)
 ALTER TABLE "measured_move_signals" ALTER COLUMN "retracementRatio" TYPE DECIMAL(8,6) USING "retracementRatio"::DECIMAL(8,6);
 
 -- Drop old unique constraint and create new simplified one
+DROP INDEX IF EXISTS "mm_signals_dedupe_key";
 ALTER TABLE "measured_move_signals" DROP CONSTRAINT IF EXISTS "mm_signals_dedupe_key";
-ALTER TABLE "measured_move_signals" ADD CONSTRAINT "mm_signals_dedupe_key" 
-    UNIQUE ("symbolCode", "timeframe", "timestamp", "direction");
+ALTER TABLE "measured_move_signals" DROP CONSTRAINT IF EXISTS "measured_move_signals_symbolCode_timeframe_timestamp_direction_key";
+DO $$ BEGIN
+    ALTER TABLE "measured_move_signals" ADD CONSTRAINT "mm_signals_dedupe_key" 
+        UNIQUE ("symbolCode", "timeframe", "timestamp", "direction");
+EXCEPTION
+    WHEN duplicate_object THEN null;
+    WHEN duplicate_table THEN null;
+END $$;
 
 -- ============================================================================
 -- STEP 14: Update BhgSetup - convert to enums and Decimal
 -- ============================================================================
 
--- Convert string columns to enums
+-- Convert string columns to enums (map existing lowercase/shorthand values)
+UPDATE "bhg_setups" SET "direction" = CASE
+    WHEN UPPER("direction") = 'BULLISH' THEN 'BULLISH'
+    WHEN UPPER("direction") = 'BEARISH' THEN 'BEARISH'
+    ELSE "direction" END;
+
+UPDATE "bhg_setups" SET "timeframe" = CASE
+    WHEN "timeframe" IN ('1m', '1M')   THEN 'M1'
+    WHEN "timeframe" IN ('5m', '5M')   THEN 'M5'
+    WHEN "timeframe" IN ('15m', '15M') THEN 'M15'
+    WHEN "timeframe" IN ('1h', '1H')   THEN 'H1'
+    WHEN "timeframe" IN ('4h', '4H')   THEN 'H4'
+    WHEN "timeframe" IN ('1d', '1D')   THEN 'D1'
+    ELSE "timeframe" END;
+
+UPDATE "bhg_setups" SET "phase" = CASE
+    WHEN UPPER("phase") = 'TOUCHED'  THEN 'TOUCHED'
+    WHEN UPPER("phase") = 'HOOKED'   THEN 'HOOKED'
+    WHEN UPPER("phase") = 'GO_FIRED' THEN 'GO_FIRED'
+    WHEN UPPER("phase") = 'EXPIRED'  THEN 'EXPIRED'
+    WHEN UPPER("phase") = 'STOPPED'  THEN 'STOPPED'
+    WHEN UPPER("phase") = 'TP1_HIT'  THEN 'TP1_HIT'
+    WHEN UPPER("phase") = 'TP2_HIT'  THEN 'TP2_HIT'
+    ELSE "phase" END;
+
 ALTER TABLE "bhg_setups" ALTER COLUMN "direction" TYPE "SignalDirection" USING "direction"::"SignalDirection";
 ALTER TABLE "bhg_setups" ALTER COLUMN "timeframe" TYPE "Timeframe" USING "timeframe"::"Timeframe";
 ALTER TABLE "bhg_setups" ALTER COLUMN "phase" TYPE "BhgPhase" USING "phase"::"BhgPhase";
@@ -371,6 +416,9 @@ ALTER TABLE "bhg_setups" ALTER COLUMN "vixLevel" TYPE DECIMAL(10,4) USING "vixLe
 -- Convert string to enum (handle existing values)
 UPDATE "ingestion_runs" SET "status" = 'COMPLETED' WHERE "status" IN ('SUCCEEDED', 'SUCCESS');
 UPDATE "ingestion_runs" SET "status" = 'FAILED' WHERE "status" IN ('PARTIAL', 'ERROR');
+
+-- Drop existing default before type change
+ALTER TABLE "ingestion_runs" ALTER COLUMN "status" DROP DEFAULT;
 
 ALTER TABLE "ingestion_runs" ALTER COLUMN "status" TYPE "IngestionStatus" 
     USING CASE 
