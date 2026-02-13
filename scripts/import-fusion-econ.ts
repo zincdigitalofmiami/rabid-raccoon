@@ -296,18 +296,18 @@ async function importRatesDomain(source: Client): Promise<{ processed: number; i
 
     processed += rows.length
     if (rateRows.length) {
-      inserted += await createManyBatched('econRates1d', rateRows, async (batch) =>
-        (await prisma.econRates1d.createMany({ data: batch, skipDuplicates: true })).count
+      inserted += await createManyBatched('econObservation1d', rateRows.map(r => ({ ...r, category: 'RATES' })), async (batch) =>
+        (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
     if (yieldRows.length) {
-      inserted += await createManyBatched('econYields1d', yieldRows, async (batch) =>
-        (await prisma.econYields1d.createMany({ data: batch, skipDuplicates: true })).count
+      inserted += await createManyBatched('econObservation1d', yieldRows.map(r => ({ ...r, category: 'MONEY' })), async (batch) =>
+        (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
     if (fxRows.length) {
-      inserted += await createManyBatched('econFx1d', fxRows, async (batch) =>
-        (await prisma.econFx1d.createMany({ data: batch, skipDuplicates: true })).count
+      inserted += await createManyBatched('econObservation1d', fxRows.map(r => ({ ...r, category: 'FX' })), async (batch) =>
+        (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
   }
@@ -318,13 +318,7 @@ async function importRatesDomain(source: Client): Promise<{ processed: number; i
 async function importSimpleSeriesDomain(
   source: Client,
   fullTable: string,
-  target:
-    | 'econVolIndices1d'
-    | 'econInflation1d'
-    | 'econLabor1d'
-    | 'econActivity1d'
-    | 'econMoney1d'
-    | 'econCommodities1d'
+  category: 'VOLATILITY' | 'INFLATION' | 'LABOR' | 'ACTIVITY' | 'MONEY' | 'COMMODITIES'
 ): Promise<{ processed: number; inserted: number }> {
   let processed = 0
   let inserted = 0
@@ -350,6 +344,7 @@ async function importSimpleSeriesDomain(
         const rowHash = safeString(row.row_hash) || hashSeries(seriesId, eventDate, value, sourceName)
 
         return {
+          category,
           seriesId,
           eventDate,
           value,
@@ -362,38 +357,9 @@ async function importSimpleSeriesDomain(
     processed += rows.length
     if (data.length === 0) continue
 
-    switch (target) {
-      case 'econVolIndices1d':
-        inserted += await createManyBatched('econVolIndices1d', data, async (batch) =>
-          (await prisma.econVolIndices1d.createMany({ data: batch, skipDuplicates: true })).count
-        )
-        break
-      case 'econInflation1d':
-        inserted += await createManyBatched('econInflation1d', data, async (batch) =>
-          (await prisma.econInflation1d.createMany({ data: batch, skipDuplicates: true })).count
-        )
-        break
-      case 'econLabor1d':
-        inserted += await createManyBatched('econLabor1d', data, async (batch) =>
-          (await prisma.econLabor1d.createMany({ data: batch, skipDuplicates: true })).count
-        )
-        break
-      case 'econActivity1d':
-        inserted += await createManyBatched('econActivity1d', data, async (batch) =>
-          (await prisma.econActivity1d.createMany({ data: batch, skipDuplicates: true })).count
-        )
-        break
-      case 'econMoney1d':
-        inserted += await createManyBatched('econMoney1d', data, async (batch) =>
-          (await prisma.econMoney1d.createMany({ data: batch, skipDuplicates: true })).count
-        )
-        break
-      case 'econCommodities1d':
-        inserted += await createManyBatched('econCommodities1d', data, async (batch) =>
-          (await prisma.econCommodities1d.createMany({ data: batch, skipDuplicates: true })).count
-        )
-        break
-    }
+    inserted += await createManyBatched('econObservation1d', data, async (batch) =>
+      (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
+    )
   }
 
   return { processed, inserted }
@@ -417,7 +383,7 @@ async function importFxSpot(source: Client): Promise<{ processed: number; insert
     const data: Prisma.MktSpot1dCreateManyInput[] = rows
       .filter((row) => Number.isFinite(Number(row.rate)))
       .map((row) => ({
-        symbol: String(row.pair),
+        symbolCode: String(row.pair),
         eventDate: normalizeDate(row.event_date),
         value: Number(row.rate),
         source: DataSource.INTERNAL,
@@ -453,7 +419,7 @@ async function importEtfIndexes(source: Client): Promise<{ processed: number; in
     lastId = Number(rows[rows.length - 1].id)
 
     const data: Prisma.MktIndexes1dCreateManyInput[] = rows.map((row) => ({
-      symbol: String(row.symbol),
+      symbolCode: String(row.symbol),
       eventDate: normalizeDate(row.event_date),
       open: Number.isFinite(Number(row.open)) ? Number(row.open) : null,
       high: Number.isFinite(Number(row.high)) ? Number(row.high) : null,
@@ -785,18 +751,18 @@ export async function runImportFusionEcon(): Promise<void> {
 
     await runSection('rates', 'econ.rates_1d', () => importRatesDomain(source))
     await runSection('vol_indices', 'econ.vol_indices_1d', () =>
-      importSimpleSeriesDomain(source, 'econ.vol_indices_1d', 'econVolIndices1d')
+      importSimpleSeriesDomain(source, 'econ.vol_indices_1d', 'VOLATILITY')
     )
     await runSection('inflation', 'econ.inflation_1d', () =>
-      importSimpleSeriesDomain(source, 'econ.inflation_1d', 'econInflation1d')
+      importSimpleSeriesDomain(source, 'econ.inflation_1d', 'INFLATION')
     )
-    await runSection('labor', 'econ.labor_1d', () => importSimpleSeriesDomain(source, 'econ.labor_1d', 'econLabor1d'))
+    await runSection('labor', 'econ.labor_1d', () => importSimpleSeriesDomain(source, 'econ.labor_1d', 'LABOR'))
     await runSection('activity', 'econ.activity_1d', () =>
-      importSimpleSeriesDomain(source, 'econ.activity_1d', 'econActivity1d')
+      importSimpleSeriesDomain(source, 'econ.activity_1d', 'ACTIVITY')
     )
-    await runSection('money', 'econ.money_1d', () => importSimpleSeriesDomain(source, 'econ.money_1d', 'econMoney1d'))
+    await runSection('money', 'econ.money_1d', () => importSimpleSeriesDomain(source, 'econ.money_1d', 'MONEY'))
     await runSection('commodities', 'econ.commodities_1d', () =>
-      importSimpleSeriesDomain(source, 'econ.commodities_1d', 'econCommodities1d')
+      importSimpleSeriesDomain(source, 'econ.commodities_1d', 'COMMODITIES')
     )
     await runSection('fx_spot', 'mkt.fx_1d', () => importFxSpot(source))
     await runSection('indexes', 'mkt.etf_1d', () => importEtfIndexes(source))
