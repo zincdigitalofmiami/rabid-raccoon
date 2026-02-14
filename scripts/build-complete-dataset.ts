@@ -231,7 +231,7 @@ async function run(): Promise<void> {
 
   const fredLookups: Map<string, { lookup: FredLookup; sortedKeys: string[] }> = new Map()
 
-  // Query all FRED data in one batch per table, then split by seriesId
+  // Query FRED data from split domain tables, grouped by table
   const tableSeriesMap = new Map<string, FredSeriesConfig[]>()
   for (const f of FRED_FEATURES) {
     const list = tableSeriesMap.get(f.table) || []
@@ -242,7 +242,7 @@ async function run(): Promise<void> {
   for (const [table, configs] of tableSeriesMap) {
     const seriesIds = configs.map((c) => c.seriesId)
     const rows = await prisma.$queryRawUnsafe<{ seriesId: string; eventDate: Date; value: number }[]>(
-      `SELECT "seriesId", "eventDate"::date as "eventDate", value FROM ${table} WHERE "seriesId" = ANY($1) AND value IS NOT NULL ORDER BY "eventDate" ASC`,
+      `SELECT "seriesId", "eventDate"::date as "eventDate", value FROM "${table}" WHERE "seriesId" = ANY($1) AND value IS NOT NULL ORDER BY "eventDate" ASC`,
       seriesIds
     )
 

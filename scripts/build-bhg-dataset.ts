@@ -513,19 +513,19 @@ async function loadFredSnapshots(): Promise<Map<string, FredSnapshot>> {
   try {
     // VIX
     const vixRows = await prisma.$queryRawUnsafe<{ eventDate: Date; value: number }[]>(
-      `SELECT "eventDate", value FROM econ_vol_indices_1d WHERE "seriesId" = 'VIXCLS' ORDER BY "eventDate"`
+      `SELECT "eventDate", value FROM "econ_vol_indices_1d" WHERE "seriesId" = 'VIXCLS' AND value IS NOT NULL ORDER BY "eventDate"`
     )
     const vixByDate = new Map(vixRows.map(r => [new Date(r.eventDate).toISOString().slice(0, 10), r.value]))
 
     // DXY
     const dxyRows = await prisma.$queryRawUnsafe<{ eventDate: Date; value: number }[]>(
-      `SELECT "eventDate", value FROM econ_fx_1d WHERE "seriesId" = 'DTWEXBGS' ORDER BY "eventDate"`
+      `SELECT "eventDate", value FROM "econ_fx_1d" WHERE "seriesId" = 'DTWEXBGS' AND value IS NOT NULL ORDER BY "eventDate"`
     )
     const dxyByDate = new Map(dxyRows.map(r => [new Date(r.eventDate).toISOString().slice(0, 10), r.value]))
 
     // NASDAQ
     const nqRows = await prisma.$queryRawUnsafe<{ eventDate: Date; value: number }[]>(
-      `SELECT "eventDate", value FROM econ_vol_indices_1d WHERE "seriesId" = 'NASDAQCOM' ORDER BY "eventDate"`
+      `SELECT "eventDate", value FROM "econ_vol_indices_1d" WHERE "seriesId" = 'NASDAQCOM' AND value IS NOT NULL ORDER BY "eventDate"`
     )
     const nqByDate = new Map(nqRows.map(r => [new Date(r.eventDate).toISOString().slice(0, 10), r.value]))
 

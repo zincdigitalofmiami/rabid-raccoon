@@ -198,7 +198,7 @@ async function run(): Promise<void> {
       select: { eventDate: true, value: true },
     }),
     prisma.econObservation1d.findMany({
-      where: { category: 'MONEY', seriesId: 'DGS10' },
+      where: { category: 'YIELDS', seriesId: 'DGS10' },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),

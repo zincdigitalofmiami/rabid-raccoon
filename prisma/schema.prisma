@@ -138,26 +138,6 @@ model MesPrice1h {
   @@map("mes_prices_1h")
 }
 
-model MesPrice1m {
-  id            BigInt     @id @default(autoincrement())
-  eventTime     DateTime   @db.Timestamptz(6)
-  open          Decimal    @db.Decimal(18, 6)
-  high          Decimal    @db.Decimal(18, 6)
-  low           Decimal    @db.Decimal(18, 6)
-  close         Decimal    @db.Decimal(18, 6)
-  volume        BigInt?
-  source        DataSource @default(DATABENTO)
-  sourceDataset String?    @db.VarChar(64)
-  sourceSchema  String?    @db.VarChar(32)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
-  metadata      Json?
-
-  @@unique([eventTime], map: "mes_prices_1m_event_time_key")
-  @@map("mes_prices_1m")
-}
-
 model MesPrice15m {
   id            BigInt     @id @default(autoincrement())
   eventTime     DateTime   @db.Timestamptz(6)
@@ -243,6 +223,152 @@ model EconObservation1d {
   @@index([eventDate], map: "econ_obs_1d_date_idx")
   @@index([category], map: "econ_obs_1d_category_idx")
   @@map("econ_observations_1d")
+}
+
+// ─── Split Econ Domain Tables (mirrors ZINC Fusion V15 pattern) ─────────
+
+model EconRates1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Decimal?   @db.Decimal(24, 8)
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_rates_1d_series_date_key")
+  @@index([eventDate], map: "econ_rates_1d_date_idx")
+  @@map("econ_rates_1d")
+}
+
+model EconYields1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Decimal?   @db.Decimal(24, 8)
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_yields_1d_series_date_key")
+  @@index([eventDate], map: "econ_yields_1d_date_idx")
+  @@map("econ_yields_1d")
+}
+
+model EconFx1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Decimal?   @db.Decimal(24, 8)
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_fx_1d_series_date_key")
+  @@index([eventDate], map: "econ_fx_1d_date_idx")
+  @@map("econ_fx_1d")
+}
+
+model EconVolIndices1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Decimal?   @db.Decimal(24, 8)
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_vol_indices_1d_series_date_key")
+  @@index([eventDate], map: "econ_vol_indices_1d_date_idx")
+  @@map("econ_vol_indices_1d")
+}
+
+model EconInflation1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Decimal?   @db.Decimal(24, 8)
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_inflation_1d_series_date_key")
+  @@index([eventDate], map: "econ_inflation_1d_date_idx")
+  @@map("econ_inflation_1d")
+}
+
+model EconLabor1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Decimal?   @db.Decimal(24, 8)
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_labor_1d_series_date_key")
+  @@index([eventDate], map: "econ_labor_1d_date_idx")
+  @@map("econ_labor_1d")
+}
+
+model EconActivity1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Decimal?   @db.Decimal(24, 8)
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_activity_1d_series_date_key")
+  @@index([eventDate], map: "econ_activity_1d_date_idx")
+  @@map("econ_activity_1d")
+}
+
+model EconMoney1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Decimal?   @db.Decimal(24, 8)
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_money_1d_series_date_key")
+  @@index([eventDate], map: "econ_money_1d_date_idx")
+  @@map("econ_money_1d")
+}
+
+model EconCommodities1d {
+  id            BigInt     @id @default(autoincrement())
+  seriesId      String     @db.VarChar(50)
+  eventDate     DateTime   @db.Date
+  value         Decimal?   @db.Decimal(24, 8)
+  source        DataSource @default(FRED)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([seriesId, eventDate], map: "econ_commodities_1d_series_date_key")
+  @@index([eventDate], map: "econ_commodities_1d_date_idx")
+  @@map("econ_commodities_1d")
 }
 
 model MktIndexes1d {
