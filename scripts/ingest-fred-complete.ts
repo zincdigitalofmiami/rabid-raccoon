@@ -281,11 +281,22 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
 
 async function truncateEconTables(): Promise<void> {
   console.log('[fred-complete] deleting all econ rows...')
-  const results = await Promise.all([
-    prisma.econObservation1d.deleteMany(),
-    prisma.economicSeries.deleteMany(),
+  // Delete observations first (FK child), then series (FK parent)
+  // Also wipe split domain tables to stay in sync
+  const obsResult = await prisma.econObservation1d.deleteMany()
+  const splitResults = await Promise.all([
+    prisma.econRates1d.deleteMany(),
+    prisma.econYields1d.deleteMany(),
+    prisma.econFx1d.deleteMany(),
+    prisma.econVolIndices1d.deleteMany(),
+    prisma.econInflation1d.deleteMany(),
+    prisma.econLabor1d.deleteMany(),
+    prisma.econActivity1d.deleteMany(),
+    prisma.econMoney1d.deleteMany(),
+    prisma.econCommodities1d.deleteMany(),
   ])
-  const total = results.reduce((sum, r) => sum + r.count, 0)
+  const seriesResult = await prisma.economicSeries.deleteMany()
+  const total = obsResult.count + splitResults.reduce((sum, r) => sum + r.count, 0) + seriesResult.count
   console.log(`[fred-complete] deleted ${total.toLocaleString()} rows.`)
 }
 
@@ -336,9 +347,7 @@ async function run() {
           }
         })
 
-      const inserted = await insertDomain(spec.domain, rows)
-
-      // Register in economic_series
+      // Upsert economic_series FIRST (FK parent for econ_observations_1d)
       await prisma.economicSeries.upsert({
         where: { seriesId: spec.seriesId },
         create: {
@@ -359,6 +368,8 @@ async function run() {
           isActive: true,
         },
       })
+
+      const inserted = await insertDomain(spec.domain, rows)
 
       totalFetched += rows.length
       totalInserted += inserted
