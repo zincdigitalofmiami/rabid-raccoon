@@ -3,6 +3,7 @@ import { runIngestMacroIndicators } from '../../scripts/ingest-macro-indicators'
 import { runIngestMarketPricesDaily } from '../../scripts/ingest-market-prices-daily'
 import { runIngestAltNewsFeeds } from '../../scripts/ingest-alt-news-feeds'
 import { runIngestMeasuredMoveSignals } from '../../scripts/ingest-mm-signals'
+export { backfillMesAllTimeframes } from './backfill-mes'
 
 export const dailyIngestionJob = inngest.createFunction(
   { id: 'daily-ingestion-job', retries: 1 },

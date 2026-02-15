@@ -45,7 +45,7 @@ function dedupeAndSort(candles: ReturnType<typeof toCandles>): ReturnType<typeof
 }
 
 async function upsertMes15m(candles: ReturnType<typeof aggregateCandles>): Promise<{ processed: number; inserted: number }> {
-  const rows: Prisma.MesPrice15mCreateManyInput[] = candles
+  const rows: Prisma.MktFuturesMes15mCreateManyInput[] = candles
     .filter((c) => c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0)
     .map((candle) => {
       const eventTime = asUtcDateFromUnixSeconds(candle.time)
@@ -66,7 +66,7 @@ async function upsertMes15m(candles: ReturnType<typeof aggregateCandles>): Promi
   let inserted = 0
   for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
     const batch = rows.slice(i, i + INSERT_BATCH_SIZE)
-    const result = await prisma.mesPrice15m.createMany({
+    const result = await prisma.mktFuturesMes15m.createMany({
       data: batch,
       skipDuplicates: true,
     })

@@ -96,14 +96,14 @@ function pickSymbols(requested: string[]): typeof INGESTION_SYMBOLS {
 
 async function latestSymbolTime(symbolCode: string): Promise<Date | null> {
   if (symbolCode === 'MES') {
-    const row = await prisma.mesPrice1h.findFirst({
+    const row = await prisma.mktFuturesMes1h.findFirst({
       orderBy: { eventTime: 'desc' },
       select: { eventTime: true },
     })
     return row?.eventTime ?? null
   }
 
-  const row = await prisma.futuresExMes1d.findFirst({
+  const row = await prisma.mktFutures1d.findFirst({
     where: { symbolCode },
     orderBy: { eventDate: 'desc' },
     select: { eventDate: true },
@@ -129,7 +129,7 @@ async function insertCandlesByPolicy(
   if (dryRun || processed === 0) return { processed, inserted }
 
   if (symbolCode === 'MES') {
-    const rows: Prisma.MesPrice1hCreateManyInput[] = candles.map((candle) => {
+    const rows: Prisma.MktFuturesMes1hCreateManyInput[] = candles.map((candle) => {
       const eventTime = asUtcDateFromUnixSeconds(candle.time)
       return {
         eventTime,
@@ -147,13 +147,13 @@ async function insertCandlesByPolicy(
 
     for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
       const batch = rows.slice(i, i + INSERT_BATCH_SIZE)
-      const result = await prisma.mesPrice1h.createMany({ data: batch, skipDuplicates: true })
+      const result = await prisma.mktFuturesMes1h.createMany({ data: batch, skipDuplicates: true })
       inserted += result.count
     }
     return { processed, inserted }
   }
 
-  const rows: Prisma.FuturesExMes1dCreateManyInput[] = candles.map((candle) => {
+  const rows: Prisma.MktFutures1dCreateManyInput[] = candles.map((candle) => {
     const eventTime = asUtcDateFromUnixSeconds(candle.time)
     const eventDate = startOfUtcDay(eventTime)
     return {
@@ -173,7 +173,7 @@ async function insertCandlesByPolicy(
 
   for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
     const batch = rows.slice(i, i + INSERT_BATCH_SIZE)
-    const result = await prisma.futuresExMes1d.createMany({ data: batch, skipDuplicates: true })
+    const result = await prisma.mktFutures1d.createMany({ data: batch, skipDuplicates: true })
     inserted += result.count
   }
 
@@ -197,13 +197,15 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
 
   const run = await prisma.ingestionRun.create({
     data: {
-      job: 'market-prices-mes-1h-nonmes-1d-daily',
+      job: 'market-prices-futures-daily',
       status: 'RUNNING',
       details: toJson({
         lookbackHours: resolved.lookbackHours,
         symbolsRequested: symbols.map((s) => s.code),
-        sourceSchemaMes: MES_RAW_SCHEMA,
-        sourceSchemaNonMes: NON_MES_RAW_SCHEMA,
+        targetMesTable: 'mkt_futures_mes_1h',
+        targetNonMesTable: 'mkt_futures_1d',
+        sourceSchemaMes1h: MES_RAW_SCHEMA,
+        sourceSchemaNonMes1d: NON_MES_RAW_SCHEMA,
       }),
     },
   })

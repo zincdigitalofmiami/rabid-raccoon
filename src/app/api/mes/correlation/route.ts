@@ -88,11 +88,11 @@ async function loadIntradayMap(): Promise<Map<string, CandleData[]>> {
   const map = new Map<string, CandleData[]>()
 
   const [mesRows, nqRows] = await Promise.all([
-    prisma.mesPrice1h.findMany({
+    prisma.mktFuturesMes1h.findMany({
       orderBy: { eventTime: 'desc' },
       take: INTRADAY_LOOKBACK,
     }),
-    prisma.futuresExMes1h.findMany({
+    prisma.mktFutures1h.findMany({
       where: { symbolCode: 'NQ' },
       orderBy: { eventTime: 'desc' },
       take: INTRADAY_LOOKBACK,
@@ -126,7 +126,7 @@ async function loadDailyMap(): Promise<Map<string, CandleData[]>> {
   const cutoffDay = new Date(Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth(), cutoff.getUTCDate()))
 
   const [mesRows1h, nqRows, vixRows, dxyRows] = await Promise.all([
-    prisma.mesPrice1h.findMany({
+    prisma.mktFuturesMes1h.findMany({
       where: { eventTime: { gte: cutoff } },
       orderBy: { eventTime: 'asc' },
       select: {
@@ -138,18 +138,18 @@ async function loadDailyMap(): Promise<Map<string, CandleData[]>> {
         volume: true,
       },
     }),
-    prisma.futuresExMes1d.findMany({
+    prisma.mktFutures1d.findMany({
       where: { symbolCode: 'NQ', eventDate: { gte: cutoffDay } },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, open: true, high: true, low: true, close: true, volume: true },
     }),
-    prisma.econObservation1d.findMany({
-      where: { category: 'VOLATILITY', seriesId: 'VIXCLS', eventDate: { gte: cutoffDay } },
+    prisma.econVolIndices1d.findMany({
+      where: { seriesId: 'VIXCLS', eventDate: { gte: cutoffDay } },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
-    prisma.econObservation1d.findMany({
-      where: { category: 'FX', seriesId: 'DTWEXBGS', eventDate: { gte: cutoffDay } },
+    prisma.econFx1d.findMany({
+      where: { seriesId: 'DTWEXBGS', eventDate: { gte: cutoffDay } },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),

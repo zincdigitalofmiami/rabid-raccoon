@@ -615,7 +615,7 @@ async function main() {
   const cutoff = new Date(Date.now() - daysBack * 86400000)
   console.log(`  Fetching MES 15m candles since ${cutoff.toISOString().slice(0, 10)}...`)
 
-  const rows = await prisma.mesPrice15m.findMany({
+  const rows = await prisma.mktFuturesMes15m.findMany({
     where: { eventTime: { gte: cutoff } },
     orderBy: { eventTime: 'asc' },
   })

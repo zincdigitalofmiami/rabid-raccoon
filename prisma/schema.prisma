@@ -91,8 +91,8 @@ model Symbol {
   isActive        Boolean     @default(true)
   createdAt       DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime    @updatedAt @db.Timestamptz(6)
-  futuresExMes1h  FuturesExMes1h[]
-  futuresExMes1d  FuturesExMes1d[]
+  mktFutures1h    MktFutures1h[]
+  mktFutures1d    MktFutures1d[]
   measuredMoves   MeasuredMoveSignal[]
   mappings        SymbolMapping[]
 
@@ -118,7 +118,7 @@ model SymbolMapping {
   @@map("symbol_mappings")
 }
 
-model MesPrice1h {
+model MktFuturesMes1h {
   id            BigInt     @id @default(autoincrement())
   eventTime     DateTime   @db.Timestamptz(6)
   open          Decimal    @db.Decimal(18, 6)
@@ -134,11 +134,11 @@ model MesPrice1h {
   rowHash       String?    @db.VarChar(64)
   metadata      Json?
 
-  @@unique([eventTime], map: "mes_prices_1h_event_time_key")
-  @@map("mes_prices_1h")
+  @@unique([eventTime], map: "mkt_futures_mes_1h_event_time_key")
+  @@map("mkt_futures_mes_1h")
 }
 
-model MesPrice15m {
+model MktFuturesMes15m {
   id            BigInt     @id @default(autoincrement())
   eventTime     DateTime   @db.Timestamptz(6)
   open          Decimal    @db.Decimal(18, 6)
@@ -154,11 +154,32 @@ model MesPrice15m {
   rowHash       String?    @db.VarChar(64)
   metadata      Json?
 
-  @@unique([eventTime], map: "mes_prices_15m_event_time_key")
-  @@map("mes_prices_15m")
+  @@unique([eventTime], map: "mkt_futures_mes_15m_event_time_key")
+  @@map("mkt_futures_mes_15m")
 }
 
-model FuturesExMes1h {
+model MktFuturesMes1d {
+  id            BigInt     @id @default(autoincrement())
+  eventDate     DateTime   @db.Date
+  open          Decimal    @db.Decimal(18, 6)
+  high          Decimal    @db.Decimal(18, 6)
+  low           Decimal    @db.Decimal(18, 6)
+  close         Decimal    @db.Decimal(18, 6)
+  volume        BigInt?
+  source        DataSource @default(DATABENTO)
+  sourceDataset String?    @db.VarChar(64)
+  sourceSchema  String?    @db.VarChar(32)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([eventDate], map: "mkt_futures_mes_1d_event_date_key")
+  @@index([eventDate], map: "mkt_futures_mes_1d_date_idx")
+  @@map("mkt_futures_mes_1d")
+}
+
+model MktFutures1h {
   id            BigInt     @id @default(autoincrement())
   symbolCode    String     @db.VarChar(16)
   eventTime     DateTime   @db.Timestamptz(6)
@@ -177,12 +198,12 @@ model FuturesExMes1h {
   metadata      Json?
   symbol        Symbol     @relation(fields: [symbolCode], references: [code], onDelete: Cascade)
 
-  @@unique([symbolCode, eventTime], map: "futures_ex_mes_1h_symbol_time_key")
-  @@index([eventTime], map: "futures_ex_mes_1h_time_idx")
-  @@map("futures_ex_mes_1h")
+  @@unique([symbolCode, eventTime], map: "mkt_futures_1h_symbol_time_key")
+  @@index([eventTime], map: "mkt_futures_1h_time_idx")
+  @@map("mkt_futures_1h")
 }
 
-model FuturesExMes1d {
+model MktFutures1d {
   id            BigInt     @id @default(autoincrement())
   symbolCode    String     @db.VarChar(16)
   eventDate     DateTime   @db.Date
@@ -201,28 +222,9 @@ model FuturesExMes1d {
   metadata      Json?
   symbol        Symbol     @relation(fields: [symbolCode], references: [code], onDelete: Cascade)
 
-  @@unique([symbolCode, eventDate], map: "futures_ex_mes_1d_symbol_date_key")
-  @@index([eventDate], map: "futures_ex_mes_1d_date_idx")
-  @@map("futures_ex_mes_1d")
-}
-
-model EconObservation1d {
-  id            BigInt         @id @default(autoincrement())
-  category      EconCategory
-  seriesId      String         @db.VarChar(50)
-  eventDate     DateTime       @db.Date
-  value         Decimal?       @db.Decimal(24, 8)
-  source        DataSource     @default(FRED)
-  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
-  rowHash       String?        @db.VarChar(64)
-  metadata      Json?
-  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Cascade)
-
-  @@unique([category, seriesId, eventDate], map: "econ_obs_1d_cat_series_date_key")
-  @@index([eventDate], map: "econ_obs_1d_date_idx")
-  @@index([category], map: "econ_obs_1d_category_idx")
-  @@map("econ_observations_1d")
+  @@unique([symbolCode, eventDate], map: "mkt_futures_1d_symbol_date_key")
+  @@index([eventDate], map: "mkt_futures_1d_date_idx")
+  @@map("mkt_futures_1d")
 }
 
 // ─── Split Econ Domain Tables (mirrors ZINC Fusion V15 pattern) ─────────
@@ -392,23 +394,6 @@ model MktIndexes1d {
   @@map("mkt_indexes_1d")
 }
 
-model MktSpot1d {
-  id            BigInt     @id @default(autoincrement())
-  symbolCode    String     @db.VarChar(32)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(18, 6)
-  source        DataSource @default(INTERNAL)
-  sourceSymbol  String?    @db.VarChar(50)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
-  metadata      Json?
-
-  @@unique([symbolCode, eventDate], map: "mkt_spot_1d_symbol_date_key")
-  @@index([eventDate], map: "mkt_spot_1d_date_idx")
-  @@map("mkt_spot_1d")
-}
-
 model EconNews1d {
   id             BigInt    @id @default(autoincrement())
   articleId      String?   @db.VarChar(128)
@@ -488,6 +473,53 @@ model MacroReport1d {
   @@map("macro_reports_1d")
 }
 
+model EconCalendar {
+  id            BigInt    @id @default(autoincrement())
+  eventDate     DateTime  @db.Date
+  eventTime     String?   @db.VarChar(16)
+  eventName     String    @db.VarChar(120)
+  eventType     String    @db.VarChar(64)
+  fredReleaseId Int?
+  fredSeriesId  String?   @db.VarChar(50)
+  frequency     String?   @db.VarChar(32)
+  forecast      Decimal?  @db.Decimal(24, 8)
+  previous      Decimal?  @db.Decimal(24, 8)
+  actual        Decimal?  @db.Decimal(24, 8)
+  surprise      Decimal?  @db.Decimal(24, 8)
+  impactRating  String?   @db.VarChar(16)
+  source        String?   @db.VarChar(64)
+  ingestedAt    DateTime  @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime  @default(now()) @db.Timestamptz(6)
+  metadata      Json?
+
+  @@unique([eventDate, eventName], map: "econ_calendar_date_name_key")
+  @@index([eventDate], map: "econ_calendar_date_idx")
+  @@index([eventType], map: "econ_calendar_type_idx")
+  @@index([fredSeriesId], map: "econ_calendar_series_idx")
+  @@map("econ_calendar")
+}
+
+model NewsSignal {
+  id             BigInt    @id @default(autoincrement())
+  title          String
+  link           String    @unique(map: "news_signals_link_key")
+  pubDate        DateTime  @db.Timestamptz(6)
+  source         String?   @db.VarChar(100)
+  query          String    @db.VarChar(200)
+  layer          String    @db.VarChar(64)
+  category       String    @db.VarChar(64)
+  sentimentScore Decimal?  @db.Decimal(8, 4)
+  relevanceScore Decimal?  @db.Decimal(8, 4)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  metadata       Json?
+
+  @@index([pubDate], map: "news_signals_pub_date_idx")
+  @@index([layer], map: "news_signals_layer_idx")
+  @@index([category], map: "news_signals_category_idx")
+  @@index([layer, pubDate], map: "news_signals_layer_pub_date_idx")
+  @@map("news_signals")
+}
+
 model EconomicSeries {
   seriesId     String              @id @db.VarChar(50)
   displayName  String?             @db.VarChar(200)
@@ -500,7 +532,6 @@ model EconomicSeries {
   metadata     Json?
   createdAt    DateTime            @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime            @updatedAt @db.Timestamptz(6)
-  observations EconObservation1d[]
 
   @@index([category, isActive], map: "economic_series_category_active_idx")
   @@map("economic_series")

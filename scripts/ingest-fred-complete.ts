@@ -14,7 +14,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { Prisma, DataSource, EconCategory } from '@prisma/client'
+import { Prisma, DataSource } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
 import { fetchFredSeries } from '../src/lib/fred'
 import { loadDotEnvFiles } from './ingest-utils'
@@ -222,31 +222,6 @@ interface ValueRow {
 async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<number> {
   if (rows.length === 0) return 0
 
-  const categoryMap: Record<EconDomain, EconCategory> = {
-    RATES: EconCategory.RATES,
-    YIELDS: EconCategory.YIELDS,
-    FX: EconCategory.FX,
-    VOL_INDICES: EconCategory.VOLATILITY,
-    INFLATION: EconCategory.INFLATION,
-    LABOR: EconCategory.LABOR,
-    ACTIVITY: EconCategory.ACTIVITY,
-    MONEY: EconCategory.MONEY,
-    COMMODITIES: EconCategory.COMMODITIES,
-  }
-
-  const consolidatedData = rows.map((r) => ({
-    category: categoryMap[domain],
-    seriesId: r.seriesId,
-    eventDate: r.eventDate,
-    value: r.value,
-    source: r.source,
-    rowHash: r.rowHash,
-    metadata: toJson({ provider: r.source }),
-  }))
-
-  const inserted = (await prisma.econObservation1d.createMany({ data: consolidatedData, skipDuplicates: true })).count
-
-  // Dual-write to domain-specific split table for training pipelines
   const splitData = rows.map((r) => ({
     seriesId: r.seriesId,
     eventDate: r.eventDate,
@@ -269,21 +244,20 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
   }
 
   try {
-    await splitInsertMap[domain]()
+    const inserted = await splitInsertMap[domain]()
+    return inserted.count
   } catch (err) {
     console.warn(`[fred-complete] split table write failed for ${domain}: ${err instanceof Error ? err.message : err}`)
   }
 
-  return inserted
+  return 0
 }
 
 // ─── TRUNCATE ──────────────────────────────────────────────────────────────
 
 async function truncateEconTables(): Promise<void> {
   console.log('[fred-complete] deleting all econ rows...')
-  // Delete observations first (FK child), then series (FK parent)
-  // Also wipe split domain tables to stay in sync
-  const obsResult = await prisma.econObservation1d.deleteMany()
+  // Delete split observations first (FK child), then series (FK parent)
   const splitResults = await Promise.all([
     prisma.econRates1d.deleteMany(),
     prisma.econYields1d.deleteMany(),
@@ -296,7 +270,7 @@ async function truncateEconTables(): Promise<void> {
     prisma.econCommodities1d.deleteMany(),
   ])
   const seriesResult = await prisma.economicSeries.deleteMany()
-  const total = obsResult.count + splitResults.reduce((sum, r) => sum + r.count, 0) + seriesResult.count
+  const total = splitResults.reduce((sum, r) => sum + r.count, 0) + seriesResult.count
   console.log(`[fred-complete] deleted ${total.toLocaleString()} rows.`)
 }
 
@@ -347,7 +321,7 @@ async function run() {
           }
         })
 
-      // Upsert economic_series FIRST (FK parent for econ_observations_1d)
+      // Upsert economic_series FIRST (FK parent for domain econ tables)
       await prisma.economicSeries.upsert({
         where: { seriesId: spec.seriesId },
         create: {

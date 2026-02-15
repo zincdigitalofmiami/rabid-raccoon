@@ -1,3 +1,13 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/news/scrape",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/news/scrape-reports",
+      "schedule": "0 11 * * 1-5"
+    }
+  ]
 }

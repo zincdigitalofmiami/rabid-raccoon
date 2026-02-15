@@ -4,19 +4,19 @@ import { loadDotEnvFiles } from './ingest-utils'
 async function run() {
     loadDotEnvFiles()
     const [futuresSymbols, totalCount] = await Promise.all([
-        prisma.futuresExMes1h.findMany({
+        prisma.mktFutures1h.findMany({
             select: { symbolCode: true },
             distinct: ['symbolCode'],
             orderBy: { symbolCode: 'asc' },
         }),
-        prisma.futuresExMes1h.groupBy({
+        prisma.mktFutures1h.groupBy({
             by: ['symbolCode'],
             _count: { symbolCode: true },
         }),
     ])
 
     console.log('=== ALL AVAILABLE SYMBOLS IN DATABASE ===')
-    console.log(`Total symbols in futures_ex_mes_1h: ${futuresSymbols.length}`)
+    console.log(`Total symbols in mkt_futures_1h: ${futuresSymbols.length}`)
     console.log('\nSymbols:')
     console.log(futuresSymbols.map((s) => s.symbolCode).join(', '))
 

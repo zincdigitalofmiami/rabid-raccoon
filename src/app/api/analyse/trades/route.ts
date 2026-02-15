@@ -81,11 +81,11 @@ function detectMovesForCandles(
 export async function POST(): Promise<Response> {
   try {
     const [rows15m, rows1h] = await Promise.all([
-      prisma.mesPrice15m.findMany({
+      prisma.mktFuturesMes15m.findMany({
         orderBy: { eventTime: 'desc' },
         take: 96,
       }),
-      prisma.mesPrice1h.findMany({
+      prisma.mktFuturesMes1h.findMany({
         orderBy: { eventTime: 'desc' },
         take: 96,
       }),

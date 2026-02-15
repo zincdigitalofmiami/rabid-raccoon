@@ -58,7 +58,7 @@ export async function GET(request: Request): Promise<Response> {
       }
 
       try {
-        const initial = await prisma.mesPrice15m.findMany({
+        const initial = await prisma.mktFuturesMes15m.findMany({
           orderBy: { eventTime: 'desc' },
           take: backfillCount,
         })
@@ -88,7 +88,7 @@ export async function GET(request: Request): Promise<Response> {
       const interval = setInterval(async () => {
         if (closed || !lastEventTime) return
         try {
-          const updates = await prisma.mesPrice15m.findMany({
+          const updates = await prisma.mktFuturesMes15m.findMany({
             where: {
               eventTime: { gt: lastEventTime },
             },

@@ -184,7 +184,7 @@ async function run(): Promise<void> {
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
 
   const [mesRows, vixRows, y10Rows, dffRows, dxyRows, mmRows, newsRows, policyRows, macroRows] = await Promise.all([
-    prisma.mesPrice1h.findMany({
+    prisma.mktFuturesMes1h.findMany({
       where: { eventTime: { gte: start } },
       orderBy: { eventTime: 'asc' },
       select: {
@@ -192,23 +192,23 @@ async function run(): Promise<void> {
         close: true,
       },
     }),
-    prisma.econObservation1d.findMany({
-      where: { category: 'VOLATILITY', seriesId: 'VIXCLS' },
+    prisma.econVolIndices1d.findMany({
+      where: { seriesId: 'VIXCLS' },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
-    prisma.econObservation1d.findMany({
-      where: { category: 'YIELDS', seriesId: 'DGS10' },
+    prisma.econYields1d.findMany({
+      where: { seriesId: 'DGS10' },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
-    prisma.econObservation1d.findMany({
-      where: { category: 'RATES', seriesId: 'DFF' },
+    prisma.econRates1d.findMany({
+      where: { seriesId: 'DFF' },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),
-    prisma.econObservation1d.findMany({
-      where: { category: 'FX', seriesId: 'DTWEXBGS' },
+    prisma.econFx1d.findMany({
+      where: { seriesId: 'DTWEXBGS' },
       orderBy: { eventDate: 'asc' },
       select: { eventDate: true, value: true },
     }),

@@ -1,4 +1,4 @@
-import { Prisma, EconCategory } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import {
@@ -155,31 +155,7 @@ async function insertDomainRows(
 ): Promise<number> {
   if (rows.length === 0) return 0
 
-  const categoryMap: Record<MacroDomain, EconCategory | null> = {
-    RATES: EconCategory.RATES,
-    YIELDS: EconCategory.YIELDS,
-    FX: EconCategory.FX,
-    VOL_INDICES: EconCategory.VOLATILITY,
-    INDEXES: null,
-  }
-
-  const category = categoryMap[domain]
-  if (category !== null) {
-    // Consolidated econ observation
-    const inserted = await prisma.econObservation1d.createMany({
-      data: rows.map((row) => ({
-        category,
-        seriesId: row.seriesId,
-        eventDate: row.eventDate,
-        value: row.value,
-        source: row.source,
-        rowHash: row.rowHash,
-        metadata: toJson({ sourceSymbol }),
-      })),
-      skipDuplicates: true,
-    })
-
-    // Dual-write to domain-specific split table for training pipelines
+  if (domain !== 'INDEXES') {
     const splitData = rows.map((row) => ({
       seriesId: row.seriesId,
       eventDate: row.eventDate,
@@ -199,13 +175,13 @@ async function insertDomainRows(
     const splitFn = splitInsertMap[domain]
     if (splitFn) {
       try {
-        await splitFn()
+        const inserted = await splitFn()
+        return inserted.count
       } catch (err) {
         console.warn(`[macro] split table write failed for ${domain}: ${err instanceof Error ? err.message : err}`)
       }
     }
-
-    return inserted.count
+    return 0
   } else if (domain === 'INDEXES') {
     // Market index
     const inserted = await prisma.mktIndexes1d.createMany({

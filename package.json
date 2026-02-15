@@ -24,10 +24,12 @@
     "ingest:mm": "tsx scripts/ingest-mm-signals.ts",
     "ingest:mes:live": "tsx scripts/ingest-mes-live-15m.ts",
     "ingest:mes:live:stream": "tsx scripts/ingest-mes-live-stream.ts",
+    "ingest:mes:backfill": "tsx scripts/backfill-mes-15m-1h-1d.ts",
     "ingest:all": "tsx scripts/ingest-all.ts",
     "ingest:fred:complete": "tsx scripts/ingest-fred-complete.ts",
     "import:fusion:econ": "tsx scripts/import-fusion-econ.ts",
-    "dataset:autogluon:1h": "tsx scripts/build-autogluon-1h-dataset.ts",
+    "dataset:autogluon:1h": "tsx scripts/build-complete-dataset.ts",
+    "dataset:autogluon:15m": "tsx scripts/build-15m-dataset.ts",
     "inngest:dev": "npx inngest-cli dev -u http://localhost:3000/api/inngest"
   },
   "dependencies": {

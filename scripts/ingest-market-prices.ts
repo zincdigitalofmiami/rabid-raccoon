@@ -179,7 +179,7 @@ async function upsertDataSourceRegistry(): Promise<void> {
       sourceName: 'Databento Futures OHLCV',
       description:
         'Databento GLBX futures ingestion with MES (native 1h) and non-MES (native 1d) in dedicated training tables.',
-      targetTable: 'mes_prices_1h,futures_ex_mes_1d',
+      targetTable: 'mkt_futures_mes_1h,mkt_futures_1d',
       apiProvider: 'databento',
       updateFrequency: 'mixed',
       authEnvVar: 'DATABENTO_API_KEY',
@@ -190,7 +190,7 @@ async function upsertDataSourceRegistry(): Promise<void> {
       sourceName: 'Databento Futures OHLCV',
       description:
         'Databento GLBX futures ingestion with MES (native 1h) and non-MES (native 1d) in dedicated training tables.',
-      targetTable: 'mes_prices_1h,futures_ex_mes_1d',
+      targetTable: 'mkt_futures_mes_1h,mkt_futures_1d',
       apiProvider: 'databento',
       updateFrequency: 'mixed',
       authEnvVar: 'DATABENTO_API_KEY',
@@ -265,9 +265,9 @@ async function upsertSymbolCatalog(symbolCodes: string[]): Promise<void> {
 
 async function existingCountForSymbol(symbolCode: string): Promise<number> {
   if (symbolCode === 'MES') {
-    return prisma.mesPrice1h.count()
+    return prisma.mktFuturesMes1h.count()
   }
-  return prisma.futuresExMes1d.count({ where: { symbolCode } })
+  return prisma.mktFutures1d.count({ where: { symbolCode } })
 }
 
 async function insertCandlesForSymbol(
@@ -282,7 +282,7 @@ async function insertCandlesForSymbol(
   if (dryRun || processed === 0) return { processed, inserted }
 
   if (symbolCode === 'MES') {
-    const rows: Prisma.MesPrice1hCreateManyInput[] = candles.map((candle) => {
+    const rows: Prisma.MktFuturesMes1hCreateManyInput[] = candles.map((candle) => {
       const eventTime = asUtcDateFromUnixSeconds(candle.time)
       return {
         eventTime,
@@ -300,7 +300,7 @@ async function insertCandlesForSymbol(
 
     for (let i = 0; i < rows.length; i += INGEST_CONFIG.INSERT_BATCH_SIZE) {
       const batch = rows.slice(i, i + INGEST_CONFIG.INSERT_BATCH_SIZE)
-      const result = await prisma.mesPrice1h.createMany({
+      const result = await prisma.mktFuturesMes1h.createMany({
         data: batch,
         skipDuplicates: true,
       })
@@ -309,7 +309,7 @@ async function insertCandlesForSymbol(
     return { processed, inserted }
   }
 
-  const rows: Prisma.FuturesExMes1dCreateManyInput[] = candles.map((candle) => {
+  const rows: Prisma.MktFutures1dCreateManyInput[] = candles.map((candle) => {
     const eventTime = asUtcDateFromUnixSeconds(candle.time)
     const eventDate = startOfUtcDay(eventTime)
     return {
@@ -329,7 +329,7 @@ async function insertCandlesForSymbol(
 
   for (let i = 0; i < rows.length; i += INGEST_CONFIG.INSERT_BATCH_SIZE) {
     const batch = rows.slice(i, i + INGEST_CONFIG.INSERT_BATCH_SIZE)
-    const result = await prisma.futuresExMes1d.createMany({
+    const result = await prisma.mktFutures1d.createMany({
       data: batch,
       skipDuplicates: true,
     })
@@ -344,7 +344,7 @@ async function verifyLoadedCoverage(
   minCoverageHourly: number,
   minCoverageDaily: number
 ): Promise<void> {
-  const mesCount = await prisma.mesPrice1h.count()
+  const mesCount = await prisma.mktFuturesMes1h.count()
   if (symbolCodes.includes('MES') && mesCount < minCoverageHourly) {
     hardFail(`INSUFFICIENT_DATA: MES has only ${mesCount} rows; ${minCoverageHourly} required.`)
   }
@@ -352,7 +352,7 @@ async function verifyLoadedCoverage(
   const nonMes = symbolCodes.filter((code) => code !== 'MES')
   if (nonMes.length === 0) return
 
-  const grouped = await prisma.futuresExMes1d.groupBy({
+  const grouped = await prisma.mktFutures1d.groupBy({
     by: ['symbolCode'],
     where: { symbolCode: { in: nonMes } },
     _count: { _all: true },

@@ -2,7 +2,7 @@
  * Databento Live MES 15m Streaming Ingestion
  *
  * Polls Databento Historical API for 1m bars, aggregates into 15m candles,
- * and upserts into mesPrice15m table.
+ * and upserts into mktFuturesMes15m table.
  *
  * NOTE: Databento's Live API uses a custom binary TCP protocol (DBN) with no
  * Node.js SDK available. This script uses the REST historical API as a bridge.

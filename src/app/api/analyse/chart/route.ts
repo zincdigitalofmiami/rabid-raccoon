@@ -88,7 +88,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     // Fetch 15m candles from DB and aggregate to 1h/4h
-    const rows15m = await prisma.mesPrice15m.findMany({
+    const rows15m = await prisma.mktFuturesMes15m.findMany({
       orderBy: { eventTime: 'desc' },
       take: 384, // 4 days of 15m bars = good coverage for 4h analysis
     })

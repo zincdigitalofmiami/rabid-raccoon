@@ -89,7 +89,7 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
     const includeMes = symbolsRequested.includes('MES')
     if (includeMes) {
-      const mesCandles = await prisma.mesPrice1h.findMany({
+      const mesCandles = await prisma.mktFuturesMes1h.findMany({
         where: { eventTime: { gte: start } },
         orderBy: { eventTime: 'asc' },
         select: {
@@ -118,7 +118,7 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
     const nonMesRequested = symbolsRequested.filter((code) => code !== 'MES')
     if (nonMesRequested.length > 0) {
-      const futuresRows = await prisma.futuresExMes1h.findMany({
+      const futuresRows = await prisma.mktFutures1h.findMany({
         where: {
           eventTime: { gte: start },
           symbolCode: { in: nonMesRequested },

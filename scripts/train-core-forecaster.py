@@ -1,26 +1,31 @@
 """
 train-core-forecaster.py
 
-Core Return Forecaster — Model 1 of 2.
+Core Return Forecaster — trains AutoGluon regressors for multiple horizons
+with walk-forward OOF and purge gaps.
 
-Trains 4 AutoGluon regressors (1h/4h/8h/24h forward returns) with
-walk-forward OOF and purge gaps. Uses the existing mes_1h_complete.csv
-dataset (85 features, 11k+ rows).
+Supports two dataset modes:
+  --dataset=1h   (default) → mes_1h_complete.csv, horizons: 1h/4h/24h/1w
+  --dataset=15m             → mes_15m_complete.csv, horizons: 15m/1h/4h
+
+Supports horizon filtering:
+  --horizons=15m,1h         → only train specified horizons
 
 Walk-forward scheme:
   - 5 expanding-window folds
-  - Purge gap = target horizon (e.g. 24 bars for 24h target)
+  - Purge gap = target horizon bars
   - Embargo = 2x purge gap
   - Produces OOF predictions for every training row
 
 Outputs:
   - models/core_forecaster/{horizon}/   (AutoGluon model artifacts)
-  - datasets/autogluon/core_oof.csv     (OOF predictions + MAE per row)
+  - datasets/autogluon/core_oof_{dataset}.csv (OOF predictions + MAE per row)
   - Console: OOF MAE, RMSE, R^2 per horizon
 
 Setup:
   pip install autogluon==1.2 pandas scikit-learn
-  python scripts/train-core-forecaster.py
+  python scripts/train-core-forecaster.py --dataset=15m
+  python scripts/train-core-forecaster.py --dataset=1h --horizons=24h,1w
 """
 
 import sys
@@ -35,23 +40,60 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_1h_complete.csv"
 MODEL_DIR = PROJECT_ROOT / "models" / "core_forecaster"
-OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof.csv"
 
-HORIZONS = {
-    "1h":  {"target": "target_ret_1h",  "purge_bars": 1,  "embargo_bars": 2},
-    "4h":  {"target": "target_ret_4h",  "purge_bars": 4,  "embargo_bars": 8},
-    "8h":  {"target": "target_ret_8h",  "purge_bars": 8,  "embargo_bars": 16},
-    "24h": {"target": "target_ret_24h", "purge_bars": 24, "embargo_bars": 48},
+# Parse CLI args
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--dataset", default="1h", choices=["1h", "15m"])
+parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (e.g. 15m,1h)")
+parser.add_argument("--presets", default="medium_quality", help="AutoGluon presets")
+parser.add_argument("--time-limit", type=int, default=300, help="Seconds per fold")
+args = parser.parse_args()
+
+DATASET_CONFIGS = {
+    "1h": {
+        "path": PROJECT_ROOT / "datasets" / "autogluon" / "mes_1h_complete.csv",
+        "oof_output": PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_1h.csv",
+        "horizons": {
+            "1h":  {"target": "target_ret_1h",  "purge_bars": 1,   "embargo_bars": 2},
+            "4h":  {"target": "target_ret_4h",  "purge_bars": 4,   "embargo_bars": 8},
+            "24h": {"target": "target_ret_24h", "purge_bars": 24,  "embargo_bars": 48},
+            "1w":  {"target": "target_ret_1w",  "purge_bars": 168, "embargo_bars": 336},
+        },
+        "drop_cols": {"item_id", "timestamp", "target",
+                      "target_ret_1h", "target_ret_4h", "target_ret_8h", "target_ret_24h", "target_ret_1w"},
+    },
+    "15m": {
+        "path": PROJECT_ROOT / "datasets" / "autogluon" / "mes_15m_complete.csv",
+        "oof_output": PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_15m.csv",
+        "horizons": {
+            "15m": {"target": "target_ret_15m", "purge_bars": 1,  "embargo_bars": 2},
+            "1h":  {"target": "target_ret_1h",  "purge_bars": 4,  "embargo_bars": 8},
+            "4h":  {"target": "target_ret_4h",  "purge_bars": 16, "embargo_bars": 32},
+        },
+        "drop_cols": {"item_id", "timestamp", "target",
+                      "target_ret_15m", "target_ret_1h", "target_ret_4h"},
+    },
 }
 
-# Columns to exclude from features
-DROP_COLS = {"item_id", "timestamp", "target", "target_ret_1h", "target_ret_4h", "target_ret_8h", "target_ret_24h"}
+cfg = DATASET_CONFIGS[args.dataset]
+DATASET_PATH = cfg["path"]
+OOF_OUTPUT = cfg["oof_output"]
+HORIZONS = cfg["horizons"]
+DROP_COLS = cfg["drop_cols"]
+
+# Filter horizons if specified
+if args.horizons:
+    requested = set(args.horizons.split(","))
+    HORIZONS = {k: v for k, v in HORIZONS.items() if k in requested}
+    if not HORIZONS:
+        print(f"ERROR: No valid horizons in '{args.horizons}'. Available: {list(cfg['horizons'].keys())}")
+        sys.exit(1)
 
 N_FOLDS = 5
-TIME_LIMIT_PER_FOLD = 300  # seconds per AutoGluon fit
-PRESETS = "medium_quality"  # "best_quality" for production, "medium_quality" for speed
+TIME_LIMIT_PER_FOLD = args.time_limit
+PRESETS = args.presets
 
 
 # ─── Walk-Forward Splitter ────────────────────────────────────────────────────

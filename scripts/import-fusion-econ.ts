@@ -265,9 +265,9 @@ async function importRatesDomain(source: Client): Promise<{ processed: number; i
     if (rows.length === 0) break
     lastId = Number(rows[rows.length - 1].id)
 
-    const rateRows: Omit<Prisma.EconObservation1dCreateManyInput, 'category'>[] = []
-    const yieldRows: Omit<Prisma.EconObservation1dCreateManyInput, 'category'>[] = []
-    const fxRows: Omit<Prisma.EconObservation1dCreateManyInput, 'category'>[] = []
+    const rateRows: Prisma.EconRates1dCreateManyInput[] = []
+    const yieldRows: Prisma.EconYields1dCreateManyInput[] = []
+    const fxRows: Prisma.EconFx1dCreateManyInput[] = []
 
     for (const row of rows) {
       const seriesId = String(row.series_id)
@@ -296,18 +296,18 @@ async function importRatesDomain(source: Client): Promise<{ processed: number; i
 
     processed += rows.length
     if (rateRows.length) {
-      inserted += await createManyBatched('econObservation1d', rateRows.map(r => ({ ...r, category: EconCategory.RATES })), async (batch) =>
-        (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
+      inserted += await createManyBatched('econRates1d', rateRows, async (batch) =>
+        (await prisma.econRates1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
     if (yieldRows.length) {
-      inserted += await createManyBatched('econObservation1d', yieldRows.map(r => ({ ...r, category: EconCategory.MONEY })), async (batch) =>
-        (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
+      inserted += await createManyBatched('econYields1d', yieldRows, async (batch) =>
+        (await prisma.econYields1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
     if (fxRows.length) {
-      inserted += await createManyBatched('econObservation1d', fxRows.map(r => ({ ...r, category: EconCategory.FX })), async (batch) =>
-        (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
+      inserted += await createManyBatched('econFx1d', fxRows, async (batch) =>
+        (await prisma.econFx1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
   }
@@ -344,7 +344,6 @@ async function importSimpleSeriesDomain(
         const rowHash = safeString(row.row_hash) || hashSeries(seriesId, eventDate, value, sourceName)
 
         return {
-          category,
           seriesId,
           eventDate,
           value,
@@ -357,9 +356,31 @@ async function importSimpleSeriesDomain(
     processed += rows.length
     if (data.length === 0) continue
 
-    inserted += await createManyBatched('econObservation1d', data, async (batch) =>
-      (await prisma.econObservation1d.createMany({ data: batch, skipDuplicates: true })).count
-    )
+    if (category === 'VOLATILITY') {
+      inserted += await createManyBatched('econVolIndices1d', data, async (batch) =>
+        (await prisma.econVolIndices1d.createMany({ data: batch, skipDuplicates: true })).count
+      )
+    } else if (category === 'INFLATION') {
+      inserted += await createManyBatched('econInflation1d', data, async (batch) =>
+        (await prisma.econInflation1d.createMany({ data: batch, skipDuplicates: true })).count
+      )
+    } else if (category === 'LABOR') {
+      inserted += await createManyBatched('econLabor1d', data, async (batch) =>
+        (await prisma.econLabor1d.createMany({ data: batch, skipDuplicates: true })).count
+      )
+    } else if (category === 'ACTIVITY') {
+      inserted += await createManyBatched('econActivity1d', data, async (batch) =>
+        (await prisma.econActivity1d.createMany({ data: batch, skipDuplicates: true })).count
+      )
+    } else if (category === 'MONEY') {
+      inserted += await createManyBatched('econMoney1d', data, async (batch) =>
+        (await prisma.econMoney1d.createMany({ data: batch, skipDuplicates: true })).count
+      )
+    } else if (category === 'COMMODITIES') {
+      inserted += await createManyBatched('econCommodities1d', data, async (batch) =>
+        (await prisma.econCommodities1d.createMany({ data: batch, skipDuplicates: true })).count
+      )
+    }
   }
 
   return { processed, inserted }
@@ -380,12 +401,16 @@ async function importFxSpot(source: Client): Promise<{ processed: number; insert
     if (rows.length === 0) break
     lastId = Number(rows[rows.length - 1].id)
 
-    const data: Prisma.MktSpot1dCreateManyInput[] = rows
+    const data: Prisma.MktIndexes1dCreateManyInput[] = rows
       .filter((row) => Number.isFinite(Number(row.rate)))
       .map((row) => ({
         symbolCode: String(row.pair),
         eventDate: normalizeDate(row.event_date),
-        value: Number(row.rate),
+        open: Number(row.rate),
+        high: Number(row.rate),
+        low: Number(row.rate),
+        close: Number(row.rate),
+        volume: BigInt(0),
         source: DataSource.INTERNAL,
         sourceSymbol: safeString(row.pair),
         rowHash: safeString(row.row_hash) || null,
@@ -394,8 +419,8 @@ async function importFxSpot(source: Client): Promise<{ processed: number; insert
 
     processed += rows.length
     if (data.length > 0) {
-      inserted += await createManyBatched('mktSpot1d', data, async (batch) =>
-        (await prisma.mktSpot1d.createMany({ data: batch, skipDuplicates: true })).count
+      inserted += await createManyBatched('mktIndexes1d', data, async (batch) =>
+        (await prisma.mktIndexes1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
   }
@@ -641,7 +666,7 @@ async function upsertRegistry(): Promise<void> {
       sourceId: 'fusion-econ-sync',
       sourceName: 'Zinc Fusion V15 Econ Sync',
       description: 'Bulk import of Fusion FRED/econ/news/rates domains into Rabid Raccoon domain tables.',
-      targetTable: 'econ_*,mkt_spot_1d,mkt_indexes_1d,econ_news_1d,policy_news_1d',
+      targetTable: 'econ_*,mkt_indexes_1d,econ_news_1d,policy_news_1d',
       apiProvider: 'fusion-postgres',
       updateFrequency: 'manual/bootstrap',
       authEnvVar: 'FUSION_DATABASE_URL',
@@ -651,7 +676,7 @@ async function upsertRegistry(): Promise<void> {
     update: {
       sourceName: 'Zinc Fusion V15 Econ Sync',
       description: 'Bulk import of Fusion FRED/econ/news/rates domains into Rabid Raccoon domain tables.',
-      targetTable: 'econ_*,mkt_spot_1d,mkt_indexes_1d,econ_news_1d,policy_news_1d',
+      targetTable: 'econ_*,mkt_indexes_1d,econ_news_1d,policy_news_1d',
       apiProvider: 'fusion-postgres',
       updateFrequency: 'manual/bootstrap',
       authEnvVar: 'FUSION_DATABASE_URL',

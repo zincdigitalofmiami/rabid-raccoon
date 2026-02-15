@@ -99,7 +99,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
 
   try {
     if (symbol === 'MES') {
-      const rows15m = await prisma.mesPrice15m.findMany({
+      const rows15m = await prisma.mktFuturesMes15m.findMany({
         where: {
           eventTime: {
             gte: start,
@@ -115,7 +115,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
         )
       }
 
-      const rows1h = await prisma.mesPrice1h.findMany({
+      const rows1h = await prisma.mktFuturesMes1h.findMany({
         where: {
           eventTime: {
             gte: start,
@@ -131,7 +131,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
       )
     }
 
-    const rows = await prisma.futuresExMes1d.findMany({
+    const rows = await prisma.mktFutures1d.findMany({
       where: {
         symbolCode: symbol,
         eventDate: {
@@ -197,8 +197,8 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
 
   try {
     if (indicator === 'VIXCLS') {
-      const rows = await prisma.econObservation1d.findMany({
-        where: { category: 'VOLATILITY', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
+      const rows = await prisma.econVolIndices1d.findMany({
+        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
@@ -208,8 +208,8 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
     }
 
     if (indicator === 'DGS10') {
-      const rows = await prisma.econObservation1d.findMany({
-        where: { category: 'YIELDS', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
+      const rows = await prisma.econYields1d.findMany({
+        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
@@ -219,8 +219,8 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
     }
 
     if (indicator === 'DFF') {
-      const rows = await prisma.econObservation1d.findMany({
-        where: { category: 'RATES', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
+      const rows = await prisma.econRates1d.findMany({
+        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
@@ -230,8 +230,8 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
     }
 
     if (indicator === 'DTWEXBGS') {
-      const rows = await prisma.econObservation1d.findMany({
-        where: { category: 'FX', seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
+      const rows = await prisma.econFx1d.findMany({
+        where: { seriesId: indicator, eventDate: { gte: startOfUtcDay(start), lte: startOfUtcDay(end) } },
         orderBy: { eventDate: 'asc' },
         take: 10_000,
       })
