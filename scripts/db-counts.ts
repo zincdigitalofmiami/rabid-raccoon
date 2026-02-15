@@ -17,6 +17,7 @@ async function run(): Promise<void> {
     mesLeakInNonMes,
     econObservations,
     econRates,
+    econYields,
     econMoney,
     econFx,
     econVol,
@@ -33,6 +34,16 @@ async function run(): Promise<void> {
     measuredMoves,
     runs,
     dataSources,
+    // Split domain table counts
+    splitRates,
+    splitYields,
+    splitFx,
+    splitVol,
+    splitInflation,
+    splitLabor,
+    splitActivity,
+    splitMoney,
+    splitCommodities,
   ] = await Promise.all([
     prisma.symbol.count(),
     prisma.symbolMapping.count(),
@@ -43,6 +54,7 @@ async function run(): Promise<void> {
     prisma.futuresExMes1h.count({ where: { symbolCode: 'MES' } }),
     prisma.econObservation1d.count(),
     prisma.econObservation1d.count({ where: { category: 'RATES' } }),
+    prisma.econObservation1d.count({ where: { category: 'YIELDS' } }),
     prisma.econObservation1d.count({ where: { category: 'MONEY' } }),
     prisma.econObservation1d.count({ where: { category: 'FX' } }),
     prisma.econObservation1d.count({ where: { category: 'VOLATILITY' } }),
@@ -59,6 +71,16 @@ async function run(): Promise<void> {
     prisma.measuredMoveSignal.count(),
     prisma.ingestionRun.count(),
     prisma.dataSourceRegistry.count(),
+    // Split domain tables
+    prisma.econRates1d.count(),
+    prisma.econYields1d.count(),
+    prisma.econFx1d.count(),
+    prisma.econVolIndices1d.count(),
+    prisma.econInflation1d.count(),
+    prisma.econLabor1d.count(),
+    prisma.econActivity1d.count(),
+    prisma.econMoney1d.count(),
+    prisma.econCommodities1d.count(),
   ])
 
   console.log('\n=== Table Counts ===')
@@ -72,6 +94,7 @@ async function run(): Promise<void> {
     { table: 'mes_leak_check_in_futures_ex_mes_1h', rows: mesLeakInNonMes },
     { table: 'econ_observations_1d (all)', rows: econObservations },
     { table: 'econ_observations_1d (RATES)', rows: econRates },
+    { table: 'econ_observations_1d (YIELDS)', rows: econYields },
     { table: 'econ_observations_1d (MONEY)', rows: econMoney },
     { table: 'econ_observations_1d (FX)', rows: econFx },
     { table: 'econ_observations_1d (VOLATILITY)', rows: econVol },
@@ -90,6 +113,19 @@ async function run(): Promise<void> {
     { table: 'data_source_registry', rows: dataSources },
   ])
 
+  console.log('\n=== Split Domain Tables (training) ===')
+  console.table([
+    { table: 'econ_rates_1d', rows: splitRates, consolidated: econRates, delta: splitRates - econRates },
+    { table: 'econ_yields_1d', rows: splitYields, consolidated: econYields, delta: splitYields - econYields },
+    { table: 'econ_fx_1d', rows: splitFx, consolidated: econFx, delta: splitFx - econFx },
+    { table: 'econ_vol_indices_1d', rows: splitVol, consolidated: econVol, delta: splitVol - econVol },
+    { table: 'econ_inflation_1d', rows: splitInflation, consolidated: econInflation, delta: splitInflation - econInflation },
+    { table: 'econ_labor_1d', rows: splitLabor, consolidated: econLabor, delta: splitLabor - econLabor },
+    { table: 'econ_activity_1d', rows: splitActivity, consolidated: econActivity, delta: splitActivity - econActivity },
+    { table: 'econ_money_1d', rows: splitMoney, consolidated: econMoney, delta: splitMoney - econMoney },
+    { table: 'econ_commodities_1d', rows: splitCommodities, consolidated: econCommodities, delta: splitCommodities - econCommodities },
+  ])
+
   const [nonMesGrouped1h, nonMesGrouped1d, ratesGrouped, yieldsGrouped, fxGrouped, volGrouped, inflationGrouped, laborGrouped, activityGrouped, moneyGrouped, commoditiesGrouped, indexGrouped] =
     await Promise.all([
       prisma.futuresExMes1h.groupBy({
@@ -103,7 +139,7 @@ async function run(): Promise<void> {
         orderBy: [{ symbolCode: 'asc' }],
       }),
       prisma.econObservation1d.groupBy({ by: ['seriesId'], where: { category: 'RATES' }, _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
-      prisma.econObservation1d.groupBy({ by: ['seriesId'], where: { category: 'MONEY' }, _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
+      prisma.econObservation1d.groupBy({ by: ['seriesId'], where: { category: 'YIELDS' }, _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
       prisma.econObservation1d.groupBy({ by: ['seriesId'], where: { category: 'FX' }, _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
       prisma.econObservation1d.groupBy({
         by: ['seriesId'],

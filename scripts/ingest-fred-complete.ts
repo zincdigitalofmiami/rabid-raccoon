@@ -221,7 +221,7 @@ interface ValueRow {
 
 async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<number> {
   if (rows.length === 0) return 0
-  
+
   const categoryMap: Record<EconDomain, EconCategory> = {
     RATES: EconCategory.RATES,
     YIELDS: EconCategory.YIELDS,
@@ -233,8 +233,8 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
     MONEY: EconCategory.MONEY,
     COMMODITIES: EconCategory.COMMODITIES,
   }
-  
-  const data = rows.map((r) => ({
+
+  const consolidatedData = rows.map((r) => ({
     category: categoryMap[domain],
     seriesId: r.seriesId,
     eventDate: r.eventDate,
@@ -244,7 +244,37 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
     metadata: toJson({ provider: r.source }),
   }))
 
-  return (await prisma.econObservation1d.createMany({ data, skipDuplicates: true })).count
+  const inserted = (await prisma.econObservation1d.createMany({ data: consolidatedData, skipDuplicates: true })).count
+
+  // Dual-write to domain-specific split table for training pipelines
+  const splitData = rows.map((r) => ({
+    seriesId: r.seriesId,
+    eventDate: r.eventDate,
+    value: r.value,
+    source: r.source,
+    rowHash: r.rowHash,
+    metadata: toJson({ provider: r.source }),
+  }))
+
+  const splitInsertMap: Record<EconDomain, () => Promise<{ count: number }>> = {
+    RATES: () => prisma.econRates1d.createMany({ data: splitData, skipDuplicates: true }),
+    YIELDS: () => prisma.econYields1d.createMany({ data: splitData, skipDuplicates: true }),
+    FX: () => prisma.econFx1d.createMany({ data: splitData, skipDuplicates: true }),
+    VOL_INDICES: () => prisma.econVolIndices1d.createMany({ data: splitData, skipDuplicates: true }),
+    INFLATION: () => prisma.econInflation1d.createMany({ data: splitData, skipDuplicates: true }),
+    LABOR: () => prisma.econLabor1d.createMany({ data: splitData, skipDuplicates: true }),
+    ACTIVITY: () => prisma.econActivity1d.createMany({ data: splitData, skipDuplicates: true }),
+    MONEY: () => prisma.econMoney1d.createMany({ data: splitData, skipDuplicates: true }),
+    COMMODITIES: () => prisma.econCommodities1d.createMany({ data: splitData, skipDuplicates: true }),
+  }
+
+  try {
+    await splitInsertMap[domain]()
+  } catch (err) {
+    console.warn(`[fred-complete] split table write failed for ${domain}: ${err instanceof Error ? err.message : err}`)
+  }
+
+  return inserted
 }
 
 // ─── TRUNCATE ──────────────────────────────────────────────────────────────

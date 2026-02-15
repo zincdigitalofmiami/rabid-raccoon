@@ -157,7 +157,7 @@ async function insertDomainRows(
 
   const categoryMap: Record<MacroDomain, EconCategory | null> = {
     RATES: EconCategory.RATES,
-    YIELDS: EconCategory.MONEY,
+    YIELDS: EconCategory.YIELDS,
     FX: EconCategory.FX,
     VOL_INDICES: EconCategory.VOLATILITY,
     INDEXES: null,
@@ -165,7 +165,7 @@ async function insertDomainRows(
 
   const category = categoryMap[domain]
   if (category !== null) {
-    // Econ observation
+    // Consolidated econ observation
     const inserted = await prisma.econObservation1d.createMany({
       data: rows.map((row) => ({
         category,
@@ -178,6 +178,33 @@ async function insertDomainRows(
       })),
       skipDuplicates: true,
     })
+
+    // Dual-write to domain-specific split table for training pipelines
+    const splitData = rows.map((row) => ({
+      seriesId: row.seriesId,
+      eventDate: row.eventDate,
+      value: row.value,
+      source: row.source,
+      rowHash: row.rowHash,
+      metadata: toJson({ sourceSymbol }),
+    }))
+
+    const splitInsertMap: Record<string, (() => Promise<{ count: number }>) | undefined> = {
+      RATES: () => prisma.econRates1d.createMany({ data: splitData, skipDuplicates: true }),
+      YIELDS: () => prisma.econYields1d.createMany({ data: splitData, skipDuplicates: true }),
+      FX: () => prisma.econFx1d.createMany({ data: splitData, skipDuplicates: true }),
+      VOL_INDICES: () => prisma.econVolIndices1d.createMany({ data: splitData, skipDuplicates: true }),
+    }
+
+    const splitFn = splitInsertMap[domain]
+    if (splitFn) {
+      try {
+        await splitFn()
+      } catch (err) {
+        console.warn(`[macro] split table write failed for ${domain}: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+
     return inserted.count
   } else if (domain === 'INDEXES') {
     // Market index
