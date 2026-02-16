@@ -32,6 +32,9 @@ type MesPoint = {
 type StreamStatus = 'connecting' | 'live' | 'error'
 
 const BAR_INTERVAL_SEC = 900 // 15m
+const GO_RECENT_BARS = 32
+const MAX_TOUCH_MARKERS = 2
+const MAX_HOOK_MARKERS = 2
 
 function toChartPoint(point: MesPoint) {
   return {
@@ -52,6 +55,63 @@ function toCandle(point: MesPoint): CandleData {
     close: point.close,
     volume: point.volume,
   }
+}
+
+function setupSortTime(setup: BhgSetup): number {
+  return setup.goTime ?? setup.hookTime ?? setup.touchTime ?? setup.createdAt
+}
+
+function isRenderableGoSetup(setup: BhgSetup): boolean {
+  if (setup.phase !== 'GO_FIRED') return false
+  if (setup.entry == null || setup.stopLoss == null || setup.tp1 == null || setup.tp2 == null) return false
+
+  if (setup.direction === 'BULLISH') {
+    return setup.stopLoss < setup.entry && setup.tp1 > setup.entry && setup.tp2 >= setup.tp1
+  }
+  return setup.tp2 <= setup.tp1 && setup.tp1 < setup.entry && setup.stopLoss > setup.entry
+}
+
+function selectSetupsForChart(
+  setups: BhgSetup[],
+  lastTimeSec: number | null
+): BhgSetup[] {
+  if (setups.length === 0) return []
+
+  const goCandidates = setups
+    .filter(isRenderableGoSetup)
+    .sort((a, b) => setupSortTime(b) - setupSortTime(a))
+
+  const recentGoCandidates =
+    lastTimeSec == null
+      ? goCandidates
+      : goCandidates.filter(
+          (s) => s.goTime != null && lastTimeSec - s.goTime <= BAR_INTERVAL_SEC * GO_RECENT_BARS
+        )
+
+  const sourceGo = recentGoCandidates.length > 0 ? recentGoCandidates : goCandidates
+  const selectedGo: BhgSetup[] = []
+  const selectedDirections = new Set<'BULLISH' | 'BEARISH'>()
+  for (const setup of sourceGo) {
+    if (selectedDirections.has(setup.direction)) continue
+    selectedGo.push(setup)
+    selectedDirections.add(setup.direction)
+    if (selectedGo.length >= 2) break
+  }
+  if (selectedGo.length === 0 && sourceGo[0]) {
+    selectedGo.push(sourceGo[0])
+  }
+
+  const selectedHooks = setups
+    .filter((s) => s.phase === 'HOOKED')
+    .sort((a, b) => setupSortTime(b) - setupSortTime(a))
+    .slice(0, MAX_HOOK_MARKERS)
+
+  const selectedTouches = setups
+    .filter((s) => s.phase === 'TOUCHED')
+    .sort((a, b) => setupSortTime(b) - setupSortTime(a))
+    .slice(0, MAX_TOUCH_MARKERS)
+
+  return [...selectedGo, ...selectedHooks, ...selectedTouches]
 }
 
 export interface LiveMesChartHandle {
@@ -84,6 +144,11 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
     const active = forecast.measuredMoves.filter((m) => m.status === 'ACTIVE')
     return active.length > 0 ? active[0] : null
   }, [forecast])
+
+  const chartSetups = useMemo(
+    () => selectSetupsForChart(setups ?? [], pointsRef.current[pointsRef.current.length - 1]?.time ?? null),
+    [setups, lastPrice]
+  )
 
   // Expose screenshot capture for chart analysis
   useImperativeHandle(ref, () => ({
@@ -291,7 +356,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
   useEffect(() => {
     if (!bhgPrimitiveRef.current) return
 
-    if (!setups || setups.length === 0 || pointsRef.current.length === 0) {
+    if (!chartSetups || chartSetups.length === 0 || pointsRef.current.length === 0) {
       bhgPrimitiveRef.current.setMarkers(null)
       return
     }
@@ -299,12 +364,12 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
     const lastTime = pointsRef.current[pointsRef.current.length - 1].time
 
     bhgPrimitiveRef.current.setMarkers({
-      setups,
+      setups: chartSetups,
       lastTime,
       futureBars: 8,
       barInterval: BAR_INTERVAL_SEC,
     })
-  }, [setups, lastPrice])
+  }, [chartSetups, lastPrice])
 
   const changeColor = priceChange >= 0 ? TV.bull.bright : TV.bear.bright
 

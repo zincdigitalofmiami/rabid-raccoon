@@ -49,6 +49,7 @@ const COLORS = {
   bullish: '#26a69a',
   bearish: '#ef5350',
 } as const
+const PRICE_BUCKET = 0.25
 
 // ─── Renderer ────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,7 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
 
       const { setups, lastTime, futureBars, barInterval } = this._data
       const futureEnd = lastTime + barInterval * futureBars
+      const drawnLevelKeys = new Set<string>()
 
       for (const setup of setups) {
         // Draw touch marker
@@ -88,7 +90,7 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
         // Draw GO marker + level lines
         if (setup.phase === 'GO_FIRED' && setup.goTime != null && setup.entry != null) {
           this._drawGo(ctx, setup)
-          this._drawLevelLines(ctx, setup, lastTime, futureEnd, mediaSize.width)
+          this._drawLevelLines(ctx, setup, lastTime, futureEnd, mediaSize.width, drawnLevelKeys)
         }
       }
     })
@@ -171,7 +173,8 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
     setup: BhgSetup,
     lastTime: number,
     futureEnd: number,
-    chartWidth: number
+    chartWidth: number,
+    drawnLevelKeys: Set<string>
   ) {
     const levels: { price: number; color: string; label: string }[] = []
 
@@ -192,6 +195,10 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
     const endX = this._timeToX!(futureEnd as unknown as Time)
 
     for (const lvl of levels) {
+      const levelKey = `${lvl.label}:${Math.round(lvl.price / PRICE_BUCKET)}`
+      if (drawnLevelKeys.has(levelKey)) continue
+      drawnLevelKeys.add(levelKey)
+
       const y = this._priceToY!(lvl.price)
       if (y == null) continue
 
@@ -209,12 +216,6 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
       ctx.lineTo(x1, y)
       ctx.stroke()
       ctx.setLineDash([])
-
-      // Label at end of line
-      ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif'
-      ctx.fillStyle = hexToRgba(lvl.color, 0.8)
-      ctx.textBaseline = 'bottom'
-      ctx.fillText(`${lvl.label} ${lvl.price.toFixed(2)}`, x0 + 4, y - 2)
     }
   }
 }
@@ -317,6 +318,11 @@ export class BhgMarkersPrimitive implements ISeriesPrimitive<Time> {
     // Build axis views for active GO setups
     this._axisViews = []
     if (this._data) {
+      const deduped = new Map<
+        string,
+        { price: number; label: string; color: string; coord: number; ts: number }
+      >()
+
       for (const setup of this._data.setups) {
         if (setup.phase !== 'GO_FIRED') continue
         const levels: { price: number; label: string; color: string }[] = []
@@ -328,10 +334,19 @@ export class BhgMarkersPrimitive implements ISeriesPrimitive<Time> {
         for (const lvl of levels) {
           const coord = series.priceToCoordinate(lvl.price)
           if (coord != null) {
-            this._axisViews.push(new BhgLevelAxisView(lvl.price, lvl.label, lvl.color, coord))
+            const key = `${lvl.label}:${Math.round(lvl.price / PRICE_BUCKET)}`
+            const ts = setup.goTime ?? setup.createdAt
+            const prev = deduped.get(key)
+            if (!prev || ts > prev.ts) {
+              deduped.set(key, { price: lvl.price, label: lvl.label, color: lvl.color, coord, ts })
+            }
           }
         }
       }
+
+      this._axisViews = [...deduped.values()]
+        .sort((a, b) => b.price - a.price)
+        .map((v) => new BhgLevelAxisView(v.price, v.label, v.color, v.coord))
     }
   }
 
