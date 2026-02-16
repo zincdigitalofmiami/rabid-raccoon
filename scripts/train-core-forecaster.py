@@ -1,8 +1,8 @@
 """
 train-core-forecaster.py
 
-Core Return Forecaster — trains AutoGluon regressors for multiple horizons
-with walk-forward OOF and purge gaps.
+Core Return Forecaster — trains AutoGluon 1.5 TabularPredictor regressors for
+multiple horizons with walk-forward OOF and purge gaps.
 
 Supports two dataset modes:
   --dataset=1h   (default) → mes_1h_complete.csv, horizons: 1h/4h/24h/1w
@@ -17,6 +17,13 @@ Walk-forward scheme:
   - Embargo = 2x purge gap
   - Produces OOF predictions for every training row
 
+AutoGluon best_quality preset:
+  - Zeroshot portfolio: ~100 pre-tuned configs (GBM, CAT, XGB, RF, XT, NN_TORCH, FASTAI)
+  - auto_stack=True with dynamic_stacking
+  - 8 internal bag folds, 1 bag set
+  - Text column (headlines_7d) → n-gram + special feature extraction
+  - eval_metric=MAE (robust to fat-tailed return distributions)
+
 Outputs:
   - models/core_forecaster/{horizon}/   (AutoGluon model artifacts)
   - datasets/autogluon/core_oof_{dataset}.csv (OOF predictions + MAE per row)
@@ -24,11 +31,11 @@ Outputs:
 
 Setup:
   pip install "autogluon>=1.5" pandas scikit-learn
-  python scripts/train-core-forecaster.py --dataset=15m
-  python scripts/train-core-forecaster.py --dataset=1h --horizons=24h,1w
+  python scripts/train-core-forecaster.py --dataset=1h
+  python scripts/train-core-forecaster.py --dataset=1h --horizons=1h --presets=medium_quality --time-limit=120
 
 Note: AutoGluon >=1.5 TabularPredictor auto-detects text columns (headlines_7d)
-and uses transformer embeddings via MultiModal — no custom NLP needed.
+and uses n-gram + special feature extraction. No custom NLP needed.
 """
 
 import sys
@@ -50,8 +57,8 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", default="1h", choices=["1h", "15m"])
 parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (e.g. 15m,1h)")
-parser.add_argument("--presets", default="medium_quality", help="AutoGluon presets")
-parser.add_argument("--time-limit", type=int, default=300, help="Seconds per fold")
+parser.add_argument("--presets", default="best_quality", help="AutoGluon presets (best_quality, medium_quality, etc.)")
+parser.add_argument("--time-limit", type=int, default=3600, help="Seconds per fold (3600 = 1 hour)")
 args = parser.parse_args()
 
 DATASET_CONFIGS = {
@@ -132,7 +139,7 @@ def walk_forward_splits(n: int, n_folds: int, purge: int, embargo: int):
 
 def main():
     try:
-        from autogluon.tabular import TabularPredictor
+        from autogluon.tabular import TabularPredictor, FeatureMetadata
     except ImportError:
         print("ERROR: AutoGluon not installed.")
         print("Install with: pip install 'autogluon>=1.5' pandas scikit-learn")
@@ -141,6 +148,7 @@ def main():
     print(f"Loading dataset from {DATASET_PATH}")
     df = pd.read_csv(DATASET_PATH)
     print(f"  Rows: {len(df):,}  Columns: {len(df.columns)}")
+    print(f"  Presets: {PRESETS}  Time limit/fold: {TIME_LIMIT_PER_FOLD}s")
 
     # Sort by timestamp (critical for walk-forward)
     df = df.sort_values("timestamp").reset_index(drop=True)
@@ -153,6 +161,18 @@ def main():
     # Feature columns
     feature_cols = [c for c in df.columns if c not in DROP_COLS]
     print(f"  Feature columns: {len(feature_cols)}")
+
+    # Build FeatureMetadata to force text column detection
+    text_cols = [c for c in feature_cols if c in ("headlines_7d", "headlines_24h")]
+    feature_metadata = None
+    if text_cols:
+        # Create metadata from a sample to detect types, then force text columns
+        sample = df[feature_cols].head(5)
+        feature_metadata = FeatureMetadata.from_df(sample)
+        feature_metadata = feature_metadata.add_special_types(
+            {col: ["text"] for col in text_cols}
+        )
+        print(f"  Text columns: {text_cols} (forced via FeatureMetadata)")
 
     # Initialize OOF dataframe
     oof_df = df[["timestamp"]].copy()
@@ -196,15 +216,28 @@ def main():
                 path=str(fold_dir),
                 problem_type="regression",
                 eval_metric="mean_absolute_error",
-                verbosity=1,
+                verbosity=2,
             )
 
-            predictor.fit(
+            fit_kwargs = dict(
                 train_data=train_data,
                 time_limit=TIME_LIMIT_PER_FOLD,
                 presets=PRESETS,
-                excluded_model_types=["KNN"],  # slow, low value for time series
+                num_gpus=0,                       # CPU-only for Apple Silicon reliability
+                excluded_model_types=["KNN"],     # curse of dimensionality on 80+ features
+                ag_args_ensemble={
+                    "fold_fitting_strategy": "sequential_local",  # memory-safe on unified memory
+                },
             )
+            if feature_metadata is not None:
+                fit_kwargs["feature_metadata"] = feature_metadata
+
+            predictor.fit(**fit_kwargs)
+
+            # Print leaderboard for this fold
+            leaderboard = predictor.leaderboard(val_data, silent=True)
+            print(f"\n    ── Fold {fold_i + 1} Leaderboard (top 10) ──")
+            print(leaderboard.head(10).to_string())
 
             preds = predictor.predict(val_data[feature_cols])
             oof_preds.iloc[val_idx[:len(preds)]] = preds.values
@@ -213,7 +246,7 @@ def main():
             actuals = val_data[target_col].values
             fold_mae = mean_absolute_error(actuals, preds.values)
             fold_rmse = np.sqrt(mean_squared_error(actuals, preds.values))
-            print(f"    Fold MAE: {fold_mae:.6f}  RMSE: {fold_rmse:.6f}")
+            print(f"\n    Fold MAE: {fold_mae:.6f}  RMSE: {fold_rmse:.6f}")
 
         # Overall OOF metrics
         oof_mask = oof_preds.notna()
