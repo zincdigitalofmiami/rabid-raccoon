@@ -5,6 +5,7 @@ import { calculateFibonacci } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
 import { advanceBhgSetups } from '@/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
+import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
 import { toNum } from '@/lib/decimal'
 import type { Decimal } from '@prisma/client/runtime/client'
 import type { CandleData } from '@/lib/types'
@@ -32,6 +33,8 @@ function rowToCandle(row: {
 
 export async function GET(): Promise<Response> {
   try {
+    await refreshMes15mFromDatabento({ force: false })
+
     // 1. Fetch MES 15m candles (last 96 bars = 24 hours)
     const rows = await prisma.mktFuturesMes15m.findMany({
       orderBy: { eventTime: 'desc' },

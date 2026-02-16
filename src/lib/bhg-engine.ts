@@ -58,11 +58,17 @@ export interface BhgSetup {
 const TOUCH_FIB_RATIOS = [0.5, 0.618] as const
 const DEFAULT_EXPIRY_BARS = 20
 const MES_TICK_SIZE = 0.25
+const PRICE_BUFFER_RATIO = 0.02
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function roundToTick(price: number, tickSize: number = MES_TICK_SIZE): number {
   return Math.round(price / tickSize) * tickSize
+}
+
+function findFibLevelPrice(fibResult: FibResult, ratio: number): number | null {
+  const level = fibResult.levels.find((l) => Math.abs(l.ratio - ratio) <= 0.002)
+  return level ? level.price : null
 }
 
 /**
@@ -92,39 +98,22 @@ export function detectTouch(
   fibRatio: number,
   isBullish: boolean
 ): BhgSetup | null {
+  const isTagged = candle.low <= fibLevel && candle.high >= fibLevel
+  if (!isTagged) return null
+
   const direction: SetupDirection = isBullish ? 'BULLISH' : 'BEARISH'
-
-  if (isBullish && candle.low <= fibLevel) {
-    return {
-      id: `${direction}-${fibRatio}-${barIndex}`,
-      direction,
-      phase: 'TOUCHED',
-      fibLevel,
-      fibRatio,
-      touchTime: candle.time,
-      touchBarIndex: barIndex,
-      touchPrice: candle.low,
-      createdAt: candle.time,
-      expiryBars: DEFAULT_EXPIRY_BARS,
-    }
+  return {
+    id: `${direction}-${fibRatio}-${barIndex}`,
+    direction,
+    phase: 'TOUCHED',
+    fibLevel,
+    fibRatio,
+    touchTime: candle.time,
+    touchBarIndex: barIndex,
+    touchPrice: fibLevel,
+    createdAt: candle.time,
+    expiryBars: DEFAULT_EXPIRY_BARS,
   }
-
-  if (!isBullish && candle.high >= fibLevel) {
-    return {
-      id: `${direction}-${fibRatio}-${barIndex}`,
-      direction,
-      phase: 'TOUCHED',
-      fibLevel,
-      fibRatio,
-      touchTime: candle.time,
-      touchBarIndex: barIndex,
-      touchPrice: candle.high,
-      createdAt: candle.time,
-      expiryBars: DEFAULT_EXPIRY_BARS,
-    }
-  }
-
-  return null
 }
 
 /**
@@ -282,48 +271,57 @@ export function computeTargets(
 
   // Entry is at the hook close
   const entry = roundToTick(setup.hookClose ?? setup.fibLevel)
+  const buffer = Math.max(MES_TICK_SIZE, range * PRICE_BUFFER_RATIO)
+  const minDistance = Math.max(buffer * 1.5, MES_TICK_SIZE * 4)
 
   // Stop loss: beyond the next fib level
-  let stopLoss: number
+  const stopRatio = setup.fibRatio === 0.5 ? 0.618 : 0.786
+  const stopCandidate = findFibLevelPrice(fibResult, stopRatio)
+  let stopLoss = 0
+
   if (setup.direction === 'BULLISH') {
-    // For 0.5 touch, stop at 0.618; for 0.618 touch, stop at 0.786
-    const stopRatio = setup.fibRatio === 0.5 ? 0.618 : 0.786
-    const stopLevel = fibResult.isBullish
-      ? fibResult.anchorLow + range * stopRatio
-      : fibResult.anchorHigh - range * stopRatio
-    // Offset slightly beyond the level
-    stopLoss = roundToTick(
-      setup.direction === 'BULLISH' ? stopLevel - range * 0.02 : stopLevel + range * 0.02
-    )
+    const belowEntry = [stopCandidate, setup.fibLevel, fibResult.anchorLow]
+      .filter((v): v is number => v != null && Number.isFinite(v) && v < entry)
+    const stopBase = belowEntry.length > 0 ? Math.max(...belowEntry) : entry - minDistance
+    stopLoss = roundToTick(stopBase - buffer)
+    if (stopLoss >= entry) stopLoss = roundToTick(entry - minDistance)
   } else {
-    const stopRatio = setup.fibRatio === 0.5 ? 0.618 : 0.786
-    const stopLevel = fibResult.isBullish
-      ? fibResult.anchorLow + range * stopRatio
-      : fibResult.anchorHigh - range * stopRatio
-    stopLoss = roundToTick(
-      setup.direction === 'BEARISH' ? stopLevel + range * 0.02 : stopLevel - range * 0.02
-    )
+    const aboveEntry = [stopCandidate, setup.fibLevel, fibResult.anchorHigh]
+      .filter((v): v is number => v != null && Number.isFinite(v) && v > entry)
+    const stopBase = aboveEntry.length > 0 ? Math.min(...aboveEntry) : entry + minDistance
+    stopLoss = roundToTick(stopBase + buffer)
+    if (stopLoss <= entry) stopLoss = roundToTick(entry + minDistance)
   }
 
   // TP1 from 1.272 extension, TP2 from 1.618 extension
-  const ext1272 = fibResult.levels.find((l) => l.ratio >= 1.27 && l.ratio <= 1.28)
-  const ext1618 = fibResult.levels.find((l) => l.ratio >= 1.61 && l.ratio <= 1.62)
+  const ext1272 = findFibLevelPrice(fibResult, 1.272)
+  const ext1618 = findFibLevelPrice(fibResult, 1.618)
 
-  let tp1 = ext1272
-    ? roundToTick(ext1272.price)
-    : roundToTick(
-        fibResult.isBullish
-          ? fibResult.anchorLow + range * 1.272
-          : fibResult.anchorHigh - range * 1.272
-      )
+  let tp1 = 0
+  let tp2 = 0
+  if (setup.direction === 'BULLISH') {
+    const tp1Candidates = [ext1272, fibResult.anchorHigh + range * 0.272]
+      .filter((v): v is number => v != null && Number.isFinite(v) && v > entry)
+    const tp1Base = tp1Candidates.length > 0 ? Math.min(...tp1Candidates) : entry + minDistance
+    tp1 = roundToTick(tp1Base)
 
-  const tp2 = ext1618
-    ? roundToTick(ext1618.price)
-    : roundToTick(
-        fibResult.isBullish
-          ? fibResult.anchorLow + range * 1.618
-          : fibResult.anchorHigh - range * 1.618
-      )
+    const tp2Candidates = [ext1618, fibResult.anchorHigh + range * 0.618]
+      .filter((v): v is number => v != null && Number.isFinite(v) && v > tp1)
+    const tp2Base = tp2Candidates.length > 0 ? Math.min(...tp2Candidates) : tp1 + minDistance
+    tp2 = roundToTick(tp2Base)
+    if (tp2 <= tp1) tp2 = roundToTick(tp1 + minDistance)
+  } else {
+    const tp1Candidates = [ext1272, fibResult.anchorLow - range * 0.272]
+      .filter((v): v is number => v != null && Number.isFinite(v) && v < entry)
+    const tp1Base = tp1Candidates.length > 0 ? Math.max(...tp1Candidates) : entry - minDistance
+    tp1 = roundToTick(tp1Base)
+
+    const tp2Candidates = [ext1618, fibResult.anchorLow - range * 0.618]
+      .filter((v): v is number => v != null && Number.isFinite(v) && v < tp1)
+    const tp2Base = tp2Candidates.length > 0 ? Math.max(...tp2Candidates) : tp1 - minDistance
+    tp2 = roundToTick(tp2Base)
+    if (tp2 >= tp1) tp2 = roundToTick(tp1 - minDistance)
+  }
 
   // If an aligned measured move exists, prefer its target
   const alignedMove = measuredMoves.find(
@@ -332,7 +330,16 @@ export function computeTargets(
       (m.status === 'ACTIVE' || m.status === 'FORMING')
   )
   if (alignedMove) {
-    tp1 = roundToTick(alignedMove.target)
+    const mmTarget = roundToTick(alignedMove.target)
+    const validDirectionalTarget =
+      (setup.direction === 'BULLISH' && mmTarget > entry) ||
+      (setup.direction === 'BEARISH' && mmTarget < entry)
+
+    if (validDirectionalTarget) {
+      tp1 = mmTarget
+      if (setup.direction === 'BULLISH' && tp2 <= tp1) tp2 = roundToTick(tp1 + minDistance)
+      if (setup.direction === 'BEARISH' && tp2 >= tp1) tp2 = roundToTick(tp1 - minDistance)
+    }
   }
 
   return { ...setup, entry, stopLoss, tp1, tp2 }

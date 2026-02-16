@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { toNum } from '@/lib/decimal'
+import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
 import type { Decimal } from '@prisma/client/runtime/client'
 
 export const runtime = 'nodejs'
@@ -71,6 +72,8 @@ export async function GET(request: Request): Promise<Response> {
       }
 
       try {
+        await refreshMes15mFromDatabento({ force: true })
+
         const initial = await prisma.mktFuturesMes15m.findMany({
           orderBy: { eventTime: 'desc' },
           take: backfillCount,
@@ -103,6 +106,8 @@ export async function GET(request: Request): Promise<Response> {
       const interval = setInterval(async () => {
         if (closed) return
         try {
+          await refreshMes15mFromDatabento({ force: false })
+
           const latest = await prisma.mktFuturesMes15m.findMany({
             orderBy: { eventTime: 'desc' },
             take: Math.max(40, Math.min(250, backfillCount)),
