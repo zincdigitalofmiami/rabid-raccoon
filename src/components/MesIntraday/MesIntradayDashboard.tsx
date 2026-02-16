@@ -4,7 +4,6 @@ import { useRef, useMemo } from 'react'
 import Link from 'next/link'
 import LiveMesChart, { LiveMesChartHandle } from '../LiveMesChart'
 import { useMesSetups } from '@/hooks/useMesSetups'
-import { useForecast } from '@/hooks/useForecast'
 import StatusTile from './StatusTile'
 import CorrelationTile from './CorrelationTile'
 import SignalTile from './SignalTile'
@@ -13,7 +12,6 @@ import SetupLog from './SetupLog'
 
 export default function MesIntradayDashboard() {
   const chartRef = useRef<LiveMesChartHandle>(null)
-  const { forecast } = useForecast()
   const { data: setupsData, loading, error } = useMesSetups()
 
   const leadSetup = useMemo(() => {
@@ -74,7 +72,7 @@ export default function MesIntradayDashboard() {
         {/* Main: Hero Chart + Right Rail */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
           <div>
-            <LiveMesChart ref={chartRef} forecast={forecast} setups={setupsData?.setups} />
+            <LiveMesChart ref={chartRef} setups={setupsData?.setups} />
           </div>
           <SetupLog setups={setupsData?.setups ?? []} />
         </div>

@@ -33,8 +33,8 @@ type StreamStatus = 'connecting' | 'live' | 'error'
 
 const BAR_INTERVAL_SEC = 900 // 15m
 const GO_RECENT_BARS = 32
-const MAX_TOUCH_MARKERS = 2
-const MAX_HOOK_MARKERS = 2
+const MAX_TOUCH_MARKERS = 1
+const MAX_HOOK_MARKERS = 1
 
 function toChartPoint(point: MesPoint) {
   return {
@@ -89,25 +89,22 @@ function selectSetupsForChart(
         )
 
   const sourceGo = recentGoCandidates.length > 0 ? recentGoCandidates : goCandidates
-  const selectedGo: BhgSetup[] = []
-  const selectedDirections = new Set<'BULLISH' | 'BEARISH'>()
-  for (const setup of sourceGo) {
-    if (selectedDirections.has(setup.direction)) continue
-    selectedGo.push(setup)
-    selectedDirections.add(setup.direction)
-    if (selectedGo.length >= 2) break
-  }
-  if (selectedGo.length === 0 && sourceGo[0]) {
-    selectedGo.push(sourceGo[0])
-  }
+  const selectedGo = sourceGo.slice(0, 1)
+
+  const leadDirection = selectedGo[0]?.direction
+  const leadTime = selectedGo[0] ? setupSortTime(selectedGo[0]) : null
 
   const selectedHooks = setups
     .filter((s) => s.phase === 'HOOKED')
+    .filter((s) => (leadDirection ? s.direction === leadDirection : true))
+    .filter((s) => (leadTime != null ? setupSortTime(s) <= leadTime : true))
     .sort((a, b) => setupSortTime(b) - setupSortTime(a))
     .slice(0, MAX_HOOK_MARKERS)
 
   const selectedTouches = setups
     .filter((s) => s.phase === 'TOUCHED')
+    .filter((s) => (leadDirection ? s.direction === leadDirection : true))
+    .filter((s) => (leadTime != null ? setupSortTime(s) <= leadTime : true))
     .sort((a, b) => setupSortTime(b) - setupSortTime(a))
     .slice(0, MAX_TOUCH_MARKERS)
 
