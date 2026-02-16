@@ -528,7 +528,6 @@ async function importEconNewsTable(source: Client, fullTable: string): Promise<{
         source: safeString(row.source),
         author: safeString(row.author),
         url: safeString(row.url),
-        sentimentLabel: safeString(row.zl_sentiment),
         topics,
         subjects,
         tags,

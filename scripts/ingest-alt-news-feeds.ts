@@ -407,7 +407,6 @@ export async function runIngestAltNewsFeeds(): Promise<RunStats> {
               source: feed.source,
               author: item.author,
               url: item.link,
-              sentimentLabel: null,
               topics: item.categories,
               subjects: [],
               tags,
@@ -427,8 +426,6 @@ export async function runIngestAltNewsFeeds(): Promise<RunStats> {
               region: feed.country === 'EU' ? 'Europe' : 'United States',
               country: feed.country || null,
               url: item.link,
-              sentimentScore: null,
-              impactScore: null,
               tags,
               rowHash,
               rawPayload: toJson({

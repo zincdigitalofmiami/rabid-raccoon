@@ -15,9 +15,10 @@ const MARKET_SYMBOL_BATCHES: string[][] = [
 ]
 
 const ECON_RELEASE_BATCHES: Array<{ id: string; releaseIds: number[] }> = [
-  { id: 'inflation-labor-fomc', releaseIds: [10, 46, 101] },
-  { id: 'gdp-pce-ppi', releaseIds: [21, 53, 51] },
-  { id: 'activity-claims', releaseIds: [83, 13, 54, 29, 202] },
+  { id: 'tier1-fomc-nfp-cpi-pce', releaseIds: [101, 50, 10, 53] },
+  { id: 'tier2-ppi-retail-gdp-claims-jolts', releaseIds: [46, 9, 21, 180, 192] },
+  { id: 'tier3-sentiment-durables-housing', releaseIds: [54, 95, 27, 97] },
+  { id: 'tier3-adp-indprod-trade-construction', releaseIds: [194, 13, 51, 229] },
 ]
 
 const ECON_DAILY_RATES_WINDOWS: Array<{ id: string; startDateStr: string; endDateStr?: string }> = [

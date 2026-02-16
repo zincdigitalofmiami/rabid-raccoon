@@ -64,19 +64,32 @@ const FOMC_MEETING_DATES: string[] = [
 ]
 
 // --- Release specs ---
-// Fixed: EFFR → DFF (FOMC), RSAFS → RSXFS (Retail Sales)
+// Tiered by MES impact: Tier 1 = high (50-150+ pt moves), Tier 2 = medium (20-60 pts), Tier 3 = low (10-30 pts)
+// Fixed: NFP is release 50 (not 46), PPI is release 46 (not 51), release 51 = Trade Balance
 const RELEASE_SPECS: ReleaseSpec[] = [
-  { releaseId: 10, eventName: 'CPI', eventType: 'inflation', impactRating: 'high', source: 'BLS', fredSeriesId: 'CPIAUCSL', frequency: 'monthly', time: '08:30 ET', table: 'econInflation1d' },
-  { releaseId: 46, eventName: 'NFP', eventType: 'employment', impactRating: 'high', source: 'BLS', fredSeriesId: 'PAYEMS', frequency: 'monthly', time: '08:30 ET', table: 'econLabor1d' },
+  // --- Tier 1: Market Movers (high) ---
   { releaseId: 101, eventName: 'FOMC Rate Decision', eventType: 'rate_decision', impactRating: 'high', source: 'Fed', fredSeriesId: 'DFF', frequency: '8x_year', time: '14:00 ET', table: 'econRates1d', useFomcDates: true },
-  { releaseId: 21, eventName: 'GDP', eventType: 'gdp', impactRating: 'high', source: 'BEA', fredSeriesId: 'GDPC1', frequency: 'quarterly', time: '08:30 ET', table: 'econActivity1d' },
+  { releaseId: 50, eventName: 'NFP', eventType: 'employment', impactRating: 'high', source: 'BLS', fredSeriesId: 'PAYEMS', frequency: 'monthly', time: '08:30 ET', table: 'econLabor1d' },
+  { releaseId: 10, eventName: 'CPI', eventType: 'inflation', impactRating: 'high', source: 'BLS', fredSeriesId: 'CPIAUCSL', frequency: 'monthly', time: '08:30 ET', table: 'econInflation1d' },
   { releaseId: 53, eventName: 'PCE', eventType: 'inflation', impactRating: 'high', source: 'BEA', fredSeriesId: 'PCEPI', frequency: 'monthly', time: '08:30 ET', table: 'econInflation1d' },
-  { releaseId: 51, eventName: 'PPI', eventType: 'inflation', impactRating: 'medium', source: 'BLS', fredSeriesId: 'PPIACO', frequency: 'monthly', time: '08:30 ET', table: 'econInflation1d' },
-  { releaseId: 83, eventName: 'Retail Sales', eventType: 'retail', impactRating: 'medium', source: 'Census', fredSeriesId: 'RSXFS', frequency: 'monthly', time: '08:30 ET', table: 'econActivity1d' },
-  { releaseId: 13, eventName: 'Industrial Production', eventType: 'manufacturing', impactRating: 'medium', source: 'Fed', fredSeriesId: 'INDPRO', frequency: 'monthly', time: '09:15 ET', table: 'econActivity1d' },
+
+  // --- Tier 2: Significant Movers (medium) ---
+  { releaseId: 46, eventName: 'PPI', eventType: 'inflation', impactRating: 'medium', source: 'BLS', fredSeriesId: 'PPIACO', frequency: 'monthly', time: '08:30 ET', table: 'econInflation1d' },
+  { releaseId: 9, eventName: 'Retail Sales', eventType: 'retail', impactRating: 'medium', source: 'Census', fredSeriesId: 'RSXFS', frequency: 'monthly', time: '08:30 ET', table: 'econActivity1d' },
+  { releaseId: 21, eventName: 'GDP', eventType: 'gdp', impactRating: 'medium', source: 'BEA', fredSeriesId: 'GDPC1', frequency: 'quarterly', time: '08:30 ET', table: 'econActivity1d' },
+  { releaseId: 180, eventName: 'Jobless Claims', eventType: 'employment', impactRating: 'medium', source: 'DOL', fredSeriesId: 'ICSA', frequency: 'weekly', time: '08:30 ET', table: 'econLabor1d' },
+  { releaseId: 192, eventName: 'JOLTS', eventType: 'employment', impactRating: 'medium', source: 'BLS', fredSeriesId: 'JTSJOL', frequency: 'monthly', time: '10:00 ET', table: 'econLabor1d' },
+
+  // --- Tier 3: Conditional Movers (low) ---
   { releaseId: 54, eventName: 'UMich Consumer Sentiment', eventType: 'sentiment', impactRating: 'low', source: 'UMich', fredSeriesId: 'UMCSENT', frequency: 'monthly', time: '10:00 ET', table: 'econActivity1d' },
-  { releaseId: 29, eventName: 'Housing Starts', eventType: 'housing', impactRating: 'low', source: 'Census', fredSeriesId: 'HOUST', frequency: 'monthly', time: '08:30 ET', table: 'econActivity1d' },
-  { releaseId: 202, eventName: 'Jobless Claims', eventType: 'employment', impactRating: 'medium', source: 'DOL', fredSeriesId: 'ICSA', frequency: 'weekly', time: '08:30 ET', table: 'econLabor1d' },
+  { releaseId: 95, eventName: 'Durable Goods Orders', eventType: 'manufacturing', impactRating: 'low', source: 'Census', fredSeriesId: 'DGORDER', frequency: 'monthly', time: '08:30 ET', table: 'econActivity1d' },
+  { releaseId: 27, eventName: 'Housing Starts', eventType: 'housing', impactRating: 'low', source: 'Census', fredSeriesId: 'HOUST', frequency: 'monthly', time: '08:30 ET', table: 'econActivity1d' },
+  { releaseId: 97, eventName: 'New Home Sales', eventType: 'housing', impactRating: 'low', source: 'Census', fredSeriesId: 'HSN1F', frequency: 'monthly', time: '10:00 ET', table: 'econActivity1d' },
+  // Existing Home Sales (291) omitted — FRED release/dates API returns 0 dates for this release
+  { releaseId: 194, eventName: 'ADP Employment', eventType: 'employment', impactRating: 'low', source: 'ADP', fredSeriesId: 'ADPWNUSNERSA', frequency: 'monthly', time: '08:15 ET', table: 'econLabor1d' },
+  { releaseId: 13, eventName: 'Industrial Production', eventType: 'manufacturing', impactRating: 'low', source: 'Fed', fredSeriesId: 'INDPRO', frequency: 'monthly', time: '09:15 ET', table: 'econActivity1d' },
+  { releaseId: 51, eventName: 'Trade Balance', eventType: 'trade', impactRating: 'low', source: 'BEA', fredSeriesId: 'BOPGSTB', frequency: 'monthly', time: '08:30 ET', table: 'econActivity1d' },
+  { releaseId: 229, eventName: 'Construction Spending', eventType: 'housing', impactRating: 'low', source: 'Census', fredSeriesId: 'TTLCONS', frequency: 'monthly', time: '10:00 ET', table: 'econActivity1d' },
   { releaseId: 18, eventName: 'Interest Rates', eventType: 'rates', impactRating: 'low', source: 'Fed', fredSeriesId: 'DGS10', frequency: 'daily', time: '16:00 ET', table: 'econYields1d' },
 ]
 

@@ -31,6 +31,7 @@
     "import:fusion:econ": "tsx scripts/import-fusion-econ.ts",
     "dataset:autogluon:1h": "tsx scripts/build-complete-dataset.ts",
     "dataset:autogluon:15m": "tsx scripts/build-15m-dataset.ts",
+    "test:feature-availability": "node --import tsx --test scripts/feature-availability.test.ts",
     "inngest:dev": "npx inngest-cli dev -u http://localhost:3000/api/inngest"
   },
   "dependencies": {
