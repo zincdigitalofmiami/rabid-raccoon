@@ -382,25 +382,21 @@ model EconCommodities1d {
   @@map("econ_commodities_1d")
 }
 
-model MktIndexes1d {
-  id            BigInt     @id @default(autoincrement())
-  symbolCode    String     @db.VarChar(32)
-  eventDate     DateTime   @db.Date
-  open          Decimal?   @db.Decimal(18, 6)
-  high          Decimal?   @db.Decimal(18, 6)
-  low           Decimal?   @db.Decimal(18, 6)
-  close         Decimal?   @db.Decimal(18, 6)
-  volume        BigInt?
-  source        DataSource @default(YAHOO)
-  sourceSymbol  String?    @db.VarChar(50)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+model EconIndexes1d {
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
-  @@unique([symbolCode, eventDate], map: "mkt_indexes_1d_symbol_date_key")
-  @@index([eventDate], map: "mkt_indexes_1d_date_idx")
-  @@map("mkt_indexes_1d")
+  @@unique([seriesId, eventDate], map: "econ_indexes_1d_series_date_key")
+  @@index([eventDate], map: "econ_indexes_1d_date_idx")
+  @@map("econ_indexes_1d")
 }
 
 model EconNews1d {
@@ -545,6 +541,7 @@ model EconomicSeries {
   econActivity    EconActivity1d[]
   econMoney       EconMoney1d[]
   econCommodities EconCommodities1d[]
+  econIndexes     EconIndexes1d[]
 
   @@index([category, isActive], map: "economic_series_category_active_idx")
   @@map("economic_series")
