@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { ECON_REPORT_QUERIES } from '@/lib/news-queries'
-import { scoreSentiment } from '@/lib/sentiment'
 import { fetchGoogleNewsRss } from '@/lib/google-news'
+import { isQualityArticle } from '@/lib/news-source-filter'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+export const maxDuration = 120
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
@@ -21,6 +22,7 @@ export async function GET() {
 
     let queriesRun = 0
     let articlesSeen = 0
+    let filtered = 0
     let inserted = 0
     let updated = 0
 
@@ -30,7 +32,11 @@ export async function GET() {
       articlesSeen += items.length
 
       for (const item of items) {
-        const sentiment = scoreSentiment(item.title, item.source)
+        if (!isQualityArticle(item.source || '', item.title)) {
+          filtered += 1
+          continue
+        }
+
         const existing = await prisma.newsSignal.findUnique({ where: { link: item.link }, select: { id: true } })
 
         await prisma.newsSignal.upsert({
@@ -43,8 +49,6 @@ export async function GET() {
             query: q.query,
             layer: q.layer,
             category: q.category,
-            sentimentScore: sentiment.sentiment,
-            relevanceScore: sentiment.relevance,
           },
           update: {
             title: item.title,
@@ -53,8 +57,6 @@ export async function GET() {
             query: q.query,
             layer: q.layer,
             category: q.category,
-            sentimentScore: sentiment.sentiment,
-            relevanceScore: sentiment.relevance,
           },
         })
 
@@ -65,7 +67,7 @@ export async function GET() {
       await sleep(2000)
     }
 
-    return NextResponse.json({ ok: true, queriesRun, articlesSeen, inserted, updated })
+    return NextResponse.json({ ok: true, queriesRun, articlesSeen, filtered, inserted, updated })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return NextResponse.json({ ok: false, error: message }, { status: 500 })

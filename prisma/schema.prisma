@@ -414,7 +414,6 @@ model EconNews1d {
   source         String?   @db.VarChar(100)
   author         String?   @db.VarChar(100)
   url            String?
-  sentimentLabel String?   @db.VarChar(32)
   topics         String[]  @default([])
   subjects       String[]  @default([])
   tags           String[]  @default([])
@@ -439,8 +438,6 @@ model PolicyNews1d {
   region         String?   @db.VarChar(64)
   country        String?   @db.VarChar(64)
   url            String?
-  sentimentScore Decimal?  @db.Decimal(8, 4)
-  impactScore    Decimal?  @db.Decimal(8, 4)
   tags           String[]  @default([])
   ingestedAt     DateTime  @default(now()) @db.Timestamptz(6)
   knowledgeTime  DateTime  @default(now()) @db.Timestamptz(6)
@@ -517,8 +514,6 @@ model NewsSignal {
   query          String   @db.VarChar(200)
   layer          String   @db.VarChar(64)
   category       String   @db.VarChar(64)
-  sentimentScore Decimal? @db.Decimal(8, 4)
-  relevanceScore Decimal? @db.Decimal(8, 4)
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
   metadata       Json?
 
