@@ -79,18 +79,18 @@ enum IngestionStatus {
 }
 
 model Symbol {
-  code            String      @id @db.VarChar(16)
-  displayName     String      @db.VarChar(64)
-  shortName       String?     @db.VarChar(64)
+  code            String               @id @db.VarChar(16)
+  displayName     String               @db.VarChar(64)
+  shortName       String?              @db.VarChar(64)
   description     String?
-  tickSize        Decimal     @db.Decimal(18, 6)
+  tickSize        Decimal              @db.Decimal(18, 6)
   dataSource      DataSource
-  dataset         String?     @db.VarChar(64)
-  databentoSymbol String?     @db.VarChar(32)
-  fredSymbol      String?     @db.VarChar(32)
-  isActive        Boolean     @default(true)
-  createdAt       DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime    @updatedAt @db.Timestamptz(6)
+  dataset         String?              @db.VarChar(64)
+  databentoSymbol String?              @db.VarChar(32)
+  fredSymbol      String?              @db.VarChar(32)
+  isActive        Boolean              @default(true)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
   mktFutures1h    MktFutures1h[]
   mktFutures1d    MktFutures1d[]
   measuredMoves   MeasuredMoveSignal[]
@@ -230,14 +230,15 @@ model MktFutures1d {
 // ─── Split Econ Domain Tables (mirrors ZINC Fusion V15 pattern) ─────────
 
 model EconRates1d {
-  id            BigInt     @id @default(autoincrement())
-  seriesId      String     @db.VarChar(50)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(24, 8)
-  source        DataSource @default(FRED)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
   @@unique([seriesId, eventDate], map: "econ_rates_1d_series_date_key")
@@ -246,14 +247,15 @@ model EconRates1d {
 }
 
 model EconYields1d {
-  id            BigInt     @id @default(autoincrement())
-  seriesId      String     @db.VarChar(50)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(24, 8)
-  source        DataSource @default(FRED)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
   @@unique([seriesId, eventDate], map: "econ_yields_1d_series_date_key")
@@ -262,14 +264,15 @@ model EconYields1d {
 }
 
 model EconFx1d {
-  id            BigInt     @id @default(autoincrement())
-  seriesId      String     @db.VarChar(50)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(24, 8)
-  source        DataSource @default(FRED)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
   @@unique([seriesId, eventDate], map: "econ_fx_1d_series_date_key")
@@ -278,14 +281,15 @@ model EconFx1d {
 }
 
 model EconVolIndices1d {
-  id            BigInt     @id @default(autoincrement())
-  seriesId      String     @db.VarChar(50)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(24, 8)
-  source        DataSource @default(FRED)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
   @@unique([seriesId, eventDate], map: "econ_vol_indices_1d_series_date_key")
@@ -294,14 +298,15 @@ model EconVolIndices1d {
 }
 
 model EconInflation1d {
-  id            BigInt     @id @default(autoincrement())
-  seriesId      String     @db.VarChar(50)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(24, 8)
-  source        DataSource @default(FRED)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
   @@unique([seriesId, eventDate], map: "econ_inflation_1d_series_date_key")
@@ -310,14 +315,15 @@ model EconInflation1d {
 }
 
 model EconLabor1d {
-  id            BigInt     @id @default(autoincrement())
-  seriesId      String     @db.VarChar(50)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(24, 8)
-  source        DataSource @default(FRED)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
   @@unique([seriesId, eventDate], map: "econ_labor_1d_series_date_key")
@@ -326,14 +332,15 @@ model EconLabor1d {
 }
 
 model EconActivity1d {
-  id            BigInt     @id @default(autoincrement())
-  seriesId      String     @db.VarChar(50)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(24, 8)
-  source        DataSource @default(FRED)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
   @@unique([seriesId, eventDate], map: "econ_activity_1d_series_date_key")
@@ -342,14 +349,15 @@ model EconActivity1d {
 }
 
 model EconMoney1d {
-  id            BigInt     @id @default(autoincrement())
-  seriesId      String     @db.VarChar(50)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(24, 8)
-  source        DataSource @default(FRED)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
   @@unique([seriesId, eventDate], map: "econ_money_1d_series_date_key")
@@ -358,14 +366,15 @@ model EconMoney1d {
 }
 
 model EconCommodities1d {
-  id            BigInt     @id @default(autoincrement())
-  seriesId      String     @db.VarChar(50)
-  eventDate     DateTime   @db.Date
-  value         Decimal?   @db.Decimal(24, 8)
-  source        DataSource @default(FRED)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
+  id            BigInt         @id @default(autoincrement())
+  seriesId      String         @db.VarChar(50)
+  series        EconomicSeries @relation(fields: [seriesId], references: [seriesId], onDelete: Restrict, onUpdate: Cascade)
+  eventDate     DateTime       @db.Date
+  value         Decimal?       @db.Decimal(24, 8)
+  source        DataSource     @default(FRED)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
   metadata      Json?
 
   @@unique([seriesId, eventDate], map: "econ_commodities_1d_series_date_key")
@@ -421,21 +430,21 @@ model EconNews1d {
 }
 
 model PolicyNews1d {
-  id             BigInt     @id @default(autoincrement())
-  eventDate      DateTime   @db.Date
-  publishedAt    DateTime?  @db.Timestamptz(6)
+  id             BigInt    @id @default(autoincrement())
+  eventDate      DateTime  @db.Date
+  publishedAt    DateTime? @db.Timestamptz(6)
   headline       String
   summary        String?
-  source         String?    @db.VarChar(100)
-  region         String?    @db.VarChar(64)
-  country        String?    @db.VarChar(64)
+  source         String?   @db.VarChar(100)
+  region         String?   @db.VarChar(64)
+  country        String?   @db.VarChar(64)
   url            String?
-  sentimentScore Decimal?   @db.Decimal(8, 4)
-  impactScore    Decimal?   @db.Decimal(8, 4)
-  tags           String[]   @default([])
-  ingestedAt     DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime  DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash        String?    @db.VarChar(64)
+  sentimentScore Decimal?  @db.Decimal(8, 4)
+  impactScore    Decimal?  @db.Decimal(8, 4)
+  tags           String[]  @default([])
+  ingestedAt     DateTime  @default(now()) @db.Timestamptz(6)
+  knowledgeTime  DateTime  @default(now()) @db.Timestamptz(6)
+  rowHash        String?   @db.VarChar(64)
   rawPayload     Json?
 
   @@unique([rowHash], map: "policy_news_1d_row_hash_key")
@@ -446,26 +455,26 @@ model PolicyNews1d {
 }
 
 model MacroReport1d {
-  id             BigInt         @id @default(autoincrement())
-  reportCode     String         @db.VarChar(50)
-  reportName     String         @db.VarChar(200)
-  category       ReportCategory @default(OTHER)
-  eventDate      DateTime       @db.Date
-  releaseTime    DateTime?      @db.Timestamptz(6)
-  periodLabel    String?        @db.VarChar(32)
-  actual         Decimal?       @db.Decimal(24, 8)
-  forecast       Decimal?       @db.Decimal(24, 8)
-  previous       Decimal?       @db.Decimal(24, 8)
-  revised        Decimal?       @db.Decimal(24, 8)
-  surprise       Decimal?       @db.Decimal(24, 8)
-  surprisePct    Decimal?       @db.Decimal(10, 4)
-  unit           String?        @db.VarChar(24)
-  source         String?        @db.VarChar(100)
-  country        String?        @db.VarChar(64)
-  ingestedAt     DateTime       @default(now()) @db.Timestamptz(6)
-  knowledgeTime  DateTime       @default(now()) @db.Timestamptz(6)
-  rowHash        String?        @db.VarChar(64)
-  rawPayload     Json?
+  id            BigInt         @id @default(autoincrement())
+  reportCode    String         @db.VarChar(50)
+  reportName    String         @db.VarChar(200)
+  category      ReportCategory @default(OTHER)
+  eventDate     DateTime       @db.Date
+  releaseTime   DateTime?      @db.Timestamptz(6)
+  periodLabel   String?        @db.VarChar(32)
+  actual        Decimal?       @db.Decimal(24, 8)
+  forecast      Decimal?       @db.Decimal(24, 8)
+  previous      Decimal?       @db.Decimal(24, 8)
+  revised       Decimal?       @db.Decimal(24, 8)
+  surprise      Decimal?       @db.Decimal(24, 8)
+  surprisePct   Decimal?       @db.Decimal(10, 4)
+  unit          String?        @db.VarChar(24)
+  source        String?        @db.VarChar(100)
+  country       String?        @db.VarChar(64)
+  ingestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime       @default(now()) @db.Timestamptz(6)
+  rowHash       String?        @db.VarChar(64)
+  rawPayload    Json?
 
   @@unique([reportCode, eventDate], map: "macro_reports_1d_code_date_key")
   @@index([eventDate], map: "macro_reports_1d_date_idx")
@@ -474,22 +483,22 @@ model MacroReport1d {
 }
 
 model EconCalendar {
-  id            BigInt    @id @default(autoincrement())
-  eventDate     DateTime  @db.Date
-  eventTime     String?   @db.VarChar(16)
-  eventName     String    @db.VarChar(120)
-  eventType     String    @db.VarChar(64)
+  id            BigInt   @id @default(autoincrement())
+  eventDate     DateTime @db.Date
+  eventTime     String?  @db.VarChar(16)
+  eventName     String   @db.VarChar(120)
+  eventType     String   @db.VarChar(64)
   fredReleaseId Int?
-  fredSeriesId  String?   @db.VarChar(50)
-  frequency     String?   @db.VarChar(32)
-  forecast      Decimal?  @db.Decimal(24, 8)
-  previous      Decimal?  @db.Decimal(24, 8)
-  actual        Decimal?  @db.Decimal(24, 8)
-  surprise      Decimal?  @db.Decimal(24, 8)
-  impactRating  String?   @db.VarChar(16)
-  source        String?   @db.VarChar(64)
-  ingestedAt    DateTime  @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime  @default(now()) @db.Timestamptz(6)
+  fredSeriesId  String?  @db.VarChar(50)
+  frequency     String?  @db.VarChar(32)
+  forecast      Decimal? @db.Decimal(24, 8)
+  previous      Decimal? @db.Decimal(24, 8)
+  actual        Decimal? @db.Decimal(24, 8)
+  surprise      Decimal? @db.Decimal(24, 8)
+  impactRating  String?  @db.VarChar(16)
+  source        String?  @db.VarChar(64)
+  ingestedAt    DateTime @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime @default(now()) @db.Timestamptz(6)
   metadata      Json?
 
   @@unique([eventDate, eventName], map: "econ_calendar_date_name_key")
@@ -500,17 +509,17 @@ model EconCalendar {
 }
 
 model NewsSignal {
-  id             BigInt    @id @default(autoincrement())
+  id             BigInt   @id @default(autoincrement())
   title          String
-  link           String    @unique(map: "news_signals_link_key")
-  pubDate        DateTime  @db.Timestamptz(6)
-  source         String?   @db.VarChar(100)
-  query          String    @db.VarChar(200)
-  layer          String    @db.VarChar(64)
-  category       String    @db.VarChar(64)
-  sentimentScore Decimal?  @db.Decimal(8, 4)
-  relevanceScore Decimal?  @db.Decimal(8, 4)
-  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  link           String   @unique(map: "news_signals_link_key")
+  pubDate        DateTime @db.Timestamptz(6)
+  source         String?  @db.VarChar(100)
+  query          String   @db.VarChar(200)
+  layer          String   @db.VarChar(64)
+  category       String   @db.VarChar(64)
+  sentimentScore Decimal? @db.Decimal(8, 4)
+  relevanceScore Decimal? @db.Decimal(8, 4)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
   metadata       Json?
 
   @@index([pubDate], map: "news_signals_pub_date_idx")
@@ -521,17 +530,26 @@ model NewsSignal {
 }
 
 model EconomicSeries {
-  seriesId     String              @id @db.VarChar(50)
-  displayName  String?             @db.VarChar(200)
-  category     EconCategory        @default(OTHER)
-  source       DataSource
-  sourceSymbol String?             @db.VarChar(50)
-  frequency    String?             @db.VarChar(20)
-  units        String?             @db.VarChar(32)
-  isActive     Boolean             @default(true)
-  metadata     Json?
-  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime            @updatedAt @db.Timestamptz(6)
+  seriesId        String              @id @db.VarChar(50)
+  displayName     String?             @db.VarChar(200)
+  category        EconCategory        @default(OTHER)
+  source          DataSource
+  sourceSymbol    String?             @db.VarChar(50)
+  frequency       String?             @db.VarChar(20)
+  units           String?             @db.VarChar(32)
+  isActive        Boolean             @default(true)
+  metadata        Json?
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
+  econRates       EconRates1d[]
+  econYields      EconYields1d[]
+  econFx          EconFx1d[]
+  econVol         EconVolIndices1d[]
+  econInflation   EconInflation1d[]
+  econLabor       EconLabor1d[]
+  econActivity    EconActivity1d[]
+  econMoney       EconMoney1d[]
+  econCommodities EconCommodities1d[]
 
   @@index([category, isActive], map: "economic_series_category_active_idx")
   @@map("economic_series")
@@ -581,14 +599,14 @@ model MeasuredMoveSignal {
 }
 
 model IngestionRun {
-  id            BigInt           @id @default(autoincrement())
-  job           String           @db.VarChar(64)
-  startedAt     DateTime         @default(now()) @db.Timestamptz(6)
-  finishedAt    DateTime?        @db.Timestamptz(6)
-  status        IngestionStatus  @default(RUNNING)
-  rowsProcessed Int              @default(0)
-  rowsInserted  Int              @default(0)
-  rowsFailed    Int              @default(0)
+  id            BigInt          @id @default(autoincrement())
+  job           String          @db.VarChar(64)
+  startedAt     DateTime        @default(now()) @db.Timestamptz(6)
+  finishedAt    DateTime?       @db.Timestamptz(6)
+  status        IngestionStatus @default(RUNNING)
+  rowsProcessed Int             @default(0)
+  rowsInserted  Int             @default(0)
+  rowsFailed    Int             @default(0)
   details       Json?
 
   @@index([job, startedAt], map: "ingestion_runs_job_started_idx")
@@ -598,48 +616,48 @@ model IngestionRun {
 // ─── BHG (Break-Hook-Go) Setups ───────────────────────────────────────────
 
 model BhgSetup {
-  id               BigInt          @id @default(autoincrement())
-  setupId          String          @unique @db.VarChar(128)
-  direction        SignalDirection
-  timeframe        Timeframe
-  phase            BhgPhase
-  fibLevel         Decimal         @db.Decimal(18, 6)
-  fibRatio         Decimal         @db.Decimal(8, 6)
+  id        BigInt          @id @default(autoincrement())
+  setupId   String          @unique @db.VarChar(128)
+  direction SignalDirection
+  timeframe Timeframe
+  phase     BhgPhase
+  fibLevel  Decimal         @db.Decimal(18, 6)
+  fibRatio  Decimal         @db.Decimal(8, 6)
 
-  touchTime        DateTime?       @db.Timestamptz(6)
-  hookTime         DateTime?       @db.Timestamptz(6)
-  hookLow          Decimal?        @db.Decimal(18, 6)
-  hookHigh         Decimal?        @db.Decimal(18, 6)
-  hookClose        Decimal?        @db.Decimal(18, 6)
-  goTime           DateTime?       @db.Timestamptz(6)
-  goType           String?         @db.VarChar(10)
+  touchTime DateTime? @db.Timestamptz(6)
+  hookTime  DateTime? @db.Timestamptz(6)
+  hookLow   Decimal?  @db.Decimal(18, 6)
+  hookHigh  Decimal?  @db.Decimal(18, 6)
+  hookClose Decimal?  @db.Decimal(18, 6)
+  goTime    DateTime? @db.Timestamptz(6)
+  goType    String?   @db.VarChar(10)
 
-  entry            Decimal?        @db.Decimal(18, 6)
-  stopLoss         Decimal?        @db.Decimal(18, 6)
-  tp1              Decimal?        @db.Decimal(18, 6)
-  tp2              Decimal?        @db.Decimal(18, 6)
+  entry    Decimal? @db.Decimal(18, 6)
+  stopLoss Decimal? @db.Decimal(18, 6)
+  tp1      Decimal? @db.Decimal(18, 6)
+  tp2      Decimal? @db.Decimal(18, 6)
 
   // Outcome tracking (filled after horizon)
-  tp1Hit           Boolean?
-  tp2Hit           Boolean?
-  slHit            Boolean?
-  tp1HitTime       DateTime?       @db.Timestamptz(6)
-  tp2HitTime       DateTime?       @db.Timestamptz(6)
-  slHitTime        DateTime?       @db.Timestamptz(6)
-  maxFavorable     Decimal?        @db.Decimal(18, 6)
-  maxAdverse       Decimal?        @db.Decimal(18, 6)
+  tp1Hit       Boolean?
+  tp2Hit       Boolean?
+  slHit        Boolean?
+  tp1HitTime   DateTime? @db.Timestamptz(6)
+  tp2HitTime   DateTime? @db.Timestamptz(6)
+  slHitTime    DateTime? @db.Timestamptz(6)
+  maxFavorable Decimal?  @db.Decimal(18, 6)
+  maxAdverse   Decimal?  @db.Decimal(18, 6)
 
   // Model scoring
-  pTp1             Decimal?        @db.Decimal(8, 6)
-  pTp2             Decimal?        @db.Decimal(8, 6)
-  modelVersion     String?         @db.VarChar(64)
+  pTp1         Decimal? @db.Decimal(8, 6)
+  pTp2         Decimal? @db.Decimal(8, 6)
+  modelVersion String?  @db.VarChar(64)
 
   // Alignment at GO time
-  correlationScore Decimal?        @db.Decimal(8, 6)
-  vixLevel         Decimal?        @db.Decimal(10, 4)
+  correlationScore Decimal? @db.Decimal(8, 6)
+  vixLevel         Decimal? @db.Decimal(10, 4)
 
-  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
   @@index([direction, phase], map: "bhg_setups_direction_phase_idx")
   @@index([goTime], map: "bhg_setups_go_time_idx")
@@ -650,20 +668,20 @@ model BhgSetup {
 // ─── MES Model Registry ───────────────────────────────────────────────────
 
 model MesModelRegistry {
-  id             BigInt   @id @default(autoincrement())
-  modelName      String   @db.VarChar(128)
-  version        String   @db.VarChar(64)
-  trainedAt      DateTime @db.Timestamptz(6)
-  oofBrier       Decimal? @db.Decimal(10, 8)
-  oofLogLoss     Decimal? @db.Decimal(10, 8)
-  oofAuc         Decimal? @db.Decimal(10, 8)
-  trainRows      Int
-  features       Json
-  hyperparams    Json?
-  artifactPath   String?
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+  id           BigInt   @id @default(autoincrement())
+  modelName    String   @db.VarChar(128)
+  version      String   @db.VarChar(64)
+  trainedAt    DateTime @db.Timestamptz(6)
+  oofBrier     Decimal? @db.Decimal(10, 8)
+  oofLogLoss   Decimal? @db.Decimal(10, 8)
+  oofAuc       Decimal? @db.Decimal(10, 8)
+  trainRows    Int
+  features     Json
+  hyperparams  Json?
+  artifactPath String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
 
   @@unique([modelName, version], map: "mes_model_registry_name_version_key")
   @@map("mes_model_registry")
