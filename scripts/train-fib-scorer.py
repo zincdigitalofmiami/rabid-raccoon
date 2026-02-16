@@ -20,9 +20,11 @@ Outputs:
   models/fib_scorer/y1272/           (AutoGluon model)
   models/fib_scorer/y1618/           (AutoGluon model)
   datasets/autogluon/fib_scorer_oof.csv  (OOF predictions + grades)
+  models/reports/fib_scorer/{target}/    (metrics/charts/tear sheets)
 
 Setup:
   pip install "autogluon>=1.5" pandas scikit-learn
+  pip install -r requirements-finance.txt
   npx tsx scripts/build-bhg-dataset.ts   # Build dataset first
   python scripts/train-fib-scorer.py
 
@@ -35,6 +37,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from pathlib import Path
+import argparse
 from sklearn.metrics import (
     log_loss, roc_auc_score, brier_score_loss,
     classification_report
@@ -50,15 +53,33 @@ DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "bhg_setups.csv"
 MODEL_DIR = PROJECT_ROOT / "models" / "fib_scorer"
 OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "fib_scorer_oof.csv"
 
+# Parse CLI args
+parser = argparse.ArgumentParser()
+parser.add_argument("--time-limit", type=int, default=300, help="Seconds per fold")
+parser.add_argument("--presets", default="medium_quality", help="AutoGluon presets")
+parser.add_argument(
+    "--report-root",
+    default="models/reports",
+    help="Directory for model reports (relative to project root unless absolute).",
+)
+parser.add_argument(
+    "--skip-reports",
+    action="store_true",
+    help="Skip report artifact generation.",
+)
+args = parser.parse_args()
+
 TARGETS = {
     "y1272": {
         "column": "tp1_before_sl_4h",
+        "reward_col": "r_to_tp1",
         "purge_bars": 16,   # 4h in 15m bars
         "embargo_bars": 32,
         "weight": 0.30,
     },
     "y1618": {
         "column": "tp2_before_sl_8h",
+        "reward_col": "r_to_tp2",
         "purge_bars": 32,   # 8h in 15m bars
         "embargo_bars": 64,
         "weight": 0.70,
@@ -76,8 +97,11 @@ DROP_COLS = {
 GRADE_THRESHOLDS = {"A": 0.65, "B": 0.50, "C": 0.35}
 
 N_FOLDS = 5
-TIME_LIMIT_PER_FOLD = 300
-PRESETS = "medium_quality"
+TIME_LIMIT_PER_FOLD = args.time_limit
+PRESETS = args.presets
+REPORT_ROOT = Path(args.report_root)
+if not REPORT_ROOT.is_absolute():
+    REPORT_ROOT = PROJECT_ROOT / REPORT_ROOT
 
 
 # ─── Walk-Forward Splitter ────────────────────────────────────────────────────
@@ -134,6 +158,17 @@ def main():
         print("Install with: pip install 'autogluon>=1.5' pandas scikit-learn")
         sys.exit(1)
 
+    generate_classification_report = None
+    if not args.skip_reports:
+        try:
+            from model_report_utils import generate_classification_report as _generate_classification_report
+            generate_classification_report = _generate_classification_report
+        except Exception as exc:
+            print("ERROR: Report dependencies are unavailable.")
+            print("Install with: pip install -r requirements-finance.txt")
+            print(f"Details: {exc}")
+            sys.exit(1)
+
     print(f"Loading dataset from {DATASET_PATH}")
     if not DATASET_PATH.exists():
         print(f"ERROR: Dataset not found. Run: npx tsx scripts/build-bhg-dataset.ts")
@@ -141,6 +176,8 @@ def main():
 
     df = pd.read_csv(DATASET_PATH)
     print(f"  Rows: {len(df):,}  Columns: {len(df.columns)}")
+    print(f"  Presets: {PRESETS}  Time limit/fold: {TIME_LIMIT_PER_FOLD}s")
+    print(f"  Reports: {'disabled' if args.skip_reports else REPORT_ROOT}")
 
     # Sort by go_time (critical for walk-forward)
     df = df.sort_values("go_time").reset_index(drop=True)
@@ -228,7 +265,7 @@ def main():
             else:
                 prob_pos = probs.values if hasattr(probs, 'values') else np.array(probs)
 
-            oof_probs.iloc[val_idx[:len(prob_pos)]] = prob_pos
+            oof_probs.loc[val_data.index] = prob_pos
 
             # Fold metrics
             actuals = val_data[target_col].values
@@ -242,8 +279,9 @@ def main():
         oof_actual = df_valid.loc[oof_mask, target_col].values.astype(int)
         oof_pred = oof_probs[oof_mask].values
 
-        if len(oof_actual) > 0 and len(set(oof_actual)) > 1:
-            auc = roc_auc_score(oof_actual, oof_pred)
+        if len(oof_actual) > 0:
+            has_two_classes = len(set(oof_actual)) > 1
+            auc = roc_auc_score(oof_actual, oof_pred) if has_two_classes else float("nan")
             brier = brier_score_loss(oof_actual, oof_pred)
             logloss = log_loss(oof_actual, oof_pred, labels=[0, 1])
 
@@ -253,19 +291,57 @@ def main():
             }
 
             print(f"\n  OOF Results ({target_name}):")
-            print(f"    AUC:      {auc:.4f}")
+            auc_str = f"{auc:.4f}" if np.isfinite(auc) else "n/a (single class)"
+            print(f"    AUC:      {auc_str}")
             print(f"    Brier:    {brier:.4f}")
             print(f"    LogLoss:  {logloss:.4f}")
             print(f"    n:        {len(oof_actual):,}")
             print(f"    Pos rate: {oof_actual.mean():.3f}")
 
-            # Classification at 0.5 threshold
-            preds_binary = (oof_pred >= 0.5).astype(int)
-            print(f"\n  Classification Report (threshold=0.5):")
-            print(classification_report(oof_actual, preds_binary, target_names=["SL Hit", "TP Hit"]))
+            if has_two_classes:
+                # Classification at 0.5 threshold
+                preds_binary = (oof_pred >= 0.5).astype(int)
+                print(f"\n  Classification Report (threshold=0.5):")
+                print(classification_report(oof_actual, preds_binary, target_names=["SL Hit", "TP Hit"]))
 
-            # Calibration
-            print_calibration(oof_actual, oof_pred, target_name)
+                # Calibration
+                print_calibration(oof_actual, oof_pred, target_name)
+            else:
+                print("  Classification report skipped (single-class OOF labels)")
+
+            if generate_classification_report is not None:
+                reward_col = config["reward_col"]
+                reward_r = (
+                    df_valid.loc[oof_mask, reward_col]
+                    .fillna(1.0)
+                    .clip(lower=0.01)
+                    .to_numpy(dtype=float)
+                )
+                expected_payoff = np.where(oof_actual == 1, reward_r, -1.0)
+                report_dir = REPORT_ROOT / "fib_scorer" / target_name
+                report_summary = generate_classification_report(
+                    model_name=f"fib_scorer_{target_name}",
+                    timestamps=df_valid.loc[oof_mask, "go_timestamp"],
+                    y_true=oof_actual,
+                    y_prob=oof_pred,
+                    expected_payoff=expected_payoff,
+                    out_dir=report_dir,
+                    metadata={
+                        "target": target_name,
+                        "target_col": target_col,
+                        "reward_col": reward_col,
+                        "folds": len(splits),
+                        "purge_bars": purge,
+                        "embargo_bars": embargo,
+                        "presets": PRESETS,
+                        "time_limit_per_fold": TIME_LIMIT_PER_FOLD,
+                        "feature_count": len(feature_cols),
+                    },
+                )
+                results[target_name]["report_summary"] = str(report_dir / "summary.json")
+                pyfolio = report_summary.get("pyfolio", {})
+                pyfolio_state = "enabled" if pyfolio.get("enabled") else "skipped"
+                print(f"    Report: {report_dir} (pyfolio: {pyfolio_state})")
         else:
             print(f"  WARNING: Insufficient OOF predictions for {target_name}")
 
@@ -273,9 +349,10 @@ def main():
         oof_col = f"oof_{target_name}"
         oof_series = pd.Series(np.nan, index=df.index, dtype=float)
         valid_indices = df.index[valid_mask]
-        for vi, oi in zip(valid_indices[oof_mask.values], range(oof_mask.sum())):
-            oof_series.iloc[vi] = oof_probs[oof_mask].iloc[oi]
+        oof_series.iloc[valid_indices[oof_mask.values]] = oof_probs[oof_mask].to_numpy(dtype=float)
         oof_df[oof_col] = oof_series
+        oof_df[f"actual_{target_name}"] = pd.Series(np.nan, index=df.index, dtype=float)
+        oof_df.loc[valid_indices, f"actual_{target_name}"] = df_valid[target_col].astype(float).values
 
     # ─── Composite Score + Grade ──────────────────────────────────────────
 

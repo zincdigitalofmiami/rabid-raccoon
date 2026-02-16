@@ -27,10 +27,12 @@ AutoGluon best_quality preset:
 Outputs:
   - models/core_forecaster/{horizon}/   (AutoGluon model artifacts)
   - datasets/autogluon/core_oof_{dataset}.csv (OOF predictions + MAE per row)
+  - models/reports/core_forecaster/{dataset}/{horizon}/ (metrics/charts/tear sheets)
   - Console: OOF MAE, RMSE, R^2 per horizon
 
 Setup:
   pip install "autogluon>=1.5" pandas scikit-learn
+  pip install -r requirements-finance.txt
   python scripts/train-core-forecaster.py --dataset=1h
   python scripts/train-core-forecaster.py --dataset=1h --horizons=1h --presets=medium_quality --time-limit=120
 
@@ -59,6 +61,16 @@ parser.add_argument("--dataset", default="1h", choices=["1h", "15m"])
 parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (e.g. 15m,1h)")
 parser.add_argument("--presets", default="best_quality", help="AutoGluon presets (best_quality, medium_quality, etc.)")
 parser.add_argument("--time-limit", type=int, default=3600, help="Seconds per fold (3600 = 1 hour)")
+parser.add_argument(
+    "--report-root",
+    default="models/reports",
+    help="Directory for model reports (relative to project root unless absolute).",
+)
+parser.add_argument(
+    "--skip-reports",
+    action="store_true",
+    help="Skip report artifact generation.",
+)
 args = parser.parse_args()
 
 DATASET_CONFIGS = {
@@ -104,6 +116,9 @@ if args.horizons:
 N_FOLDS = 5
 TIME_LIMIT_PER_FOLD = args.time_limit
 PRESETS = args.presets
+REPORT_ROOT = Path(args.report_root)
+if not REPORT_ROOT.is_absolute():
+    REPORT_ROOT = PROJECT_ROOT / REPORT_ROOT
 
 
 # ─── Walk-Forward Splitter ────────────────────────────────────────────────────
@@ -145,10 +160,22 @@ def main():
         print("Install with: pip install 'autogluon>=1.5' pandas scikit-learn")
         sys.exit(1)
 
+    generate_regression_report = None
+    if not args.skip_reports:
+        try:
+            from model_report_utils import generate_regression_report as _generate_regression_report
+            generate_regression_report = _generate_regression_report
+        except Exception as exc:
+            print("ERROR: Report dependencies are unavailable.")
+            print("Install with: pip install -r requirements-finance.txt")
+            print(f"Details: {exc}")
+            sys.exit(1)
+
     print(f"Loading dataset from {DATASET_PATH}")
     df = pd.read_csv(DATASET_PATH)
     print(f"  Rows: {len(df):,}  Columns: {len(df.columns)}")
     print(f"  Presets: {PRESETS}  Time limit/fold: {TIME_LIMIT_PER_FOLD}s")
+    print(f"  Reports: {'disabled' if args.skip_reports else REPORT_ROOT}")
 
     # Sort by timestamp (critical for walk-forward)
     df = df.sort_values("timestamp").reset_index(drop=True)
@@ -240,12 +267,13 @@ def main():
             print(leaderboard.head(10).to_string())
 
             preds = predictor.predict(val_data[feature_cols])
-            oof_preds.iloc[val_idx[:len(preds)]] = preds.values
+            preds_np = preds.to_numpy() if hasattr(preds, "to_numpy") else np.asarray(preds)
+            oof_preds.loc[val_data.index] = preds_np
 
             # Fold metrics
             actuals = val_data[target_col].values
-            fold_mae = mean_absolute_error(actuals, preds.values)
-            fold_rmse = np.sqrt(mean_squared_error(actuals, preds.values))
+            fold_mae = mean_absolute_error(actuals, preds_np)
+            fold_rmse = np.sqrt(mean_squared_error(actuals, preds_np))
             print(f"\n    Fold MAE: {fold_mae:.6f}  RMSE: {fold_rmse:.6f}")
 
         # Overall OOF metrics
@@ -265,6 +293,31 @@ def main():
             print(f"    RMSE: {rmse:.6f}")
             print(f"    R^2:  {r2:.4f}")
             print(f"    n:    {len(oof_actual):,}")
+
+            if generate_regression_report is not None:
+                report_dir = REPORT_ROOT / "core_forecaster" / args.dataset / horizon_name
+                report_summary = generate_regression_report(
+                    model_name=f"core_forecaster_{args.dataset}_{horizon_name}",
+                    timestamps=df.loc[oof_mask, "timestamp"],
+                    actual=oof_actual,
+                    predicted=oof_pred,
+                    out_dir=report_dir,
+                    metadata={
+                        "dataset": args.dataset,
+                        "horizon": horizon_name,
+                        "target_col": target_col,
+                        "folds": len(splits),
+                        "purge_bars": purge,
+                        "embargo_bars": embargo,
+                        "presets": PRESETS,
+                        "time_limit_per_fold": TIME_LIMIT_PER_FOLD,
+                        "feature_count": len(feature_cols),
+                    },
+                )
+                results[horizon_name]["report_summary"] = str(report_dir / "summary.json")
+                pyfolio = report_summary.get("pyfolio", {})
+                pyfolio_state = "enabled" if pyfolio.get("enabled") else "skipped"
+                print(f"    Report: {report_dir} (pyfolio: {pyfolio_state})")
         else:
             print(f"  WARNING: No OOF predictions for {horizon_name}")
 

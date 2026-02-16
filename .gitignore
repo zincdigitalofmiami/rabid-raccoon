@@ -27,9 +27,11 @@ mes_hft_halsey/output/
 datasets/autogluon/
 models/core_forecaster/
 models/fib_scorer/
+models/reports/
 **/__pycache__/
 *.pyc
 .venv-autogluon/
+.venv-finance/
 /tsconfig.tsbuildinfo
 
 /src/generated/prisma

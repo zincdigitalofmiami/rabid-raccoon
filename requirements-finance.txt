@@ -1,0 +1,15 @@
+# Core scientific stack from ActiveState finance package list
+scipy==1.17.0
+statsmodels==0.14.6
+quandl==3.7.0
+QuantLib==1.41
+
+# Modern maintained replacements for legacy packages
+# Legacy pyfolio/zipline fail on modern Python (3.12+).
+zipline-reloaded==3.1.1
+pyfolio-reloaded==0.9.9
+
+# Reporting + plotting
+matplotlib==3.10.8
+seaborn==0.13.2
+scikit-learn==1.8.0
