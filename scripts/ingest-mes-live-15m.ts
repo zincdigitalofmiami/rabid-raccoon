@@ -14,9 +14,12 @@ const MES_SYMBOL = 'MES.c.0'
 const SOURCE_SCHEMA = 'ohlcv-1m'
 const INSERT_BATCH_SIZE = 1000
 const ENTRY_TIMEFRAME_MINUTES = 15
+// Match the chart backfill window so stale partial bars are repaired quickly.
+const RECENT_REFRESH_CANDLES = 96
 
 interface LiveIngestSummary {
   rowsInserted: number
+  rowsRefreshed: number
   rowsProcessed: number
   lookbackMinutes: number
   pollSeconds: number
@@ -44,7 +47,9 @@ function dedupeAndSort(candles: ReturnType<typeof toCandles>): ReturnType<typeof
   return [...byTime.values()].sort((a, b) => a.time - b.time)
 }
 
-async function upsertMes15m(candles: ReturnType<typeof aggregateCandles>): Promise<{ processed: number; inserted: number }> {
+async function upsertMes15m(
+  candles: ReturnType<typeof aggregateCandles>
+): Promise<{ processed: number; inserted: number; rowsRefreshed: number }> {
   const rows: Prisma.MktFuturesMes15mCreateManyInput[] = candles
     .filter((c) => c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0)
     .map((candle) => {
@@ -73,7 +78,31 @@ async function upsertMes15m(candles: ReturnType<typeof aggregateCandles>): Promi
     inserted += result.count
   }
 
-  return { processed: rows.length, inserted }
+  // Refresh recent candles so the active bar (same eventTime) does not go stale.
+  // We intentionally avoid refreshing the full lookback window every cycle.
+  const refreshTail = rows.slice(-Math.min(RECENT_REFRESH_CANDLES, rows.length))
+  for (const row of refreshTail) {
+    await prisma.mktFuturesMes15m.upsert({
+      where: { eventTime: row.eventTime },
+      create: row,
+      update: {
+        open: row.open,
+        high: row.high,
+        low: row.low,
+        close: row.close,
+        volume: row.volume ?? null,
+        source: row.source,
+        sourceDataset: row.sourceDataset ?? null,
+        sourceSchema: row.sourceSchema ?? null,
+        rowHash: row.rowHash ?? null,
+        metadata: row.metadata ?? undefined,
+        ingestedAt: new Date(),
+        knowledgeTime: new Date(),
+      },
+    })
+  }
+
+  return { processed: rows.length, inserted, rowsRefreshed: refreshTail.length }
 }
 
 async function ingestOnce(lookbackMinutes: number): Promise<LiveIngestSummary> {
@@ -95,6 +124,7 @@ async function ingestOnce(lookbackMinutes: number): Promise<LiveIngestSummary> {
 
   return {
     rowsInserted: upserted.inserted,
+    rowsRefreshed: upserted.rowsRefreshed,
     rowsProcessed: upserted.processed,
     lookbackMinutes,
     pollSeconds: 0,
@@ -134,6 +164,7 @@ export async function runMesLiveIngestion15m(): Promise<void> {
   })
 
   let totalInserted = 0
+  let totalRefreshed = 0
   let totalProcessed = 0
 
   const onExit = async () => {
@@ -144,7 +175,14 @@ export async function runMesLiveIngestion15m(): Promise<void> {
         finishedAt: new Date(),
         rowsProcessed: totalProcessed,
         rowsInserted: totalInserted,
-        details: toJson({ lookbackMinutes, pollSeconds, mode: 'stream', timeframe: '15m', stoppedBy: 'signal' }),
+        details: toJson({
+          lookbackMinutes,
+          pollSeconds,
+          mode: 'stream',
+          timeframe: '15m',
+          rowsRefreshed: totalRefreshed,
+          stoppedBy: 'signal',
+        }),
       },
     })
     await prisma.$disconnect()
@@ -158,9 +196,10 @@ export async function runMesLiveIngestion15m(): Promise<void> {
     try {
       const result = await ingestOnce(lookbackMinutes)
       totalInserted += result.rowsInserted
+      totalRefreshed += result.rowsRefreshed
       totalProcessed += result.rowsProcessed
       console.log(
-        `[mes-live-15m] processed=${result.rowsProcessed} inserted=${result.rowsInserted} totalInserted=${totalInserted}`
+        `[mes-live-15m] processed=${result.rowsProcessed} inserted=${result.rowsInserted} refreshed=${result.rowsRefreshed} totalInserted=${totalInserted}`
       )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

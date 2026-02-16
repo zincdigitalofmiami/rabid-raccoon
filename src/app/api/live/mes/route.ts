@@ -15,12 +15,21 @@ interface MesPricePoint {
   volume?: number
 }
 
+interface MesRow {
+  eventTime: Date
+  open: Decimal | number
+  high: Decimal | number
+  low: Decimal | number
+  close: Decimal | number
+  volume: bigint | null
+}
+
 function encodeSse(event: string, payload: unknown): Uint8Array {
   const body = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
   return new TextEncoder().encode(body)
 }
 
-function asPoint(row: { eventTime: Date; open: Decimal | number; high: Decimal | number; low: Decimal | number; close: Decimal | number; volume: bigint | null }): MesPricePoint {
+function asPoint(row: MesRow): MesPricePoint {
   return {
     time: Math.floor(row.eventTime.getTime() / 1000),
     open: toNum(row.open),
@@ -29,6 +38,17 @@ function asPoint(row: { eventTime: Date; open: Decimal | number; high: Decimal |
     close: toNum(row.close),
     volume: row.volume == null ? 0 : Number(row.volume),
   }
+}
+
+function rowFingerprint(row: MesRow): string {
+  return [
+    row.eventTime.getTime(),
+    toNum(row.open),
+    toNum(row.high),
+    toNum(row.low),
+    toNum(row.close),
+    row.volume == null ? 0 : Number(row.volume),
+  ].join('|')
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -41,7 +61,7 @@ export async function GET(request: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false
-      let lastEventTime: Date | null = null
+      const knownRows = new Map<number, string>()
 
       const pushErrorAndClose = (message: string) => {
         if (closed) return
@@ -64,7 +84,9 @@ export async function GET(request: Request): Promise<Response> {
         }
 
         const sorted = [...initial].reverse()
-        lastEventTime = sorted[sorted.length - 1].eventTime
+        for (const row of sorted) {
+          knownRows.set(row.eventTime.getTime(), rowFingerprint(row))
+        }
 
         controller.enqueue(
           encodeSse('snapshot', {
@@ -78,27 +100,43 @@ export async function GET(request: Request): Promise<Response> {
       }
 
       const interval = setInterval(async () => {
-        if (closed || !lastEventTime) return
+        if (closed) return
         try {
-          const updates = await prisma.mktFuturesMes15m.findMany({
-            where: {
-              eventTime: {
-                gt: lastEventTime,
-              },
-            },
-            orderBy: { eventTime: 'asc' },
-            take: 500,
+          const latest = await prisma.mktFuturesMes15m.findMany({
+            orderBy: { eventTime: 'desc' },
+            take: Math.max(80, Math.min(400, backfillCount)),
           })
 
-          if (updates.length === 0) {
+          if (latest.length === 0) {
             controller.enqueue(encodeSse('ping', { ts: Date.now() }))
             return
           }
 
-          lastEventTime = updates[updates.length - 1].eventTime
+          const sorted = [...latest].reverse()
+          const changed = sorted.filter((row) => {
+            const key = row.eventTime.getTime()
+            const next = rowFingerprint(row)
+            const prev = knownRows.get(key)
+            if (prev === next) return false
+            knownRows.set(key, next)
+            return true
+          })
+
+          const keep = new Set(sorted.map((r) => r.eventTime.getTime()))
+          if (knownRows.size > 800) {
+            for (const key of knownRows.keys()) {
+              if (!keep.has(key)) knownRows.delete(key)
+            }
+          }
+
+          if (changed.length === 0) {
+            controller.enqueue(encodeSse('ping', { ts: Date.now() }))
+            return
+          }
+
           controller.enqueue(
             encodeSse('update', {
-              points: updates.map(asPoint),
+              points: changed.map(asPoint),
             })
           )
         } catch (error) {
