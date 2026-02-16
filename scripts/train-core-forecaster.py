@@ -23,9 +23,12 @@ Outputs:
   - Console: OOF MAE, RMSE, R^2 per horizon
 
 Setup:
-  pip install autogluon==1.2 pandas scikit-learn
+  pip install "autogluon>=1.5" pandas scikit-learn
   python scripts/train-core-forecaster.py --dataset=15m
   python scripts/train-core-forecaster.py --dataset=1h --horizons=24h,1w
+
+Note: AutoGluon >=1.5 TabularPredictor auto-detects text columns (headlines_7d)
+and uses transformer embeddings via MultiModal — no custom NLP needed.
 """
 
 import sys
@@ -132,7 +135,7 @@ def main():
         from autogluon.tabular import TabularPredictor
     except ImportError:
         print("ERROR: AutoGluon not installed.")
-        print("Install with: pip install autogluon==1.2 pandas scikit-learn")
+        print("Install with: pip install 'autogluon>=1.5' pandas scikit-learn")
         sys.exit(1)
 
     print(f"Loading dataset from {DATASET_PATH}")

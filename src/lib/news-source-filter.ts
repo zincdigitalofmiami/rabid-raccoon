@@ -12,27 +12,18 @@ const TRUSTED_SOURCES = new Set([
   'investopedia', 'benzinga', 'zacks', 'morningstar', 'thestreet',
 ])
 
-const BLOCKED_TLD_PATTERNS = ['.ru', '.vn', '.cn', '.ir', '.kp']
-
 /**
  * Check if a news source/domain is acceptable.
- * Trusted sources pass immediately, blocked TLDs are rejected,
- * everything else passes through.
+ * Whitelist-only: only trusted sources pass. Everything else is rejected.
  */
 export function isAcceptableSource(source: string): boolean {
   const lower = source.toLowerCase().trim()
 
-  // Check trusted
   for (const trusted of TRUSTED_SOURCES) {
     if (lower.includes(trusted)) return true
   }
 
-  // Check blocked TLDs
-  for (const tld of BLOCKED_TLD_PATTERNS) {
-    if (lower.endsWith(tld)) return false
-  }
-
-  return true
+  return false
 }
 
 /**

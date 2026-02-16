@@ -22,9 +22,12 @@ Outputs:
   datasets/autogluon/fib_scorer_oof.csv  (OOF predictions + grades)
 
 Setup:
-  pip install autogluon==1.2 pandas scikit-learn
+  pip install "autogluon>=1.5" pandas scikit-learn
   npx tsx scripts/build-bhg-dataset.ts   # Build dataset first
   python scripts/train-fib-scorer.py
+
+Note: AutoGluon >=1.5 TabularPredictor auto-detects text columns (headlines_24h)
+and uses transformer embeddings via MultiModal — no custom NLP needed.
 """
 
 import sys
@@ -128,7 +131,7 @@ def main():
         from autogluon.tabular import TabularPredictor
     except ImportError:
         print("ERROR: AutoGluon not installed.")
-        print("Install with: pip install autogluon==1.2 pandas scikit-learn")
+        print("Install with: pip install 'autogluon>=1.5' pandas scikit-learn")
         sys.exit(1)
 
     print(f"Loading dataset from {DATASET_PATH}")

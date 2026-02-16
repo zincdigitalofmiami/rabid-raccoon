@@ -34,6 +34,7 @@ import { computeRisk, MES_DEFAULTS } from '../src/lib/risk-engine'
 import type { CandleData, FibResult } from '../src/lib/types'
 import { toNum } from '../src/lib/decimal'
 import type { Decimal } from '@prisma/client/runtime/client'
+import { dateKeyUtc, laggedWindowKeys, shiftUtcDays } from './feature-availability'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -49,6 +50,7 @@ const LABEL_HORIZONS = {
   tp1_before_sl_4h: 16,  // 4h = 16 bars
   tp2_before_sl_8h: 32,  // 8h = 32 bars
 }
+const FRED_ENRICH_LAG_DAYS = 1
 
 // Session buckets (CT = Central Time)
 function getSessionBucket(unixSeconds: number): string {
@@ -210,6 +212,9 @@ interface GoEventFeatures {
   dollar_risk: number
   rr: number
   grade: string
+
+  // Headlines
+  headlines_24h: string
 
   // Labels
   tp1_before_sl_1h: number | null
@@ -450,6 +455,8 @@ function computeGoFeatures(
     rr: risk.rr,
     grade: risk.grade,
 
+    headlines_24h: '',  // Filled in post-processing
+
     tp1_before_sl_1h,
     tp1_before_sl_4h,
     tp2_before_sl_8h,
@@ -550,10 +557,11 @@ function enrichWithFred(
   features: GoEventFeatures,
   fredSnapshots: Map<string, FredSnapshot>
 ): GoEventFeatures {
-  // Find closest available date (look back up to 5 days for weekends)
+  // Use lagged availability date, then look back up to 5 days for weekends/holidays.
+  const effectiveDate = shiftUtcDays(new Date(features.go_time * 1000), -FRED_ENRICH_LAG_DAYS)
   let snapshot: FredSnapshot | undefined
   for (let d = 0; d < 5; d++) {
-    const lookDate = new Date(features.go_time * 1000 - d * 86400000).toISOString().slice(0, 10)
+    const lookDate = dateKeyUtc(shiftUtcDays(effectiveDate, -d))
     snapshot = fredSnapshots.get(lookDate)
     if (snapshot) break
   }
@@ -563,7 +571,7 @@ function enrichWithFred(
   // VIX change (1d)
   let vixChange: number | null = null
   if (snapshot.vix != null) {
-    const prevDate = new Date(features.go_time * 1000 - 86400000).toISOString().slice(0, 10)
+    const prevDate = dateKeyUtc(shiftUtcDays(effectiveDate, -1))
     const prevSnap = fredSnapshots.get(prevDate)
     if (prevSnap?.vix != null && prevSnap.vix > 0) {
       vixChange = (snapshot.vix - prevSnap.vix) / prevSnap.vix
@@ -631,8 +639,16 @@ async function main() {
 
   // 2. Load FRED data for enrichment
   console.log('  Loading FRED snapshots...')
+  console.log('  Anti-leakage policy: FRED snapshot enrichment lagged by 1 day')
   const fredSnapshots = await loadFredSnapshots()
   console.log(`  FRED snapshots: ${fredSnapshots.size.toLocaleString()} dates`)
+
+  // 2b. Load headlines from news_signals
+  const newsSignals = await prisma.newsSignal.findMany({
+    select: { title: true, pubDate: true },
+    orderBy: { pubDate: 'asc' },
+  })
+  console.log(`  News signals (headlines): ${newsSignals.length} rows`)
 
   // 3. Slide window over candles, run BHG engine, collect GO events
   const goEvents: GoEventFeatures[] = []
@@ -676,6 +692,20 @@ async function main() {
 
       if (features) {
         const enriched = enrichWithFred(features, fredSnapshots)
+
+        // Headlines from news_signals (lagged 1 day, 24h window)
+        const goDate = new Date(features.go_time * 1000)
+        const { startKey: h24Start, endKey: h24End } = laggedWindowKeys(goDate, 1, 1)
+        const headlineTexts: string[] = []
+        for (const ns of newsSignals) {
+          const nk = dateKeyUtc(ns.pubDate)
+          if (nk >= h24Start && nk <= h24End) {
+            headlineTexts.push(ns.title)
+            if (headlineTexts.length >= 20) break
+          }
+        }
+        enriched.headlines_24h = headlineTexts.join(' | ')
+
         goEvents.push(enriched)
       }
     }

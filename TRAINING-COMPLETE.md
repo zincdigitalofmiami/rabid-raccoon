@@ -21,12 +21,13 @@ This is the FULL PRODUCTION training pipeline pulling **EVERY** data source and 
 - ✅ `econ_money_1d` - Money supply (M1, M2, etc)
 - ✅ `econ_commodities_1d` - Commodity prices
 
-### News & Policy (3 tables):
+### News & Policy (4 tables):
 - ✅ `econ_news_1d` - Economic news (Fed, SEC, ECB, BEA, EIA press)
 - ✅ `policy_news_1d` - Policy news (CFTC, regulatory)
 - ✅ `macro_reports_1d` - Macro surprises
+- ✅ `news_signals` - Google News headlines (whitelist-filtered: Reuters, Bloomberg, CNBC, WSJ, etc.)
 
-**Total: 22 tables, 60+ symbols, 10,000+ economic series**
+**Total: 23 tables, 60+ symbols, 10,000+ economic series**
 
 ## AutoGluon 1.5 Model Zoo (ALL 35+ Models)
 
@@ -75,17 +76,15 @@ This is the FULL PRODUCTION training pipeline pulling **EVERY** data source and 
 npx tsx scripts/build-complete-dataset.ts --days-back 730 --out datasets/autogluon/mes_1h_complete.csv
 ```
 
-Features generated:
-- Time features: hour_utc, day_of_week_utc, month start/end
-- Rates (aggregated): avg, min, max, count
-- Yields (aggregated): avg, min, max, count
-- FX (aggregated): avg, min, max, count
-- Inflation, Labor, Activity, Money Supply (aggregated)
-- Commodities, Market Indexes, Spot Prices (aggregated)
-- VIX level
-- News counts (7-day rolling): total, Fed, SEC, ECB
-- Policy sentiment & impact (7-day rolling)
-- Macro surprise averages (7-day rolling)
+Features generated (~85 columns):
+- Time features: hour_utc, day_of_week, session flags, month start/end
+- MES technicals: returns (1h/4h/8h/24h), RSI, rolling MAs, stdev, range, body ratio, vol ratio
+- Individual FRED series (38 columns): VIX, VVIX, OVX, GVZ, credit spreads, yields, FX, inflation, commodities, Fed balance sheet, claims
+- Derived features: yield curve slope/curvature, real rates, credit spread diff, VIX term structure, Fed liquidity
+- News counts (7-day rolling): total, Fed
+- Policy count (7-day rolling)
+- **headlines_7d** (text): Raw news headlines from trusted sources (Reuters, Bloomberg, CNBC, WSJ, etc.) — AutoGluon 1.5 auto-detects and embeds via transformer
+- Forward return targets: 1h, 4h, 8h, 24h, 1w
 
 ### Step 2: Train on ALL Symbols from Database
 
@@ -143,7 +142,7 @@ With complete data sources and full model zoo:
 - **Training time**: 2-4 hours (extreme quality)
 - **Models trained**: 25-35 (depends on time limit and data)
 - **Symbols**: 60+ (from database) or 65+ (from Databento)
-- **Features**: 35+ (all economic + news + policy)
+- **Features**: 85+ (FRED macro + technicals + news text + policy)
 - **MASE score**: < 0.3 (lower is better)
 
 ## Performance Optimization
@@ -156,10 +155,14 @@ Training on 60+ symbols provides:
 - Improved MES forecasts via transfer learning
 
 ### Feature Engineering
-All features use proper as-of-date lookups:
-- Economic data: Use last known value (no future leakage)
-- News/Policy: 7-day rolling windows
+All features use proper as-of-date lookups with anti-leakage lag:
+- Economic data: Use last known value with conservative lag (daily=1d, weekly=8d, monthly=35d, quarterly=100d)
+- News/Policy counts: 7-day rolling windows, lagged 1 day
+- Headlines text: 7-day window (or 24h for BHG), lagged 1 day — no same-day leakage
 - Time features: Known in advance
+
+### AutoGluon 1.5 MultiModal Text Features
+TabularPredictor auto-detects text columns (`headlines_7d`, `headlines_24h`) and uses transformer embeddings. No custom NLP, no sentiment scoring — the model learns directly from raw headlines during training.
 
 ### Model Selection
 AutoGluon automatically:

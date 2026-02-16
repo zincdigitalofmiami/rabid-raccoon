@@ -21,6 +21,12 @@
 import { prisma } from '../src/lib/prisma'
 import { toNum } from '../src/lib/decimal'
 import { loadDotEnvFiles, parseArg } from './ingest-utils'
+import {
+  asofLookupByDateKey,
+  conservativeLagDaysForFrequency,
+  dateKeyUtc,
+  laggedWindowKeys,
+} from './feature-availability'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -31,63 +37,88 @@ interface FredSeriesConfig {
   seriesId: string
   column: string
   table: string
+  frequency: 'daily' | 'weekly' | 'monthly' | 'quarterly'
 }
 
 const FRED_FEATURES: FredSeriesConfig[] = [
   // Volatility & risk
-  { seriesId: 'VIXCLS', column: 'fred_vix', table: 'econ_vol_indices_1d' },
-  { seriesId: 'VXVCLS', column: 'fred_vvix', table: 'econ_vol_indices_1d' },
-  { seriesId: 'OVXCLS', column: 'fred_ovx', table: 'econ_vol_indices_1d' },
-  { seriesId: 'GVZCLS', column: 'fred_gvz', table: 'econ_vol_indices_1d' },
-  { seriesId: 'BAMLC0A0CM', column: 'fred_ig_oas', table: 'econ_vol_indices_1d' },
-  { seriesId: 'BAMLH0A0HYM2', column: 'fred_hy_oas', table: 'econ_vol_indices_1d' },
-  { seriesId: 'NFCI', column: 'fred_nfci', table: 'econ_vol_indices_1d' },
-  { seriesId: 'STLFSI4', column: 'fred_stlfsi', table: 'econ_vol_indices_1d' },
-  { seriesId: 'USEPUINDXD', column: 'fred_epu', table: 'econ_vol_indices_1d' },
-  { seriesId: 'SP500', column: 'fred_sp500', table: 'econ_vol_indices_1d' },
-  { seriesId: 'NASDAQCOM', column: 'fred_nasdaq', table: 'econ_vol_indices_1d' },
+  { seriesId: 'VIXCLS', column: 'fred_vix', table: 'econ_vol_indices_1d', frequency: 'daily' },
+  { seriesId: 'VXVCLS', column: 'fred_vvix', table: 'econ_vol_indices_1d', frequency: 'daily' },
+  { seriesId: 'OVXCLS', column: 'fred_ovx', table: 'econ_vol_indices_1d', frequency: 'daily' },
+  { seriesId: 'GVZCLS', column: 'fred_gvz', table: 'econ_vol_indices_1d', frequency: 'daily' },
+  { seriesId: 'BAMLC0A0CM', column: 'fred_ig_oas', table: 'econ_vol_indices_1d', frequency: 'daily' },
+  { seriesId: 'BAMLH0A0HYM2', column: 'fred_hy_oas', table: 'econ_vol_indices_1d', frequency: 'daily' },
+  { seriesId: 'NFCI', column: 'fred_nfci', table: 'econ_vol_indices_1d', frequency: 'weekly' },
+  { seriesId: 'STLFSI4', column: 'fred_stlfsi', table: 'econ_vol_indices_1d', frequency: 'weekly' },
+  { seriesId: 'USEPUINDXD', column: 'fred_epu', table: 'econ_vol_indices_1d', frequency: 'daily' },
+  { seriesId: 'SP500', column: 'fred_sp500', table: 'econ_vol_indices_1d', frequency: 'daily' },
+  { seriesId: 'NASDAQCOM', column: 'fred_nasdaq', table: 'econ_vol_indices_1d', frequency: 'daily' },
 
   // Rates
-  { seriesId: 'DFF', column: 'fred_dff', table: 'econ_rates_1d' },
-  { seriesId: 'SOFR', column: 'fred_sofr', table: 'econ_rates_1d' },
-  { seriesId: 'T10Y2Y', column: 'fred_t10y2y', table: 'econ_rates_1d' },
-  { seriesId: 'T10Y3M', column: 'fred_t10y3m', table: 'econ_rates_1d' },
-  { seriesId: 'MORTGAGE30US', column: 'fred_mort30', table: 'econ_rates_1d' },
+  { seriesId: 'DFF', column: 'fred_dff', table: 'econ_rates_1d', frequency: 'daily' },
+  { seriesId: 'SOFR', column: 'fred_sofr', table: 'econ_rates_1d', frequency: 'daily' },
+  { seriesId: 'T10Y2Y', column: 'fred_t10y2y', table: 'econ_rates_1d', frequency: 'daily' },
+  { seriesId: 'T10Y3M', column: 'fred_t10y3m', table: 'econ_rates_1d', frequency: 'daily' },
+  { seriesId: 'MORTGAGE30US', column: 'fred_mort30', table: 'econ_rates_1d', frequency: 'weekly' },
 
   // Yield curve (full term structure)
-  { seriesId: 'DGS1MO', column: 'fred_y1m', table: 'econ_yields_1d' },
-  { seriesId: 'DGS3MO', column: 'fred_y3m', table: 'econ_yields_1d' },
-  { seriesId: 'DGS2', column: 'fred_y2y', table: 'econ_yields_1d' },
-  { seriesId: 'DGS5', column: 'fred_y5y', table: 'econ_yields_1d' },
-  { seriesId: 'DGS10', column: 'fred_y10y', table: 'econ_yields_1d' },
-  { seriesId: 'DGS30', column: 'fred_y30y', table: 'econ_yields_1d' },
+  { seriesId: 'DGS1MO', column: 'fred_y1m', table: 'econ_yields_1d', frequency: 'daily' },
+  { seriesId: 'DGS3MO', column: 'fred_y3m', table: 'econ_yields_1d', frequency: 'daily' },
+  { seriesId: 'DGS2', column: 'fred_y2y', table: 'econ_yields_1d', frequency: 'daily' },
+  { seriesId: 'DGS5', column: 'fred_y5y', table: 'econ_yields_1d', frequency: 'daily' },
+  { seriesId: 'DGS10', column: 'fred_y10y', table: 'econ_yields_1d', frequency: 'daily' },
+  { seriesId: 'DGS30', column: 'fred_y30y', table: 'econ_yields_1d', frequency: 'daily' },
 
   // FX
-  { seriesId: 'DTWEXBGS', column: 'fred_dxy', table: 'econ_fx_1d' },
-  { seriesId: 'DEXUSEU', column: 'fred_eurusd', table: 'econ_fx_1d' },
-  { seriesId: 'DEXJPUS', column: 'fred_jpyusd', table: 'econ_fx_1d' },
-  { seriesId: 'DEXCHUS', column: 'fred_cnyusd', table: 'econ_fx_1d' },
+  { seriesId: 'DTWEXBGS', column: 'fred_dxy', table: 'econ_fx_1d', frequency: 'daily' },
+  { seriesId: 'DEXUSEU', column: 'fred_eurusd', table: 'econ_fx_1d', frequency: 'daily' },
+  { seriesId: 'DEXJPUS', column: 'fred_jpyusd', table: 'econ_fx_1d', frequency: 'daily' },
+  { seriesId: 'DEXCHUS', column: 'fred_cnyusd', table: 'econ_fx_1d', frequency: 'daily' },
 
   // Inflation expectations & real yields
-  { seriesId: 'T5YIE', column: 'fred_infl5y', table: 'econ_inflation_1d' },
-  { seriesId: 'T10YIE', column: 'fred_infl10y', table: 'econ_inflation_1d' },
-  { seriesId: 'T5YIFR', column: 'fred_infl5y5y', table: 'econ_inflation_1d' },
-  { seriesId: 'DFII5', column: 'fred_tips5y', table: 'econ_inflation_1d' },
-  { seriesId: 'DFII10', column: 'fred_tips10y', table: 'econ_inflation_1d' },
+  { seriesId: 'T5YIE', column: 'fred_infl5y', table: 'econ_inflation_1d', frequency: 'daily' },
+  { seriesId: 'T10YIE', column: 'fred_infl10y', table: 'econ_inflation_1d', frequency: 'daily' },
+  { seriesId: 'T5YIFR', column: 'fred_infl5y5y', table: 'econ_inflation_1d', frequency: 'daily' },
+  { seriesId: 'DFII5', column: 'fred_tips5y', table: 'econ_inflation_1d', frequency: 'daily' },
+  { seriesId: 'DFII10', column: 'fred_tips10y', table: 'econ_inflation_1d', frequency: 'daily' },
 
   // Commodities
-  { seriesId: 'DCOILWTICO', column: 'fred_wti', table: 'econ_commodities_1d' },
-  { seriesId: 'DHHNGSP', column: 'fred_natgas', table: 'econ_commodities_1d' },
-  { seriesId: 'PCOPPUSDM', column: 'fred_copper', table: 'econ_commodities_1d' },
+  { seriesId: 'DCOILWTICO', column: 'fred_wti', table: 'econ_commodities_1d', frequency: 'daily' },
+  { seriesId: 'DHHNGSP', column: 'fred_natgas', table: 'econ_commodities_1d', frequency: 'daily' },
+  { seriesId: 'PCOPPUSDM', column: 'fred_copper', table: 'econ_commodities_1d', frequency: 'monthly' },
 
   // Liquidity / Fed balance sheet
-  { seriesId: 'WALCL', column: 'fred_fed_assets', table: 'econ_money_1d' },
-  { seriesId: 'RRPONTSYD', column: 'fred_rrp', table: 'econ_money_1d' },
-  { seriesId: 'WRESBAL', column: 'fred_reserves', table: 'econ_money_1d' },
+  { seriesId: 'WALCL', column: 'fred_fed_assets', table: 'econ_money_1d', frequency: 'weekly' },
+  { seriesId: 'RRPONTSYD', column: 'fred_rrp', table: 'econ_money_1d', frequency: 'daily' },
+  { seriesId: 'WRESBAL', column: 'fred_reserves', table: 'econ_money_1d', frequency: 'weekly' },
 
   // Labor (weekly)
-  { seriesId: 'ICSA', column: 'fred_claims', table: 'econ_labor_1d' },
+  { seriesId: 'ICSA', column: 'fred_claims', table: 'econ_labor_1d', frequency: 'weekly' },
 ]
+
+const NEWS_POLICY_LAG_DAYS = 1
+const NEWS_POLICY_LOOKBACK_DAYS = 7
+
+function featureIndex(column: string): number {
+  const idx = FRED_FEATURES.findIndex((f) => f.column === column)
+  if (idx < 0) throw new Error(`Missing feature column '${column}'`)
+  return idx
+}
+
+const IDX_Y2Y = featureIndex('fred_y2y')
+const IDX_Y10Y = featureIndex('fred_y10y')
+const IDX_Y30Y = featureIndex('fred_y30y')
+const IDX_TIPS5Y = featureIndex('fred_tips5y')
+const IDX_TIPS10Y = featureIndex('fred_tips10y')
+const IDX_IG_OAS = featureIndex('fred_ig_oas')
+const IDX_HY_OAS = featureIndex('fred_hy_oas')
+const IDX_VIX = featureIndex('fred_vix')
+const IDX_VVIX = featureIndex('fred_vvix')
+const IDX_FED_ASSETS = featureIndex('fred_fed_assets')
+const IDX_RRP = featureIndex('fred_rrp')
+const FRED_LAG_BY_COLUMN = new Map(
+  FRED_FEATURES.map((f) => [f.column, conservativeLagDaysForFrequency(f.frequency)])
+)
 
 // ─── TYPES ────────────────────────────────────────────────────────────────
 
@@ -103,21 +134,6 @@ interface MesCandle {
 type FredLookup = Map<string, number> // dateKey → value
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────
-
-function dateKey(d: Date): string {
-  return d.toISOString().slice(0, 10)
-}
-
-/** As-of lookup: find the most recent value on or before the given date */
-function asofLookup(lookup: FredLookup, sortedKeys: string[], ts: Date): number | null {
-  const target = dateKey(ts)
-  let best: number | null = null
-  for (const key of sortedKeys) {
-    if (key > target) break
-    best = lookup.get(key) ?? best
-  }
-  return best
-}
 
 function pctChange(current: number, previous: number): number | null {
   if (previous === 0 || !Number.isFinite(previous) || !Number.isFinite(current)) return null
@@ -206,6 +222,7 @@ async function run(): Promise<void> {
 
   console.log('[dataset] Building MES intraday training dataset')
   console.log(`[dataset] Days back: ${daysBack}, Start: ${start.toISOString().slice(0, 10)}`)
+  console.log('[dataset] Anti-leakage policy: daily=1d, weekly=8d, monthly=35d, quarterly=100d lag')
 
   // ── 1. Load MES 1h candles ──
   const candles: MesCandle[] = (await prisma.mktFuturesMes1h.findMany({
@@ -250,7 +267,7 @@ async function run(): Promise<void> {
     const grouped = new Map<string, Array<{ date: string; value: number }>>()
     for (const row of rows) {
       const list = grouped.get(row.seriesId) || []
-      list.push({ date: dateKey(row.eventDate), value: Number(row.value) })
+      list.push({ date: dateKeyUtc(row.eventDate), value: Number(row.value) })
       grouped.set(row.seriesId, list)
     }
 
@@ -283,19 +300,24 @@ async function run(): Promise<void> {
   `
 
   const policyRows = await prisma.$queryRaw<
-    { eventDate: Date; count: number; avgSentiment: number | null; avgImpact: number | null }[]
+    { eventDate: Date; count: number }[]
   >`
     SELECT
       "eventDate"::date as "eventDate",
-      COUNT(*)::int as count,
-      AVG("sentimentScore") as "avgSentiment",
-      AVG("impactScore") as "avgImpact"
+      COUNT(*)::int as count
     FROM policy_news_1d
     GROUP BY "eventDate"
     ORDER BY "eventDate" ASC
   `
 
   console.log(`  News: ${newsRows.length} days, Policy: ${policyRows.length} days`)
+
+  // Load headlines from news_signals for text feature
+  const newsSignals = await prisma.newsSignal.findMany({
+    select: { title: true, pubDate: true },
+    orderBy: { pubDate: 'asc' },
+  })
+  console.log(`  News signals (headlines): ${newsSignals.length} rows`)
 
   // ── 4. Precompute technical indicators on MES ──
   console.log('[dataset] Computing technical indicators...')
@@ -345,7 +367,8 @@ async function run(): Promise<void> {
     'fed_liquidity',
     // News/policy rolling
     'news_count_7d', 'news_fed_count_7d',
-    'policy_count_7d', 'policy_avg_sentiment',
+    'policy_count_7d',
+    'headlines_7d',
   ]
 
   const rows: string[][] = []
@@ -388,26 +411,34 @@ async function run(): Promise<void> {
     const volRatio = volMa24[i] != null && volMa24[i]! > 0 ? volumes[i] / volMa24[i]! : null
 
     // FRED as-of lookups
+    const laggedTargetKeyCache = new Map<number, string>()
+    const laggedTargetKey = (lagDays: number): string => {
+      const cached = laggedTargetKeyCache.get(lagDays)
+      if (cached) return cached
+      const key = dateKeyUtc(new Date(ts.getTime() - lagDays * 24 * 60 * 60 * 1000))
+      laggedTargetKeyCache.set(lagDays, key)
+      return key
+    }
+
     const fredValues: (number | null)[] = FRED_FEATURES.map((f) => {
       const data = fredLookups.get(f.column)
       if (!data) return null
-      return asofLookup(data.lookup, data.sortedKeys, ts)
+      const lagDays = FRED_LAG_BY_COLUMN.get(f.column) ?? 1
+      return asofLookupByDateKey(data.lookup, data.sortedKeys, laggedTargetKey(lagDays))
     })
 
     // Derived features
-    const y2y = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_y2y')]
-    const y10y = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_y10y')]
-    const y30y = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_y30y')]
-    const y3m = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_y3m')]
-    const tips5y = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_tips5y')]
-    const tips10y = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_tips10y')]
-    const igOas = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_ig_oas')]
-    const hyOas = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_hy_oas')]
-    const vix = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_vix')]
-    const vvix = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_vvix')]
-    const fedAssets = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_fed_assets')]
-    const rrp = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_rrp')]
-    const reserves = fredValues[FRED_FEATURES.findIndex((f) => f.column === 'fred_reserves')]
+    const y2y = fredValues[IDX_Y2Y]
+    const y10y = fredValues[IDX_Y10Y]
+    const y30y = fredValues[IDX_Y30Y]
+    const tips5y = fredValues[IDX_TIPS5Y]
+    const tips10y = fredValues[IDX_TIPS10Y]
+    const igOas = fredValues[IDX_IG_OAS]
+    const hyOas = fredValues[IDX_HY_OAS]
+    const vix = fredValues[IDX_VIX]
+    const vvix = fredValues[IDX_VVIX]
+    const fedAssets = fredValues[IDX_FED_ASSETS]
+    const rrp = fredValues[IDX_RRP]
 
     const yieldCurveSlope = y10y != null && y2y != null ? y10y - y2y : null
     const yieldCurveCurvature = y2y != null && y10y != null && y30y != null
@@ -420,13 +451,15 @@ async function run(): Promise<void> {
       ? fedAssets - rrp * 1000 : null  // RRP is in billions, assets in millions
 
     // News/policy 7d rolling
-    const ts7dAgo = new Date(ts.getTime() - 7 * 24 * 60 * 60 * 1000)
-    const tsKey = dateKey(ts)
-    const ts7dKey = dateKey(ts7dAgo)
+    const { startKey: ts7dKey, endKey: tsKey } = laggedWindowKeys(
+      ts,
+      NEWS_POLICY_LAG_DAYS,
+      NEWS_POLICY_LOOKBACK_DAYS
+    )
 
     let newsCount7d = 0, newsFedCount7d = 0
     for (const n of newsRows) {
-      const nk = dateKey(n.eventDate)
+      const nk = dateKeyUtc(n.eventDate)
       if (nk >= ts7dKey && nk <= tsKey) {
         newsCount7d += n.total_count
         newsFedCount7d += n.fed_count
@@ -434,18 +467,23 @@ async function run(): Promise<void> {
     }
 
     let policyCount7d = 0
-    let policySentimentSum = 0, policySentimentN = 0
     for (const p of policyRows) {
-      const pk = dateKey(p.eventDate)
+      const pk = dateKeyUtc(p.eventDate)
       if (pk >= ts7dKey && pk <= tsKey) {
         policyCount7d += p.count
-        if (p.avgSentiment != null) {
-          policySentimentSum += p.avgSentiment * p.count
-          policySentimentN += p.count
-        }
       }
     }
-    const policyAvgSentiment = policySentimentN > 0 ? policySentimentSum / policySentimentN : null
+
+    // Headlines from news_signals (same lagged 7-day window)
+    const headlineTexts: string[] = []
+    for (const ns of newsSignals) {
+      const nk = dateKeyUtc(ns.pubDate)
+      if (nk >= ts7dKey && nk <= tsKey) {
+        headlineTexts.push(ns.title)
+        if (headlineTexts.length >= 20) break
+      }
+    }
+    const headlines7d = headlineTexts.join(' | ')
 
     // Assemble row
     const row: (string | number | null)[] = [
@@ -470,10 +508,16 @@ async function run(): Promise<void> {
       creditSpreadDiff, vixTermStructure,
       fedLiquidity,
       newsCount7d, newsFedCount7d,
-      policyCount7d, policyAvgSentiment,
+      policyCount7d,
+      headlines7d,
     ]
 
-    rows.push(row.map((v) => (v == null ? '' : String(v))))
+    rows.push(row.map((v) => {
+      if (v == null) return ''
+      const s = String(v)
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`
+      return s
+    }))
   }
 
   // ── 6. Write CSV ──

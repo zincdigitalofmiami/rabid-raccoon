@@ -5,12 +5,15 @@ import { Decimal } from '@prisma/client/runtime/client'
 import { prisma } from '../src/lib/prisma'
 import { toNum } from '../src/lib/decimal'
 import { loadDotEnvFiles, parseArg } from './ingest-utils'
+import { dateKeyUtc, laggedWindowKeys, shiftUtcDays } from './feature-availability'
 
 type DailyPoint = { eventDate: Date; value: Decimal | number | null }
 type SignalPoint = { timestamp: Date; target100: Decimal | number; target1236: Decimal | number; direction: 'BULLISH' | 'BEARISH' }
 type NewsPoint = { eventDate: Date; count: number }
-type PolicyPoint = { eventDate: Date; sentiment: number | null; impact: number | null }
 type MacroPoint = { eventDate: Date; surprise: number | null }
+
+const DAILY_FEATURE_LAG_DAYS = 1
+const ROLLING_LOOKBACK_DAYS = 7
 
 interface OutputRow {
   item_id: string
@@ -32,17 +35,16 @@ interface OutputRow {
   news_sec_count_7d: number
   news_ecb_count_7d: number
   policy_count_7d: number
-  policy_avg_sentiment: number | null
-  policy_avg_impact: number | null
   macro_surprise_avg_7d: number | null
+  headlines_7d: string
 }
 
 function toDateKeyUtc(date: Date): string {
-  return date.toISOString().slice(0, 10)
+  return dateKeyUtc(date)
 }
 
 function asofValue(points: DailyPoint[], date: Date): number | null {
-  const targetKey = toDateKeyUtc(date)
+  const targetKey = toDateKeyUtc(shiftUtcDays(date, -DAILY_FEATURE_LAG_DAYS))
   let best: number | null = null
   for (const point of points) {
     if (toDateKeyUtc(point.eventDate) <= targetKey) {
@@ -67,32 +69,27 @@ function asofSignal(points: SignalPoint[], ts: Date): SignalPoint | null {
 }
 
 function countNewsLast7d(points: NewsPoint[], ts: Date): number {
-  const ts7dAgo = new Date(ts.getTime() - 7 * 24 * 60 * 60 * 1000)
-  const targetKey = toDateKeyUtc(ts)
+  const { startKey: ts7dAgoKey, endKey: targetKey } = laggedWindowKeys(
+    ts,
+    DAILY_FEATURE_LAG_DAYS,
+    ROLLING_LOOKBACK_DAYS
+  )
   return points.filter((p) => {
     const pKey = toDateKeyUtc(p.eventDate)
-    return pKey >= toDateKeyUtc(ts7dAgo) && pKey <= targetKey
+    return pKey >= ts7dAgoKey && pKey <= targetKey
   }).reduce((sum, p) => sum + p.count, 0)
 }
 
-function avgPolicyLast7d(points: PolicyPoint[], ts: Date, field: 'sentiment' | 'impact'): number | null {
-  const ts7dAgo = new Date(ts.getTime() - 7 * 24 * 60 * 60 * 1000)
-  const targetKey = toDateKeyUtc(ts)
-  const relevant = points.filter((p) => {
-    const pKey = toDateKeyUtc(p.eventDate)
-    return pKey >= toDateKeyUtc(ts7dAgo) && pKey <= targetKey && p[field] != null
-  })
-  if (relevant.length === 0) return null
-  const sum = relevant.reduce((acc, p) => acc + (p[field] ?? 0), 0)
-  return sum / relevant.length
-}
 
 function avgMacroSurpriseLast7d(points: MacroPoint[], ts: Date): number | null {
-  const ts7dAgo = new Date(ts.getTime() - 7 * 24 * 60 * 60 * 1000)
-  const targetKey = toDateKeyUtc(ts)
+  const { startKey: ts7dAgoKey, endKey: targetKey } = laggedWindowKeys(
+    ts,
+    DAILY_FEATURE_LAG_DAYS,
+    ROLLING_LOOKBACK_DAYS
+  )
   const relevant = points.filter((p) => {
     const pKey = toDateKeyUtc(p.eventDate)
-    return pKey >= toDateKeyUtc(ts7dAgo) && pKey <= targetKey && p.surprise != null
+    return pKey >= ts7dAgoKey && pKey <= targetKey && p.surprise != null
   })
   if (relevant.length === 0) return null
   const sum = relevant.reduce((acc, p) => acc + (p.surprise ?? 0), 0)
@@ -127,9 +124,8 @@ function writeCsv(filePath: string, rows: OutputRow[]): void {
     'news_sec_count_7d',
     'news_ecb_count_7d',
     'policy_count_7d',
-    'policy_avg_sentiment',
-    'policy_avg_impact',
     'macro_surprise_avg_7d',
+    'headlines_7d',
   ]
 
   const lines: string[] = [header.join(',')]
@@ -155,9 +151,8 @@ function writeCsv(filePath: string, rows: OutputRow[]): void {
         row.news_sec_count_7d,
         row.news_ecb_count_7d,
         row.policy_count_7d,
-        row.policy_avg_sentiment,
-        row.policy_avg_impact,
         row.macro_surprise_avg_7d,
+        row.headlines_7d,
       ]
         .map(quoteCsv)
         .join(',')
@@ -182,6 +177,7 @@ async function run(): Promise<void> {
   }
 
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
+  console.log('[dataset] Anti-leakage policy: daily macro/news features lagged by 1 day')
 
   const [mesRows, vixRows, y10Rows, dffRows, dxyRows, mmRows, newsRows, policyRows, macroRows] = await Promise.all([
     prisma.mktFuturesMes1h.findMany({
@@ -234,12 +230,10 @@ async function run(): Promise<void> {
       ORDER BY "eventDate" ASC
     `,
     // Policy news aggregated by day
-    prisma.$queryRaw<{ eventDate: Date; count: number; avgSentiment: number | null; avgImpact: number | null }[]>`
+    prisma.$queryRaw<{ eventDate: Date; count: number }[]>`
       SELECT
         "eventDate"::date as "eventDate",
-        COUNT(*)::int as count,
-        AVG("sentimentScore") as "avgSentiment",
-        AVG("impactScore") as "avgImpact"
+        COUNT(*)::int as count
       FROM "policy_news_1d"
       GROUP BY "eventDate"
       ORDER BY "eventDate" ASC
@@ -262,15 +256,18 @@ async function run(): Promise<void> {
 
   console.log(`[dataset] Loaded ${newsRows.length} econ news days, ${policyRows.length} policy news days, ${macroRows.length} macro report days`)
 
+  // Load headlines from news_signals for text feature
+  const newsSignals = await prisma.newsSignal.findMany({
+    select: { title: true, pubDate: true },
+    orderBy: { pubDate: 'asc' },
+  })
+  console.log(`  News signals (headlines): ${newsSignals.length} rows`)
+
   const newsPoints: NewsPoint[] = newsRows.map((r) => ({ eventDate: r.eventDate, count: r.total_count }))
   const newsFedPoints: NewsPoint[] = newsRows.map((r) => ({ eventDate: r.eventDate, count: r.fed_count }))
   const newsSecPoints: NewsPoint[] = newsRows.map((r) => ({ eventDate: r.eventDate, count: r.sec_count }))
   const newsEcbPoints: NewsPoint[] = newsRows.map((r) => ({ eventDate: r.eventDate, count: r.ecb_count }))
-  const policyPoints: PolicyPoint[] = policyRows.map((r) => ({
-    eventDate: r.eventDate,
-    sentiment: r.avgSentiment,
-    impact: r.avgImpact,
-  }))
+  const policyPoints: NewsPoint[] = policyRows.map((r) => ({ eventDate: r.eventDate, count: r.count }))
   const macroPoints: MacroPoint[] = macroRows.map((r) => ({ eventDate: r.eventDate, surprise: r.avgSurprise }))
 
   const output: OutputRow[] = mesRows.map((row) => {
@@ -289,10 +286,22 @@ async function run(): Promise<void> {
     const newsFedCount7d = countNewsLast7d(newsFedPoints, ts)
     const newsSecCount7d = countNewsLast7d(newsSecPoints, ts)
     const newsEcbCount7d = countNewsLast7d(newsEcbPoints, ts)
-    const policyCount7d = countNewsLast7d(policyPoints.map((p) => ({ eventDate: p.eventDate, count: 1 })), ts)
-    const policyAvgSentiment = avgPolicyLast7d(policyPoints, ts, 'sentiment')
-    const policyAvgImpact = avgPolicyLast7d(policyPoints, ts, 'impact')
+    const policyCount7d = countNewsLast7d(policyPoints, ts)
     const macroSurpriseAvg7d = avgMacroSurpriseLast7d(macroPoints, ts)
+
+    // Headlines from news_signals (lagged 1 day, 7-day window)
+    const { startKey: h7dStart, endKey: h7dEnd } = laggedWindowKeys(
+      ts, DAILY_FEATURE_LAG_DAYS, ROLLING_LOOKBACK_DAYS
+    )
+    const headlineTexts: string[] = []
+    for (const ns of newsSignals) {
+      const nk = dateKeyUtc(ns.pubDate)
+      if (nk >= h7dStart && nk <= h7dEnd) {
+        headlineTexts.push(ns.title)
+        if (headlineTexts.length >= 20) break
+      }
+    }
+    const headlines7d = headlineTexts.join(' | ')
 
     const utcDay = ts.getUTCDate()
     const utcMonth = ts.getUTCMonth()
@@ -319,9 +328,8 @@ async function run(): Promise<void> {
       news_sec_count_7d: newsSecCount7d,
       news_ecb_count_7d: newsEcbCount7d,
       policy_count_7d: policyCount7d,
-      policy_avg_sentiment: policyAvgSentiment,
-      policy_avg_impact: policyAvgImpact,
       macro_surprise_avg_7d: macroSurpriseAvg7d,
+      headlines_7d: headlines7d,
     }
   })
 
@@ -360,9 +368,8 @@ async function run(): Promise<void> {
       news_sec_count_7d: 'int32',
       news_ecb_count_7d: 'int32',
       policy_count_7d: 'int32',
-      policy_avg_sentiment: 'float64|null',
-      policy_avg_impact: 'float64|null',
       macro_surprise_avg_7d: 'float64|null',
+      headlines_7d: 'text',
     },
     predictor: {
       target: 'target',
@@ -380,9 +387,8 @@ async function run(): Promise<void> {
         'news_sec_count_7d',
         'news_ecb_count_7d',
         'policy_count_7d',
-        'policy_avg_sentiment',
-        'policy_avg_impact',
         'macro_surprise_avg_7d',
+        'headlines_7d',
       ],
       item_id_column: 'item_id',
       timestamp_column: 'timestamp',
