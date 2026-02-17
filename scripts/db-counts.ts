@@ -25,7 +25,7 @@ async function run(): Promise<void> {
     splitActivity,
     splitMoney,
     splitCommodities,
-    mktIndexes,
+    econIndexes,
     econNews,
     policyNews,
     macroReports,
@@ -51,7 +51,7 @@ async function run(): Promise<void> {
     prisma.econActivity1d.count(),
     prisma.econMoney1d.count(),
     prisma.econCommodities1d.count(),
-    prisma.mktIndexes1d.count(),
+    prisma.econIndexes1d.count(),
     prisma.econNews1d.count(),
     prisma.policyNews1d.count(),
     prisma.macroReport1d.count(),
@@ -80,7 +80,7 @@ async function run(): Promise<void> {
     { table: 'econ_activity_1d', rows: splitActivity },
     { table: 'econ_money_1d', rows: splitMoney },
     { table: 'econ_commodities_1d', rows: splitCommodities },
-    { table: 'mkt_indexes_1d', rows: mktIndexes },
+    { table: 'econ_indexes_1d', rows: econIndexes },
     { table: 'econ_news_1d', rows: econNews },
     { table: 'policy_news_1d', rows: policyNews },
     { table: 'macro_reports_1d', rows: macroReports },
@@ -115,7 +115,7 @@ async function run(): Promise<void> {
     prisma.econActivity1d.groupBy({ by: ['seriesId'], _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
     prisma.econMoney1d.groupBy({ by: ['seriesId'], _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
     prisma.econCommodities1d.groupBy({ by: ['seriesId'], _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
-    prisma.mktIndexes1d.groupBy({ by: ['symbolCode'], _count: { _all: true }, orderBy: { symbolCode: 'asc' } }),
+    prisma.econIndexes1d.groupBy({ by: ['seriesId'], _count: { _all: true }, orderBy: { seriesId: 'asc' } }),
   ])
 
   console.log('\n=== Futures 1H Coverage ===')
@@ -135,7 +135,7 @@ async function run(): Promise<void> {
     ...activityGrouped.map((row) => ({ domain: 'ACTIVITY', key: row.seriesId, rows: row._count._all })),
     ...moneyGrouped.map((row) => ({ domain: 'MONEY', key: row.seriesId, rows: row._count._all })),
     ...commoditiesGrouped.map((row) => ({ domain: 'COMMODITIES', key: row.seriesId, rows: row._count._all })),
-    ...indexGrouped.map((row) => ({ domain: 'INDEXES', key: row.symbolCode, rows: row._count._all })),
+    ...indexGrouped.map((row) => ({ domain: 'INDEXES', key: row.seriesId, rows: row._count._all })),
   ])
 }
 

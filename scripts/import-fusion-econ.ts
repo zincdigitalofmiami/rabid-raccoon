@@ -401,26 +401,33 @@ async function importFxSpot(source: Client): Promise<{ processed: number; insert
     if (rows.length === 0) break
     lastId = Number(rows[rows.length - 1].id)
 
-    const data: Prisma.MktIndexes1dCreateManyInput[] = rows
-      .filter((row) => Number.isFinite(Number(row.rate)))
-      .map((row) => ({
-        symbolCode: String(row.pair),
-        eventDate: normalizeDate(row.event_date),
-        open: Number(row.rate),
-        high: Number(row.rate),
-        low: Number(row.rate),
-        close: Number(row.rate),
-        volume: BigInt(0),
+    const data: Prisma.EconIndexes1dCreateManyInput[] = []
+    for (const row of rows) {
+      const seriesId = String(row.pair)
+      const value = Number(row.rate)
+      if (!Number.isFinite(value)) continue
+      const eventDate = normalizeDate(row.event_date)
+      const sourceName = safeString(row.source) || 'INTERNAL'
+      const rowHash = safeString(row.row_hash) || hashSeries(seriesId, eventDate, value, sourceName)
+
+      data.push({
+        seriesId,
+        eventDate,
+        value,
         source: DataSource.INTERNAL,
-        sourceSymbol: safeString(row.pair),
-        rowHash: safeString(row.row_hash) || null,
-        metadata: toJson({ importedFrom: 'fusion.mkt.fx_1d', source: safeString(row.source) }),
-      }))
+        rowHash,
+        metadata: toJson({
+          importedFrom: 'fusion.mkt.fx_1d',
+          source: safeString(row.source),
+          sourceSymbol: safeString(row.pair),
+        }),
+      })
+    }
 
     processed += rows.length
     if (data.length > 0) {
-      inserted += await createManyBatched('mktIndexes1d', data, async (batch) =>
-        (await prisma.mktIndexes1d.createMany({ data: batch, skipDuplicates: true })).count
+      inserted += await createManyBatched('econIndexes1d', data, async (batch) =>
+        (await prisma.econIndexes1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
   }
@@ -443,24 +450,42 @@ async function importEtfIndexes(source: Client): Promise<{ processed: number; in
     if (rows.length === 0) break
     lastId = Number(rows[rows.length - 1].id)
 
-    const data: Prisma.MktIndexes1dCreateManyInput[] = rows.map((row) => ({
-      symbolCode: String(row.symbol),
-      eventDate: normalizeDate(row.event_date),
-      open: Number.isFinite(Number(row.open)) ? Number(row.open) : null,
-      high: Number.isFinite(Number(row.high)) ? Number(row.high) : null,
-      low: Number.isFinite(Number(row.low)) ? Number(row.low) : null,
-      close: Number.isFinite(Number(row.close)) ? Number(row.close) : null,
-      volume: Number.isFinite(Number(row.volume)) ? BigInt(String(row.volume)) : null,
-      source: DataSource.YAHOO,
-      sourceSymbol: String(row.symbol),
-      rowHash: safeString(row.row_hash) || null,
-      metadata: toJson({ importedFrom: 'fusion.mkt.etf_1d', source: safeString(row.source) }),
-    }))
+    const data: Prisma.EconIndexes1dCreateManyInput[] = []
+    for (const row of rows) {
+      const seriesId = String(row.symbol)
+      const open = Number(row.open)
+      const high = Number(row.high)
+      const low = Number(row.low)
+      const close = Number(row.close)
+      const valueCandidate = [close, open, high, low].find((v) => Number.isFinite(v))
+      if (valueCandidate === undefined || !Number.isFinite(valueCandidate)) continue
+      const eventDate = normalizeDate(row.event_date)
+      const sourceName = safeString(row.source) || 'YAHOO'
+      const rowHash = safeString(row.row_hash) || hashSeries(seriesId, eventDate, valueCandidate, sourceName)
+
+      data.push({
+        seriesId,
+        eventDate,
+        value: valueCandidate,
+        source: DataSource.YAHOO,
+        rowHash,
+        metadata: toJson({
+          importedFrom: 'fusion.mkt.etf_1d',
+          source: safeString(row.source),
+          sourceSymbol: seriesId,
+          open: Number.isFinite(open) ? open : null,
+          high: Number.isFinite(high) ? high : null,
+          low: Number.isFinite(low) ? low : null,
+          close: Number.isFinite(close) ? close : null,
+          volume: Number.isFinite(Number(row.volume)) ? String(row.volume) : null,
+        }),
+      })
+    }
 
     processed += rows.length
     if (data.length > 0) {
-      inserted += await createManyBatched('mktIndexes1d', data, async (batch) =>
-        (await prisma.mktIndexes1d.createMany({ data: batch, skipDuplicates: true })).count
+      inserted += await createManyBatched('econIndexes1d', data, async (batch) =>
+        (await prisma.econIndexes1d.createMany({ data: batch, skipDuplicates: true })).count
       )
     }
   }
@@ -665,7 +690,7 @@ async function upsertRegistry(): Promise<void> {
       sourceId: 'fusion-econ-sync',
       sourceName: 'Zinc Fusion V15 Econ Sync',
       description: 'Bulk import of Fusion FRED/econ/news/rates domains into Rabid Raccoon domain tables.',
-      targetTable: 'econ_*,mkt_indexes_1d,econ_news_1d,policy_news_1d',
+      targetTable: 'econ_*,econ_indexes_1d,econ_news_1d,policy_news_1d',
       apiProvider: 'fusion-postgres',
       updateFrequency: 'manual/bootstrap',
       authEnvVar: 'FUSION_DATABASE_URL',
@@ -675,7 +700,7 @@ async function upsertRegistry(): Promise<void> {
     update: {
       sourceName: 'Zinc Fusion V15 Econ Sync',
       description: 'Bulk import of Fusion FRED/econ/news/rates domains into Rabid Raccoon domain tables.',
-      targetTable: 'econ_*,mkt_indexes_1d,econ_news_1d,policy_news_1d',
+      targetTable: 'econ_*,econ_indexes_1d,econ_news_1d,policy_news_1d',
       apiProvider: 'fusion-postgres',
       updateFrequency: 'manual/bootstrap',
       authEnvVar: 'FUSION_DATABASE_URL',

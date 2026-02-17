@@ -159,9 +159,9 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
     const proxy = INDEX_PROXY_BY_SYMBOL[symbol]
     if (!proxy) return null
 
-    const proxyRows = await prisma.mktIndexes1d.findMany({
+    const proxyRows = await prisma.econIndexes1d.findMany({
       where: {
-        symbolCode: proxy,
+        seriesId: proxy,
         eventDate: {
           gte: startOfUtcDay(start),
           lte: startOfUtcDay(end),
@@ -173,14 +173,10 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
 
     if (proxyRows.length === 0) return null
     return proxyRows.map((row) =>
-      toCandle(
-        row.eventDate.getTime(),
-        toNum(row.open ?? row.close ?? 0),
-        toNum(row.high ?? row.close ?? 0),
-        toNum(row.low ?? row.close ?? 0),
-        toNum(row.close ?? 0),
-        row.volume ? Number(row.volume) : 0
-      )
+      {
+        const price = toNum(row.value ?? 0)
+        return toCandle(row.eventDate.getTime(), price, price, price, price, 0)
+      }
     )
   } catch {
     dbState = 'failed'
