@@ -2,7 +2,7 @@ import { Prisma, Timeframe } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { fetchOhlcv, toCandles } from '../src/lib/databento'
-import { INGESTION_SYMBOLS } from '../src/lib/ingestion-symbols'
+import { INGESTION_SYMBOLS, type IngestionSymbol } from '../src/lib/ingestion-symbols'
 import {
   aggregateCandles,
   asUtcDateFromUnixSeconds,
@@ -14,40 +14,6 @@ import {
 } from './ingest-utils'
 
 const INGEST_CONFIG = {
-  SYMBOL_UNIVERSE: [
-    'ES',
-    'MES',
-    'NQ',
-    'MNQ',
-    'YM',
-    'MYM',
-    'RTY',
-    'M2K',
-    'EMD',
-    'NIY',
-    'NKD',
-    'XAE',
-    'XAF',
-    'XAV',
-    'XAI',
-    'XAB',
-    'XAR',
-    'XAK',
-    'XAU',
-    'XAY',
-    'XAP',
-    'XAZ',
-    'SXB',
-    'SXI',
-    'SXT',
-    'SXO',
-    'SXR',
-    'SOX',
-    'BIO',
-    'RS1',
-    'RSG',
-    'RSV',
-  ] as const,
   MES_TIMEFRAME: '1h' as const,
   NON_MES_TIMEFRAME: '1d' as const,
   HISTORY_DAYS: 730,
@@ -62,6 +28,8 @@ const INGEST_CONFIG = {
   INSERT_BATCH_SIZE: 1000,
   NON_MES_CONCURRENCY: 6,
 }
+
+const CANONICAL_SYMBOL_COUNT = 12
 
 interface PriceIngestSummary {
   timeframe: string
@@ -123,12 +91,52 @@ function assertNoForbiddenOverrides(): boolean {
 }
 
 function assertHardConfigIntegrity(): void {
-  if (INGEST_CONFIG.SYMBOL_UNIVERSE.length !== 32) {
-    hardFail('Must load ALL 32 symbols. Fix config and retry.')
+  if (INGESTION_SYMBOLS.length !== CANONICAL_SYMBOL_COUNT) {
+    hardFail(`Must keep canonical ${CANONICAL_SYMBOL_COUNT}-symbol list in ingestion-symbols.ts`)
+  }
+  const uniqueCodes = new Set(INGESTION_SYMBOLS.map((s) => s.code))
+  if (uniqueCodes.size !== INGESTION_SYMBOLS.length) {
+    hardFail('Canonical ingestion symbol list contains duplicates.')
   }
   if (!INGEST_CONFIG.ZERO_FAKE_POLICY || !INGEST_CONFIG.DATABENTO_ONLY) {
     hardFail('Zero fake data and Databento-only policy must remain enabled.')
   }
+}
+
+async function loadActiveDatabentoSymbols(): Promise<IngestionSymbol[]> {
+  const canonicalByCode = new Map(INGESTION_SYMBOLS.map((symbol) => [symbol.code, symbol]))
+  const activeRows = await prisma.symbol.findMany({
+    where: {
+      dataSource: 'DATABENTO',
+      isActive: true,
+    },
+    select: { code: true },
+    orderBy: { code: 'asc' },
+  })
+
+  if (activeRows.length !== INGESTION_SYMBOLS.length) {
+    hardFail(
+      `Expected ${INGESTION_SYMBOLS.length} active Databento symbols, found ${activeRows.length}. ` +
+        'Reconcile symbols.isActive before ingestion.'
+    )
+  }
+
+  const activeCodes = new Set(activeRows.map((row) => row.code))
+  const missingCanonical = INGESTION_SYMBOLS.filter((symbol) => !activeCodes.has(symbol.code)).map(
+    (symbol) => symbol.code
+  )
+  if (missingCanonical.length > 0) {
+    hardFail(`Active symbol catalog missing canonical codes: ${missingCanonical.join(', ')}`)
+  }
+
+  const nonCanonicalActive = activeRows
+    .filter((row) => !canonicalByCode.has(row.code))
+    .map((row) => row.code)
+  if (nonCanonicalActive.length > 0) {
+    hardFail(`Found non-canonical active symbols: ${nonCanonicalActive.join(', ')}`)
+  }
+
+  return activeRows.map((row) => canonicalByCode.get(row.code)!).filter(Boolean)
 }
 
 function expectedTradableCandlesPerSymbol(days: number): number {
@@ -394,7 +402,7 @@ async function runWithConcurrency<T, R>(
 }
 
 async function ingestSingleSymbol(params: {
-  symbol: (typeof INGESTION_SYMBOLS)[number]
+  symbol: IngestionSymbol
   start: Date
   end: Date
   chunks: Array<{ start: Date; end: Date }>
@@ -565,15 +573,8 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
   const end = new Date()
   console.log(`ENFORCING FULL 2Y: Starting from ${startDate} – no shortcuts allowed.`)
 
-  const selected = INGESTION_SYMBOLS.filter((s) =>
-    INGEST_CONFIG.SYMBOL_UNIVERSE.includes(s.code as (typeof INGEST_CONFIG.SYMBOL_UNIVERSE)[number])
-  )
-  if (selected.length !== INGEST_CONFIG.SYMBOL_UNIVERSE.length) {
-    const missing = INGEST_CONFIG.SYMBOL_UNIVERSE.filter(
-      (code) => !selected.find((s) => s.code === code)
-    )
-    hardFail(`Symbol catalog missing entries for: ${missing.join(', ')}`)
-  }
+  const selected = await loadActiveDatabentoSymbols()
+  const selectedCodes = selected.map((symbol) => symbol.code)
 
   const chunks = splitIntoDayChunks(start, end, INGEST_CONFIG.CHUNK_DAYS)
   const tfPrisma = timeframeToPrisma(INGEST_CONFIG.MES_TIMEFRAME)
@@ -599,7 +600,7 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
         sourceSchemaMes: INGEST_CONFIG.MES_RAW_SCHEMA,
         sourceSchemaNonMes: INGEST_CONFIG.NON_MES_RAW_SCHEMA,
         chunkDays: INGEST_CONFIG.CHUNK_DAYS,
-        symbolsRequested: INGEST_CONFIG.SYMBOL_UNIVERSE,
+        symbolsRequested: selectedCodes,
         minCoverageHourly,
         minCoverageDaily,
         expectedH1Reference: INGEST_CONFIG.EXPECTED_H1_CANDLES_PER_SYMBOL,
@@ -617,7 +618,7 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
 
   try {
     await upsertDataSourceRegistry()
-    await upsertSymbolCatalog(INGEST_CONFIG.SYMBOL_UNIVERSE as unknown as string[])
+    await upsertSymbolCatalog(selectedCodes)
 
     const applyResult = (result: SymbolIngestResult): void => {
       if (result.coveragePct != null) {
@@ -684,7 +685,7 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
       timeframe: `MES=${INGEST_CONFIG.MES_TIMEFRAME};NON_MES=${INGEST_CONFIG.NON_MES_TIMEFRAME}`,
       sourceSchema: `MES=${INGEST_CONFIG.MES_RAW_SCHEMA};NON_MES=${INGEST_CONFIG.NON_MES_RAW_SCHEMA}`,
       daysBack: INGEST_CONFIG.HISTORY_DAYS,
-      symbolsRequested: [...INGEST_CONFIG.SYMBOL_UNIVERSE],
+      symbolsRequested: selectedCodes,
       symbolsProcessed,
       symbolsFailed,
       symbolsCoveragePct,

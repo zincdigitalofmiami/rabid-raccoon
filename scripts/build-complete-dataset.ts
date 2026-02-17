@@ -27,6 +27,16 @@ import {
   dateKeyUtc,
   laggedWindowKeys,
 } from './feature-availability'
+import {
+  buildFredArray,
+  rollingPercentile,
+  rollingCorrelation,
+  rollingStdNullable,
+  rollingMinNullable,
+  deltaBack,
+  pctDeltaBack,
+  shockFlag,
+} from './feature-utils'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -45,24 +55,17 @@ const FRED_FEATURES: FredSeriesConfig[] = [
   { seriesId: 'VIXCLS', column: 'fred_vix', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'VXVCLS', column: 'fred_vvix', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'OVXCLS', column: 'fred_ovx', table: 'econ_vol_indices_1d', frequency: 'daily' },
-  { seriesId: 'GVZCLS', column: 'fred_gvz', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'BAMLC0A0CM', column: 'fred_ig_oas', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'BAMLH0A0HYM2', column: 'fred_hy_oas', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'NFCI', column: 'fred_nfci', table: 'econ_vol_indices_1d', frequency: 'weekly' },
-  { seriesId: 'STLFSI4', column: 'fred_stlfsi', table: 'econ_vol_indices_1d', frequency: 'weekly' },
   { seriesId: 'USEPUINDXD', column: 'fred_epu', table: 'econ_vol_indices_1d', frequency: 'daily' },
-  { seriesId: 'SP500', column: 'fred_sp500', table: 'econ_vol_indices_1d', frequency: 'daily' },
-  { seriesId: 'NASDAQCOM', column: 'fred_nasdaq', table: 'econ_vol_indices_1d', frequency: 'daily' },
 
   // Rates
   { seriesId: 'DFF', column: 'fred_dff', table: 'econ_rates_1d', frequency: 'daily' },
   { seriesId: 'SOFR', column: 'fred_sofr', table: 'econ_rates_1d', frequency: 'daily' },
   { seriesId: 'T10Y2Y', column: 'fred_t10y2y', table: 'econ_rates_1d', frequency: 'daily' },
-  { seriesId: 'T10Y3M', column: 'fred_t10y3m', table: 'econ_rates_1d', frequency: 'daily' },
-  { seriesId: 'MORTGAGE30US', column: 'fred_mort30', table: 'econ_rates_1d', frequency: 'weekly' },
 
   // Yield curve (full term structure)
-  { seriesId: 'DGS1MO', column: 'fred_y1m', table: 'econ_yields_1d', frequency: 'daily' },
   { seriesId: 'DGS3MO', column: 'fred_y3m', table: 'econ_yields_1d', frequency: 'daily' },
   { seriesId: 'DGS2', column: 'fred_y2y', table: 'econ_yields_1d', frequency: 'daily' },
   { seriesId: 'DGS5', column: 'fred_y5y', table: 'econ_yields_1d', frequency: 'daily' },
@@ -84,16 +87,40 @@ const FRED_FEATURES: FredSeriesConfig[] = [
 
   // Commodities
   { seriesId: 'DCOILWTICO', column: 'fred_wti', table: 'econ_commodities_1d', frequency: 'daily' },
-  { seriesId: 'DHHNGSP', column: 'fred_natgas', table: 'econ_commodities_1d', frequency: 'daily' },
+  { seriesId: 'DCOILBRENTEU', column: 'fred_brent', table: 'econ_commodities_1d', frequency: 'daily' },
   { seriesId: 'PCOPPUSDM', column: 'fred_copper', table: 'econ_commodities_1d', frequency: 'monthly' },
 
   // Liquidity / Fed balance sheet
   { seriesId: 'WALCL', column: 'fred_fed_assets', table: 'econ_money_1d', frequency: 'weekly' },
   { seriesId: 'RRPONTSYD', column: 'fred_rrp', table: 'econ_money_1d', frequency: 'daily' },
-  { seriesId: 'WRESBAL', column: 'fred_reserves', table: 'econ_money_1d', frequency: 'weekly' },
+  { seriesId: 'M2SL', column: 'fred_m2', table: 'econ_money_1d', frequency: 'monthly' },
 
-  // Labor (weekly)
+  // Labor
   { seriesId: 'ICSA', column: 'fred_claims', table: 'econ_labor_1d', frequency: 'weekly' },
+  { seriesId: 'CCSA', column: 'fred_continuing_claims', table: 'econ_labor_1d', frequency: 'weekly' },
+  { seriesId: 'PAYEMS', column: 'fred_nfp', table: 'econ_labor_1d', frequency: 'monthly' },
+  { seriesId: 'UNRATE', column: 'fred_unemployment', table: 'econ_labor_1d', frequency: 'monthly' },
+
+  // Rates (fed funds target range)
+  { seriesId: 'DFEDTARL', column: 'fred_fed_target_lower', table: 'econ_rates_1d', frequency: 'daily' },
+  { seriesId: 'DFEDTARU', column: 'fred_fed_target_upper', table: 'econ_rates_1d', frequency: 'daily' },
+
+  // FX (additional)
+  { seriesId: 'DEXMXUS', column: 'fred_mxnusd', table: 'econ_fx_1d', frequency: 'daily' },
+
+  // Inflation (monthly event series — forward-filled)
+  { seriesId: 'CPIAUCSL', column: 'fred_cpi', table: 'econ_inflation_1d', frequency: 'monthly' },
+  { seriesId: 'CPILFESL', column: 'fred_core_cpi', table: 'econ_inflation_1d', frequency: 'monthly' },
+  { seriesId: 'PCEPILFE', column: 'fred_core_pce', table: 'econ_inflation_1d', frequency: 'monthly' },
+  { seriesId: 'PPIACO', column: 'fred_ppi', table: 'econ_inflation_1d', frequency: 'monthly' },
+
+  // Activity (monthly/quarterly — forward-filled)
+  { seriesId: 'GDPC1', column: 'fred_real_gdp', table: 'econ_activity_1d', frequency: 'quarterly' },
+  { seriesId: 'RSXFS', column: 'fred_retail_sales', table: 'econ_activity_1d', frequency: 'monthly' },
+  { seriesId: 'UMCSENT', column: 'fred_consumer_sent', table: 'econ_activity_1d', frequency: 'monthly' },
+  { seriesId: 'INDPRO', column: 'fred_ind_production', table: 'econ_activity_1d', frequency: 'monthly' },
+  { seriesId: 'BOPGSTB', column: 'fred_trade_balance', table: 'econ_activity_1d', frequency: 'monthly' },
+  { seriesId: 'IMPCH', column: 'fred_china_imports', table: 'econ_activity_1d', frequency: 'monthly' },
 ]
 
 const NEWS_POLICY_LAG_DAYS = 1
@@ -116,9 +143,39 @@ const IDX_VIX = featureIndex('fred_vix')
 const IDX_VVIX = featureIndex('fred_vvix')
 const IDX_FED_ASSETS = featureIndex('fred_fed_assets')
 const IDX_RRP = featureIndex('fred_rrp')
+// Phase 2: Additional feature indices for derived features
+const IDX_Y5Y = featureIndex('fred_y5y')
+const IDX_OVX = featureIndex('fred_ovx')
+const IDX_DFF = featureIndex('fred_dff')
+const IDX_SOFR = featureIndex('fred_sofr')
+const IDX_FED_TARGET_LOWER = featureIndex('fred_fed_target_lower')
+const IDX_FED_TARGET_UPPER = featureIndex('fred_fed_target_upper')
+const IDX_INFL5Y = featureIndex('fred_infl5y')
+const IDX_INFL10Y = featureIndex('fred_infl10y')
+const IDX_INFL5Y5Y = featureIndex('fred_infl5y5y')
+const IDX_DXY = featureIndex('fred_dxy')
+const IDX_JPYUSD = featureIndex('fred_jpyusd')
+const IDX_CNYUSD = featureIndex('fred_cnyusd')
+const IDX_CLAIMS = featureIndex('fred_claims')
+const IDX_CCSA = featureIndex('fred_continuing_claims')
+const IDX_UNEMPLOYMENT = featureIndex('fred_unemployment')
+const IDX_CONSUMER_SENT = featureIndex('fred_consumer_sent')
+const IDX_IND_PRODUCTION = featureIndex('fred_ind_production')
+const IDX_TRADE_BALANCE = featureIndex('fred_trade_balance')
+const IDX_WTI = featureIndex('fred_wti')
+const IDX_BRENT = featureIndex('fred_brent')
+const IDX_M2 = featureIndex('fred_m2')
+const IDX_EPU = featureIndex('fred_epu')
+const IDX_NFCI = featureIndex('fred_nfci')
+
 const FRED_LAG_BY_COLUMN = new Map(
   FRED_FEATURES.map((f) => [f.column, conservativeLagDaysForFrequency(f.frequency)])
 )
+
+// Phase 2: Lookback constants for 1h builder
+const BARS_PER_DAY = 24
+const VELOCITY_LOOKBACK = 5 * BARS_PER_DAY        // 5 trading days = 120 bars
+const MOMENTUM_20D_LOOKBACK = 20 * BARS_PER_DAY   // 20 trading days = 480 bars
 
 // ─── TYPES ────────────────────────────────────────────────────────────────
 
@@ -319,6 +376,40 @@ async function run(): Promise<void> {
   })
   console.log(`  News signals (headlines): ${newsSignals.length} rows`)
 
+  // ── 3b. Build FRED arrays for velocity/momentum/percentile features ──
+  console.log('[dataset] Building FRED arrays for derived features...')
+
+  const buildArr = (column: string): (number | null)[] => {
+    const data = fredLookups.get(column)
+    if (!data) return new Array(candles.length).fill(null)
+    const lagDays = FRED_LAG_BY_COLUMN.get(column) ?? 1
+    return buildFredArray(candles, data.lookup, data.sortedKeys, lagDays, dateKeyUtc, asofLookupByDateKey)
+  }
+
+  // Arrays needed for velocity/momentum/percentile features
+  const vixArr = buildArr('fred_vix')
+  const hyOasArr = buildArr('fred_hy_oas')
+  const y10yArr = buildArr('fred_y10y')
+  const y2yArr = buildArr('fred_y2y')
+  const infl10yArr = buildArr('fred_infl10y')
+  const dxyArr = buildArr('fred_dxy')
+  const jpyArr = buildArr('fred_jpyusd')
+  const cnyArr = buildArr('fred_cnyusd')
+  const claimsArr = buildArr('fred_claims')
+  const ccsaArr = buildArr('fred_continuing_claims')
+  const unemploymentArr = buildArr('fred_unemployment')
+  const consumerSentArr = buildArr('fred_consumer_sent')
+  const indProArr = buildArr('fred_ind_production')
+  const tradeBalArr = buildArr('fred_trade_balance')
+  const wtiArr = buildArr('fred_wti')
+  const walclArr = buildArr('fred_fed_assets')
+  const rrpArr = buildArr('fred_rrp')
+  const m2Arr = buildArr('fred_m2')
+  const epuArr = buildArr('fred_epu')
+  const nfciArr = buildArr('fred_nfci')
+
+  console.log('[dataset] FRED arrays built for 20 series')
+
   // ── 4. Precompute technical indicators on MES ──
   console.log('[dataset] Computing technical indicators...')
 
@@ -360,11 +451,31 @@ async function run(): Promise<void> {
     'mes_vol_ratio',
     // Individual FRED features
     ...FRED_FEATURES.map((f) => f.column),
-    // Derived features
+    // Derived features (Phase 1 originals)
     'yield_curve_slope', 'yield_curve_curvature',
     'real_rate_5y', 'real_rate_10y',
     'credit_spread_diff', 'vix_term_structure',
     'fed_liquidity',
+    // Phase 2: Rates derived
+    'fed_midpoint', 'rate_cut_distance', 'sofr_dff_spread',
+    // Phase 2: Yields derived
+    'yield_curve_5y30y', 'dgs10_velocity_5d', 'dgs2_velocity_5d',
+    // Phase 2: Volatility & credit derived
+    'vix_percentile_20d', 'vix_1d_change', 'hy_spread_momentum_5d', 'ovx_vix_divergence',
+    // Phase 2: Inflation derived
+    'breakeven_spread_10y5y', 'inflation_deanchor_flag', 'real_yield_slope', 't10yie_5d_change',
+    // Phase 2: FX derived
+    'dollar_momentum_5d', 'dollar_momentum_20d', 'jpy_spike_flag', 'cny_stress_flag',
+    // Phase 2: Labor derived
+    'claims_4wk_ma', 'ccsa_4wk_roc', 'sahm_rule_proxy',
+    // Phase 2: Activity derived
+    'umcsent_3mo_trend', 'indpro_3mo_trend', 'trade_balance_3mo_trend',
+    // Phase 2: Commodities derived
+    'wti_brent_spread', 'wti_shock_flag',
+    // Phase 2: Money/liquidity derived
+    'walcl_4wk_change', 'rrp_5d_change', 'm2_yoy_growth',
+    // Phase 2: EPU & NFCI derived
+    'epu_20d_percentile', 'nfci_4wk_trend',
     // News/policy rolling
     'news_count_7d', 'news_fed_count_7d',
     'policy_count_7d',

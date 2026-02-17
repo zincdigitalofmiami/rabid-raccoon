@@ -19,7 +19,7 @@
 
 import { prisma } from '../src/lib/prisma'
 import { toNum } from '../src/lib/decimal'
-import { loadDotEnvFiles, parseArg } from './ingest-utils'
+import { loadDotEnvFiles, parseArg, splitIntoDayChunks } from './ingest-utils'
 import {
   asofLookupByDateKey,
   conservativeLagDaysForFrequency,
@@ -43,22 +43,15 @@ const FRED_FEATURES: FredSeriesConfig[] = [
   { seriesId: 'VIXCLS', column: 'fred_vix', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'VXVCLS', column: 'fred_vvix', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'OVXCLS', column: 'fred_ovx', table: 'econ_vol_indices_1d', frequency: 'daily' },
-  { seriesId: 'GVZCLS', column: 'fred_gvz', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'BAMLC0A0CM', column: 'fred_ig_oas', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'BAMLH0A0HYM2', column: 'fred_hy_oas', table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'NFCI', column: 'fred_nfci', table: 'econ_vol_indices_1d', frequency: 'weekly' },
-  { seriesId: 'STLFSI4', column: 'fred_stlfsi', table: 'econ_vol_indices_1d', frequency: 'weekly' },
   { seriesId: 'USEPUINDXD', column: 'fred_epu', table: 'econ_vol_indices_1d', frequency: 'daily' },
-  { seriesId: 'SP500', column: 'fred_sp500', table: 'econ_vol_indices_1d', frequency: 'daily' },
-  { seriesId: 'NASDAQCOM', column: 'fred_nasdaq', table: 'econ_vol_indices_1d', frequency: 'daily' },
   // Rates
   { seriesId: 'DFF', column: 'fred_dff', table: 'econ_rates_1d', frequency: 'daily' },
   { seriesId: 'SOFR', column: 'fred_sofr', table: 'econ_rates_1d', frequency: 'daily' },
   { seriesId: 'T10Y2Y', column: 'fred_t10y2y', table: 'econ_rates_1d', frequency: 'daily' },
-  { seriesId: 'T10Y3M', column: 'fred_t10y3m', table: 'econ_rates_1d', frequency: 'daily' },
-  { seriesId: 'MORTGAGE30US', column: 'fred_mort30', table: 'econ_rates_1d', frequency: 'weekly' },
   // Yield curve
-  { seriesId: 'DGS1MO', column: 'fred_y1m', table: 'econ_yields_1d', frequency: 'daily' },
   { seriesId: 'DGS3MO', column: 'fred_y3m', table: 'econ_yields_1d', frequency: 'daily' },
   { seriesId: 'DGS2', column: 'fred_y2y', table: 'econ_yields_1d', frequency: 'daily' },
   { seriesId: 'DGS5', column: 'fred_y5y', table: 'econ_yields_1d', frequency: 'daily' },
@@ -77,18 +70,45 @@ const FRED_FEATURES: FredSeriesConfig[] = [
   { seriesId: 'DFII10', column: 'fred_tips10y', table: 'econ_inflation_1d', frequency: 'daily' },
   // Commodities
   { seriesId: 'DCOILWTICO', column: 'fred_wti', table: 'econ_commodities_1d', frequency: 'daily' },
-  { seriesId: 'DHHNGSP', column: 'fred_natgas', table: 'econ_commodities_1d', frequency: 'daily' },
+  { seriesId: 'DCOILBRENTEU', column: 'fred_brent', table: 'econ_commodities_1d', frequency: 'daily' },
   { seriesId: 'PCOPPUSDM', column: 'fred_copper', table: 'econ_commodities_1d', frequency: 'monthly' },
+
   // Liquidity / Fed balance sheet
   { seriesId: 'WALCL', column: 'fred_fed_assets', table: 'econ_money_1d', frequency: 'weekly' },
   { seriesId: 'RRPONTSYD', column: 'fred_rrp', table: 'econ_money_1d', frequency: 'daily' },
-  { seriesId: 'WRESBAL', column: 'fred_reserves', table: 'econ_money_1d', frequency: 'weekly' },
-  // Labor (weekly)
+  { seriesId: 'M2SL', column: 'fred_m2', table: 'econ_money_1d', frequency: 'monthly' },
+
+  // Labor
   { seriesId: 'ICSA', column: 'fred_claims', table: 'econ_labor_1d', frequency: 'weekly' },
+  { seriesId: 'CCSA', column: 'fred_continuing_claims', table: 'econ_labor_1d', frequency: 'weekly' },
+  { seriesId: 'PAYEMS', column: 'fred_nfp', table: 'econ_labor_1d', frequency: 'monthly' },
+  { seriesId: 'UNRATE', column: 'fred_unemployment', table: 'econ_labor_1d', frequency: 'monthly' },
+
+  // Rates (fed funds target range)
+  { seriesId: 'DFEDTARL', column: 'fred_fed_target_lower', table: 'econ_rates_1d', frequency: 'daily' },
+  { seriesId: 'DFEDTARU', column: 'fred_fed_target_upper', table: 'econ_rates_1d', frequency: 'daily' },
+
+  // FX (additional)
+  { seriesId: 'DEXMXUS', column: 'fred_mxnusd', table: 'econ_fx_1d', frequency: 'daily' },
+
+  // Inflation (monthly event series — forward-filled)
+  { seriesId: 'CPIAUCSL', column: 'fred_cpi', table: 'econ_inflation_1d', frequency: 'monthly' },
+  { seriesId: 'CPILFESL', column: 'fred_core_cpi', table: 'econ_inflation_1d', frequency: 'monthly' },
+  { seriesId: 'PCEPILFE', column: 'fred_core_pce', table: 'econ_inflation_1d', frequency: 'monthly' },
+  { seriesId: 'PPIACO', column: 'fred_ppi', table: 'econ_inflation_1d', frequency: 'monthly' },
+
+  // Activity (monthly/quarterly — forward-filled)
+  { seriesId: 'GDPC1', column: 'fred_real_gdp', table: 'econ_activity_1d', frequency: 'quarterly' },
+  { seriesId: 'RSXFS', column: 'fred_retail_sales', table: 'econ_activity_1d', frequency: 'monthly' },
+  { seriesId: 'UMCSENT', column: 'fred_consumer_sent', table: 'econ_activity_1d', frequency: 'monthly' },
+  { seriesId: 'INDPRO', column: 'fred_ind_production', table: 'econ_activity_1d', frequency: 'monthly' },
+  { seriesId: 'BOPGSTB', column: 'fred_trade_balance', table: 'econ_activity_1d', frequency: 'monthly' },
+  { seriesId: 'IMPCH', column: 'fred_china_imports', table: 'econ_activity_1d', frequency: 'monthly' },
 ]
 
 const NEWS_POLICY_LAG_DAYS = 1
 const NEWS_POLICY_LOOKBACK_DAYS = 7
+const MES_CANDLE_CHUNK_DAYS = 45
 
 function featureIndex(column: string): number {
   const idx = FRED_FEATURES.findIndex((f) => f.column === column)
@@ -202,18 +222,35 @@ async function run(): Promise<void> {
   console.log('[dataset:15m] Anti-leakage policy: daily=1d, weekly=8d, monthly=35d, quarterly=100d lag')
 
   // ── 1. Load MES 15m candles ──
-  const candles: MesCandle[] = (await prisma.mktFuturesMes15m.findMany({
-    where: { eventTime: { gte: start } },
-    orderBy: { eventTime: 'asc' },
-    select: { eventTime: true, open: true, high: true, low: true, close: true, volume: true },
-  })).map(r => ({
-    eventTime: r.eventTime,
-    open: toNum(r.open),
-    high: toNum(r.high),
-    low: toNum(r.low),
-    close: toNum(r.close),
-    volume: r.volume,
-  }))
+  const now = new Date()
+  const candleChunks = splitIntoDayChunks(start, now, MES_CANDLE_CHUNK_DAYS)
+  const candles: MesCandle[] = []
+  for (let i = 0; i < candleChunks.length; i++) {
+    const chunk = candleChunks[i]
+    const rows = await prisma.mktFuturesMes15m.findMany({
+      where: {
+        eventTime: {
+          gte: chunk.start,
+          lt: chunk.end,
+        },
+      },
+      orderBy: { eventTime: 'asc' },
+      select: { eventTime: true, open: true, high: true, low: true, close: true, volume: true },
+    })
+    candles.push(
+      ...rows.map((r) => ({
+        eventTime: r.eventTime,
+        open: toNum(r.open),
+        high: toNum(r.high),
+        low: toNum(r.low),
+        close: toNum(r.close),
+        volume: r.volume,
+      }))
+    )
+    if (i === 0 || (i + 1) % 4 === 0 || i === candleChunks.length - 1) {
+      console.log(`[dataset:15m] MES chunk ${i + 1}/${candleChunks.length} -> ${rows.length} rows`)
+    }
+  }
 
   if (candles.length < 500) {
     throw new Error(`Insufficient MES 15m data (${candles.length} rows, need 500+)`)

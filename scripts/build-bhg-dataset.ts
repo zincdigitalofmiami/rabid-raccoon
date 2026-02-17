@@ -530,20 +530,14 @@ async function loadFredSnapshots(): Promise<Map<string, FredSnapshot>> {
     )
     const dxyByDate = new Map(dxyRows.map(r => [new Date(r.eventDate).toISOString().slice(0, 10), r.value]))
 
-    // NASDAQ
-    const nqRows = await prisma.$queryRawUnsafe<{ eventDate: Date; value: number }[]>(
-      `SELECT "eventDate", value FROM "econ_vol_indices_1d" WHERE "seriesId" = 'NASDAQCOM' AND value IS NOT NULL ORDER BY "eventDate"`
-    )
-    const nqByDate = new Map(nqRows.map(r => [new Date(r.eventDate).toISOString().slice(0, 10), r.value]))
-
     // Merge all dates
-    const allDates = new Set([...vixByDate.keys(), ...dxyByDate.keys(), ...nqByDate.keys()])
+    const allDates = new Set([...vixByDate.keys(), ...dxyByDate.keys()])
     for (const date of allDates) {
       map.set(date, {
         date,
         vix: vixByDate.get(date) ?? null,
         dxy: dxyByDate.get(date) ?? null,
-        nq: nqByDate.get(date) ?? null,
+        nq: null,
       })
     }
   } catch (err) {

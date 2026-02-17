@@ -50,163 +50,72 @@ function hashRow(seriesId: string, eventDate: Date, value: number, source: strin
 
 // ─── COMPLETE FRED SERIES CATALOG ──────────────────────────────────────────
 
+// Data Dictionary v2.0 — 47 KEEP series only
 const FRED_SERIES: SeriesSpec[] = [
-  // ── RATES (14 series) ──
+  // ── RATES (5) ──
   { seriesId: 'DFF', domain: 'RATES', displayName: 'Federal Funds Effective Rate', units: 'percent', frequency: 'daily' },
   { seriesId: 'DFEDTARL', domain: 'RATES', displayName: 'Fed Funds Target Range Lower', units: 'percent', frequency: 'daily' },
   { seriesId: 'DFEDTARU', domain: 'RATES', displayName: 'Fed Funds Target Range Upper', units: 'percent', frequency: 'daily' },
-  { seriesId: 'FEDFUNDS', domain: 'RATES', displayName: 'Federal Funds Rate (monthly)', units: 'percent', frequency: 'monthly' },
-  { seriesId: 'SOFR', domain: 'RATES', displayName: 'Secured Overnight Financing Rate', units: 'percent', frequency: 'daily' },
-  { seriesId: 'DPRIME', domain: 'RATES', displayName: 'Bank Prime Loan Rate', units: 'percent', frequency: 'daily' },
-  { seriesId: 'MORTGAGE30US', domain: 'RATES', displayName: '30-Year Fixed Mortgage Rate', units: 'percent', frequency: 'weekly' },
   { seriesId: 'T10Y2Y', domain: 'RATES', displayName: '10Y-2Y Treasury Spread', units: 'percent', frequency: 'daily' },
-  { seriesId: 'T10Y3M', domain: 'RATES', displayName: '10Y-3M Treasury Spread', units: 'percent', frequency: 'daily' },
-  { seriesId: 'TEDRATE', domain: 'RATES', displayName: 'TED Spread (3M LIBOR - 3M T-Bill)', units: 'percent', frequency: 'daily' },
+  { seriesId: 'SOFR', domain: 'RATES', displayName: 'Secured Overnight Financing Rate', units: 'percent', frequency: 'daily' },
 
-  // ── YIELDS (10 series) ──
-  { seriesId: 'DGS1MO', domain: 'YIELDS', displayName: '1-Month Treasury', units: 'percent', frequency: 'daily' },
-  { seriesId: 'DGS3MO', domain: 'YIELDS', displayName: '3-Month Treasury', units: 'percent', frequency: 'daily' },
-  { seriesId: 'DGS6MO', domain: 'YIELDS', displayName: '6-Month Treasury', units: 'percent', frequency: 'daily' },
-  { seriesId: 'DGS1', domain: 'YIELDS', displayName: '1-Year Treasury', units: 'percent', frequency: 'daily' },
+  // ── YIELDS (5) ──
   { seriesId: 'DGS2', domain: 'YIELDS', displayName: '2-Year Treasury', units: 'percent', frequency: 'daily' },
   { seriesId: 'DGS5', domain: 'YIELDS', displayName: '5-Year Treasury', units: 'percent', frequency: 'daily' },
-  { seriesId: 'DGS7', domain: 'YIELDS', displayName: '7-Year Treasury', units: 'percent', frequency: 'daily' },
   { seriesId: 'DGS10', domain: 'YIELDS', displayName: '10-Year Treasury', units: 'percent', frequency: 'daily' },
-  { seriesId: 'DGS20', domain: 'YIELDS', displayName: '20-Year Treasury', units: 'percent', frequency: 'daily' },
   { seriesId: 'DGS30', domain: 'YIELDS', displayName: '30-Year Treasury', units: 'percent', frequency: 'daily' },
+  { seriesId: 'DGS3MO', domain: 'YIELDS', displayName: '3-Month Treasury', units: 'percent', frequency: 'daily' },
 
-  // ── FX (25 series — dollar indices + DM/EM pairs) ──
-  { seriesId: 'DTWEXBGS', domain: 'FX', displayName: 'Trade Weighted Dollar Index (Broad)', units: 'index', frequency: 'daily' },
-  { seriesId: 'DTWEXAFEGS', domain: 'FX', displayName: 'Dollar Index (Adv Foreign Econ)', units: 'index', frequency: 'daily' },
-  { seriesId: 'DTWEXEMEGS', domain: 'FX', displayName: 'Dollar Index (EME)', units: 'index', frequency: 'daily' },
-  { seriesId: 'DEXUSEU', domain: 'FX', displayName: 'USD/EUR', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXUSUK', domain: 'FX', displayName: 'USD/GBP', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXJPUS', domain: 'FX', displayName: 'JPY/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXCAUS', domain: 'FX', displayName: 'CAD/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXSFUS', domain: 'FX', displayName: 'CHF/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXUSAL', domain: 'FX', displayName: 'USD/AUD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXMAUS', domain: 'FX', displayName: 'MYR/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXSZUS', domain: 'FX', displayName: 'SEK/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXNOUS', domain: 'FX', displayName: 'NOK/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXCHUS', domain: 'FX', displayName: 'CNY/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXKOUS', domain: 'FX', displayName: 'KRW/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXBZUS', domain: 'FX', displayName: 'BRL/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXMXUS', domain: 'FX', displayName: 'MXN/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXINUS', domain: 'FX', displayName: 'INR/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXHKUS', domain: 'FX', displayName: 'HKD/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXSIUS', domain: 'FX', displayName: 'SGD/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXTAUS', domain: 'FX', displayName: 'TWD/USD', units: 'currency', frequency: 'daily' },
-  { seriesId: 'DEXTHUS', domain: 'FX', displayName: 'THB/USD', units: 'currency', frequency: 'daily' },
-  // zinc-fusion-v15 additions
-  { seriesId: 'ARGCCUSMA02STM', domain: 'FX', displayName: 'Argentina Peso/USD', units: 'currency', frequency: 'monthly' },
-
-  // ── VOLATILITY / RISK INDICES (18 series) ──
+  // ── VOL & CREDIT (7) ──
   { seriesId: 'VIXCLS', domain: 'VOL_INDICES', displayName: 'CBOE VIX', units: 'index', frequency: 'daily' },
-  { seriesId: 'EVZCLS', domain: 'VOL_INDICES', displayName: 'CBOE EuroCurrency Volatility', units: 'index', frequency: 'daily' },
-  { seriesId: 'GVZCLS', domain: 'VOL_INDICES', displayName: 'CBOE Gold Volatility', units: 'index', frequency: 'daily' },
-  { seriesId: 'OVXCLS', domain: 'VOL_INDICES', displayName: 'CBOE Crude Oil Volatility', units: 'index', frequency: 'daily' },
   { seriesId: 'VXVCLS', domain: 'VOL_INDICES', displayName: 'CBOE VVIX', units: 'index', frequency: 'daily' },
-  { seriesId: 'VXEEMCLS', domain: 'VOL_INDICES', displayName: 'CBOE EM Volatility', units: 'index', frequency: 'daily' },
-  { seriesId: 'VXFXICLS', domain: 'VOL_INDICES', displayName: 'CBOE China ETF Volatility', units: 'index', frequency: 'daily' },
-  { seriesId: 'VXGSCLS', domain: 'VOL_INDICES', displayName: 'CBOE Goldman Sachs Volatility', units: 'index', frequency: 'daily' },
-  { seriesId: 'BAMLC0A0CM', domain: 'VOL_INDICES', displayName: 'US Corp Bond OAS', units: 'percent', frequency: 'daily' },
   { seriesId: 'BAMLH0A0HYM2', domain: 'VOL_INDICES', displayName: 'US High Yield OAS', units: 'percent', frequency: 'daily' },
+  { seriesId: 'BAMLC0A0CM', domain: 'VOL_INDICES', displayName: 'US Corp Bond OAS', units: 'percent', frequency: 'daily' },
+  { seriesId: 'OVXCLS', domain: 'VOL_INDICES', displayName: 'CBOE Crude Oil Volatility', units: 'index', frequency: 'daily' },
   { seriesId: 'NFCI', domain: 'VOL_INDICES', displayName: 'Chicago Fed Financial Conditions', units: 'index', frequency: 'weekly' },
-  { seriesId: 'ANFCI', domain: 'VOL_INDICES', displayName: 'Adjusted NFCI', units: 'index', frequency: 'weekly' },
-  { seriesId: 'STLFSI4', domain: 'VOL_INDICES', displayName: 'St. Louis Fed Financial Stress', units: 'index', frequency: 'weekly' },
   { seriesId: 'USEPUINDXD', domain: 'VOL_INDICES', displayName: 'Economic Policy Uncertainty (daily)', units: 'index', frequency: 'daily' },
-  { seriesId: 'SP500', domain: 'VOL_INDICES', displayName: 'S&P 500 (FRED)', units: 'index', frequency: 'daily' },
-  { seriesId: 'NASDAQCOM', domain: 'VOL_INDICES', displayName: 'NASDAQ Composite (FRED)', units: 'index', frequency: 'daily' },
-  // zinc-fusion-v15 additions
-  { seriesId: 'USEPUINDXM', domain: 'VOL_INDICES', displayName: 'Economic Policy Uncertainty (monthly)', units: 'index', frequency: 'monthly' },
-  { seriesId: 'EMVTRADEPOLEMV', domain: 'VOL_INDICES', displayName: 'Equity Market Vol: Trade Policy', units: 'index', frequency: 'daily' },
 
-  // ── INFLATION (15 series) ──
+  // ── INFLATION (9) — 5 daily + 4 monthly event flags ──
+  { seriesId: 'T10YIE', domain: 'INFLATION', displayName: '10Y Inflation Expectations', units: 'percent', frequency: 'daily' },
+  { seriesId: 'T5YIFR', domain: 'INFLATION', displayName: '5Y5Y Forward Inflation', units: 'percent', frequency: 'daily' },
+  { seriesId: 'DFII10', domain: 'INFLATION', displayName: '10Y TIPS Real Yield', units: 'percent', frequency: 'daily' },
+  { seriesId: 'DFII5', domain: 'INFLATION', displayName: '5Y TIPS Real Yield', units: 'percent', frequency: 'daily' },
+  { seriesId: 'T5YIE', domain: 'INFLATION', displayName: '5Y Inflation Expectations', units: 'percent', frequency: 'daily' },
   { seriesId: 'CPIAUCSL', domain: 'INFLATION', displayName: 'CPI All Urban Consumers', units: 'index', frequency: 'monthly' },
   { seriesId: 'CPILFESL', domain: 'INFLATION', displayName: 'Core CPI (ex food/energy)', units: 'index', frequency: 'monthly' },
-  { seriesId: 'PCEPI', domain: 'INFLATION', displayName: 'PCE Price Index', units: 'index', frequency: 'monthly' },
   { seriesId: 'PCEPILFE', domain: 'INFLATION', displayName: 'Core PCE (ex food/energy)', units: 'index', frequency: 'monthly' },
   { seriesId: 'PPIACO', domain: 'INFLATION', displayName: 'PPI All Commodities', units: 'index', frequency: 'monthly' },
-  { seriesId: 'PPIFGS', domain: 'INFLATION', displayName: 'PPI Finished Goods', units: 'index', frequency: 'monthly' },
-  { seriesId: 'PPIFIS', domain: 'INFLATION', displayName: 'PPI Final Demand Services', units: 'index', frequency: 'monthly' },
-  { seriesId: 'DFII5', domain: 'INFLATION', displayName: '5Y TIPS Real Yield', units: 'percent', frequency: 'daily' },
-  { seriesId: 'DFII7', domain: 'INFLATION', displayName: '7Y TIPS Real Yield', units: 'percent', frequency: 'daily' },
-  { seriesId: 'DFII10', domain: 'INFLATION', displayName: '10Y TIPS Real Yield', units: 'percent', frequency: 'daily' },
-  { seriesId: 'T5YIE', domain: 'INFLATION', displayName: '5Y Inflation Expectations', units: 'percent', frequency: 'daily' },
-  { seriesId: 'T5YIFR', domain: 'INFLATION', displayName: '5Y5Y Forward Inflation', units: 'percent', frequency: 'daily' },
-  { seriesId: 'T10YIE', domain: 'INFLATION', displayName: '10Y Inflation Expectations', units: 'percent', frequency: 'daily' },
-  // zinc-fusion-v15 additions
-  { seriesId: 'DFII20', domain: 'INFLATION', displayName: '20Y TIPS Real Yield', units: 'percent', frequency: 'daily' },
-  { seriesId: 'DFII30', domain: 'INFLATION', displayName: '30Y TIPS Real Yield', units: 'percent', frequency: 'daily' },
 
-  // ── LABOR (5 series) ──
-  { seriesId: 'UNRATE', domain: 'LABOR', displayName: 'Unemployment Rate', units: 'percent', frequency: 'monthly' },
-  { seriesId: 'PAYEMS', domain: 'LABOR', displayName: 'Total Nonfarm Payrolls', units: 'thousands', frequency: 'monthly' },
-  { seriesId: 'MANEMP', domain: 'LABOR', displayName: 'Manufacturing Employment', units: 'thousands', frequency: 'monthly' },
+  // ── FX (5) ──
+  { seriesId: 'DTWEXBGS', domain: 'FX', displayName: 'Trade Weighted Dollar Index (Broad)', units: 'index', frequency: 'daily' },
+  { seriesId: 'DEXUSEU', domain: 'FX', displayName: 'USD/EUR', units: 'currency', frequency: 'daily' },
+  { seriesId: 'DEXJPUS', domain: 'FX', displayName: 'JPY/USD', units: 'currency', frequency: 'daily' },
+  { seriesId: 'DEXCHUS', domain: 'FX', displayName: 'CNY/USD', units: 'currency', frequency: 'daily' },
+  { seriesId: 'DEXMXUS', domain: 'FX', displayName: 'MXN/USD', units: 'currency', frequency: 'daily' },
+
+  // ── LABOR (4) ──
   { seriesId: 'ICSA', domain: 'LABOR', displayName: 'Initial Jobless Claims', units: 'number', frequency: 'weekly' },
   { seriesId: 'CCSA', domain: 'LABOR', displayName: 'Continuing Jobless Claims', units: 'number', frequency: 'weekly' },
+  { seriesId: 'PAYEMS', domain: 'LABOR', displayName: 'Total Nonfarm Payrolls', units: 'thousands', frequency: 'monthly' },
+  { seriesId: 'UNRATE', domain: 'LABOR', displayName: 'Unemployment Rate', units: 'percent', frequency: 'monthly' },
 
-  // ── ACTIVITY / GDP (20 series) ──
-  { seriesId: 'GDP', domain: 'ACTIVITY', displayName: 'Nominal GDP', units: 'billions', frequency: 'quarterly' },
+  // ── ACTIVITY (6) ──
   { seriesId: 'GDPC1', domain: 'ACTIVITY', displayName: 'Real GDP', units: 'billions', frequency: 'quarterly' },
-  { seriesId: 'INDPRO', domain: 'ACTIVITY', displayName: 'Industrial Production Index', units: 'index', frequency: 'monthly' },
   { seriesId: 'RSXFS', domain: 'ACTIVITY', displayName: 'Retail Sales (ex food svc)', units: 'millions', frequency: 'monthly' },
-  { seriesId: 'PCE', domain: 'ACTIVITY', displayName: 'Personal Consumption Expenditures', units: 'billions', frequency: 'monthly' },
-  { seriesId: 'HOUST', domain: 'ACTIVITY', displayName: 'Housing Starts', units: 'thousands', frequency: 'monthly' },
-  { seriesId: 'PERMIT', domain: 'ACTIVITY', displayName: 'Building Permits', units: 'thousands', frequency: 'monthly' },
   { seriesId: 'UMCSENT', domain: 'ACTIVITY', displayName: 'U of Michigan Consumer Sentiment', units: 'index', frequency: 'monthly' },
+  { seriesId: 'INDPRO', domain: 'ACTIVITY', displayName: 'Industrial Production Index', units: 'index', frequency: 'monthly' },
   { seriesId: 'BOPGSTB', domain: 'ACTIVITY', displayName: 'Trade Balance', units: 'millions', frequency: 'monthly' },
-  { seriesId: 'BUSLOANS', domain: 'ACTIVITY', displayName: 'Commercial & Industrial Loans', units: 'billions', frequency: 'monthly' },
-  { seriesId: 'EXPGS', domain: 'ACTIVITY', displayName: 'Exports of Goods & Services', units: 'billions', frequency: 'quarterly' },
-  { seriesId: 'IMPGS', domain: 'ACTIVITY', displayName: 'Imports of Goods & Services', units: 'billions', frequency: 'quarterly' },
-  { seriesId: 'FRGSHPUSM649NCIS', domain: 'ACTIVITY', displayName: 'Cass Freight Shipments Index', units: 'index', frequency: 'monthly' },
-  // zinc-fusion-v15 additions (China + tariff)
-  { seriesId: 'CHNCPIALLMINMEI', domain: 'ACTIVITY', displayName: 'China CPI All Items', units: 'index', frequency: 'monthly' },
-  { seriesId: 'CHNGDPNQDSMEI', domain: 'ACTIVITY', displayName: 'China GDP Nominal', units: 'index', frequency: 'quarterly' },
-  { seriesId: 'CHNMAINLANDTPU', domain: 'ACTIVITY', displayName: 'China Trade Policy Uncertainty', units: 'index', frequency: 'monthly' },
-  { seriesId: 'XTEXVA01CNM667S', domain: 'ACTIVITY', displayName: 'China Exports Value', units: 'usd', frequency: 'monthly' },
-  { seriesId: 'XTIMVA01CNM667S', domain: 'ACTIVITY', displayName: 'China Imports Value', units: 'usd', frequency: 'monthly' },
   { seriesId: 'IMPCH', domain: 'ACTIVITY', displayName: 'US Imports from China', units: 'millions', frequency: 'monthly' },
-  { seriesId: 'B235RC1Q027SBEA', domain: 'ACTIVITY', displayName: 'Customs Duties (Tariff Revenue)', units: 'billions', frequency: 'quarterly' },
 
-  // ── MONEY SUPPLY / FED BALANCE SHEET (8 series) ──
-  { seriesId: 'M2SL', domain: 'MONEY', displayName: 'M2 Money Supply', units: 'billions', frequency: 'monthly' },
-  { seriesId: 'BOGMBASE', domain: 'MONEY', displayName: 'Monetary Base', units: 'billions', frequency: 'monthly' },
-  { seriesId: 'TOTRESNS', domain: 'MONEY', displayName: 'Total Bank Reserves', units: 'billions', frequency: 'monthly' },
-  { seriesId: 'WALCL', domain: 'MONEY', displayName: 'Fed Total Assets', units: 'millions', frequency: 'weekly' },
-  { seriesId: 'WRESBAL', domain: 'MONEY', displayName: 'Reserve Balances with Fed', units: 'millions', frequency: 'weekly' },
-  { seriesId: 'RRPONTSYD', domain: 'MONEY', displayName: 'Overnight Reverse Repo', units: 'billions', frequency: 'daily' },
-  // zinc-fusion-v15 additions (China money)
-  { seriesId: 'MYAGM2CNM189N', domain: 'MONEY', displayName: 'China M2 Money Supply', units: 'billions', frequency: 'monthly' },
-  { seriesId: 'IR3TIB01CNM156N', domain: 'MONEY', displayName: 'China Interbank 3M Rate', units: 'percent', frequency: 'monthly' },
-
-  // ── COMMODITIES (25 series) ──
+  // ── COMMODITIES (3) ──
   { seriesId: 'DCOILWTICO', domain: 'COMMODITIES', displayName: 'WTI Crude Oil', units: 'usd/barrel', frequency: 'daily' },
   { seriesId: 'DCOILBRENTEU', domain: 'COMMODITIES', displayName: 'Brent Crude Oil', units: 'usd/barrel', frequency: 'daily' },
-  { seriesId: 'DHHNGSP', domain: 'COMMODITIES', displayName: 'Henry Hub Natural Gas', units: 'usd/mmbtu', frequency: 'daily' },
-  { seriesId: 'DHOILNYH', domain: 'COMMODITIES', displayName: 'No. 2 Heating Oil', units: 'usd/gallon', frequency: 'daily' },
-  { seriesId: 'DGASUSGULF', domain: 'COMMODITIES', displayName: 'Gulf Coast Gasoline', units: 'usd/gallon', frequency: 'daily' },
-  { seriesId: 'DJFUELUSGULF', domain: 'COMMODITIES', displayName: 'Gulf Coast Jet Fuel', units: 'usd/gallon', frequency: 'daily' },
-  { seriesId: 'DDFUELUSGULF', domain: 'COMMODITIES', displayName: 'Gulf Coast Diesel Fuel', units: 'usd/gallon', frequency: 'daily' },
-  { seriesId: 'DPROPANEMBTX', domain: 'COMMODITIES', displayName: 'Propane (Mont Belvieu)', units: 'usd/gallon', frequency: 'daily' },
-  { seriesId: 'GASREGW', domain: 'COMMODITIES', displayName: 'US Regular Gasoline Price', units: 'usd/gallon', frequency: 'weekly' },
-  { seriesId: 'GASDESW', domain: 'COMMODITIES', displayName: 'US Diesel Fuel Price', units: 'usd/gallon', frequency: 'weekly' },
-  { seriesId: 'APU000074714', domain: 'COMMODITIES', displayName: 'Average Electricity Price', units: 'usd/kwh', frequency: 'monthly' },
   { seriesId: 'PCOPPUSDM', domain: 'COMMODITIES', displayName: 'Copper Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PMAIZMTUSDM', domain: 'COMMODITIES', displayName: 'Corn (Maize) Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PWHEAMTUSDM', domain: 'COMMODITIES', displayName: 'Wheat Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PSOYBUSDM', domain: 'COMMODITIES', displayName: 'Soybean Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PSOILUSDM', domain: 'COMMODITIES', displayName: 'Soybean Oil Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PPOILUSDM', domain: 'COMMODITIES', displayName: 'Palm Oil Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PNGASEUUSDM', domain: 'COMMODITIES', displayName: 'EU Natural Gas Price', units: 'usd/mmbtu', frequency: 'monthly' },
-  // zinc-fusion-v15 additions
-  { seriesId: 'PBARLUSDM', domain: 'COMMODITIES', displayName: 'Barley Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PROILUSDM', domain: 'COMMODITIES', displayName: 'Rapeseed Oil Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PRICENPQUSDM', domain: 'COMMODITIES', displayName: 'Rice Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PSUNOUSDM', domain: 'COMMODITIES', displayName: 'Sunflower Oil Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'POLVOILUSDM', domain: 'COMMODITIES', displayName: 'Olive Oil Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'PSUGAISAUSDM', domain: 'COMMODITIES', displayName: 'Sugar Price', units: 'usd/mt', frequency: 'monthly' },
-  { seriesId: 'WPU06140341', domain: 'COMMODITIES', displayName: 'Ethanol PPI', units: 'index', frequency: 'monthly' },
+
+  // ── MONEY (3) ──
+  { seriesId: 'WALCL', domain: 'MONEY', displayName: 'Fed Total Assets', units: 'millions', frequency: 'weekly' },
+  { seriesId: 'RRPONTSYD', domain: 'MONEY', displayName: 'Overnight Reverse Repo', units: 'billions', frequency: 'daily' },
+  { seriesId: 'M2SL', domain: 'MONEY', displayName: 'M2 Money Supply', units: 'billions', frequency: 'monthly' },
 ]
 
 // ─── DOMAIN INSERT FUNCTIONS ───────────────────────────────────────────────

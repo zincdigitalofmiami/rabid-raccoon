@@ -10,63 +10,39 @@ export interface IngestionSymbol {
 
 const GLBX = 'GLBX.MDP3'
 
-const SYMBOL_UNIVERSE_25 = [
+const ACTIVE_SYMBOLS = [
+  // KEEP (6) — existing
   'ES',
   'MES',
   'NQ',
-  'MNQ',
   'YM',
-  'MYM',
   'RTY',
-  'M2K',
-  'EMD',
-  'NKD',
-  'XAE',
-  'XAF',
-  'XAV',
-  'XAI',
-  'XAB',
-  'XAR',
-  'XAK',
-  'XAU',
-  'XAY',
-  'XAP',
-  'XAZ',
-  'SXT',
-  'RS1',
-  'RSG',
-  'RSV',
+  'SOX',
+  // ADD (6) — new cross-asset correlation symbols
+  'ZN',  // 10Y Treasury Note
+  'ZB',  // 30Y Bond
+  'ZF',  // 5Y Note
+  'CL',  // Crude Oil
+  'GC',  // Gold
+  'SI',  // Silver
 ] as const
 
 const META: Record<string, { shortName: string; description: string; tickSize: number }> = {
   ES: { shortName: 'E-mini S&P', description: 'E-mini S&P 500 Futures', tickSize: 0.25 },
   MES: { shortName: 'Micro S&P', description: 'Micro E-mini S&P 500 Futures', tickSize: 0.25 },
   NQ: { shortName: 'E-mini Nasdaq', description: 'E-mini Nasdaq-100 Futures', tickSize: 0.25 },
-  MNQ: { shortName: 'Micro Nasdaq', description: 'Micro E-mini Nasdaq-100 Futures', tickSize: 0.25 },
   YM: { shortName: 'E-mini Dow', description: 'E-mini Dow Jones Futures', tickSize: 1.0 },
-  MYM: { shortName: 'Micro Dow', description: 'Micro E-mini Dow Jones Futures', tickSize: 1.0 },
   RTY: { shortName: 'E-mini Russell', description: 'E-mini Russell 2000 Futures', tickSize: 0.1 },
-  M2K: { shortName: 'Micro Russell', description: 'Micro E-mini Russell 2000 Futures', tickSize: 0.1 },
-  EMD: { shortName: 'S&P Midcap', description: 'S&P MidCap 400 Futures', tickSize: 0.1 },
-  NKD: { shortName: 'Nikkei JPY', description: 'Nikkei 225 JPY Futures', tickSize: 5.0 },
-  XAE: { shortName: 'XA E', description: 'XA E Futures', tickSize: 0.01 },
-  XAF: { shortName: 'XA F', description: 'XA F Futures', tickSize: 0.01 },
-  XAV: { shortName: 'XA V', description: 'XA V Futures', tickSize: 0.01 },
-  XAI: { shortName: 'XA I', description: 'XA I Futures', tickSize: 0.01 },
-  XAB: { shortName: 'XA B', description: 'XA B Futures', tickSize: 0.01 },
-  XAR: { shortName: 'XA R', description: 'XA R Futures', tickSize: 0.01 },
-  XAK: { shortName: 'XA K', description: 'XA K Futures', tickSize: 0.01 },
-  XAU: { shortName: 'XA U', description: 'XA U Futures', tickSize: 0.01 },
-  XAY: { shortName: 'XA Y', description: 'XA Y Futures', tickSize: 0.01 },
-  XAP: { shortName: 'XA P', description: 'XA P Futures', tickSize: 0.01 },
-  XAZ: { shortName: 'XA Z', description: 'XA Z Futures', tickSize: 0.01 },
-  SXT: { shortName: 'SX T', description: 'SX T Futures', tickSize: 0.01 },
-  RS1: { shortName: 'RS1', description: 'RS1 Futures', tickSize: 0.01 },
-  RSG: { shortName: 'RSG', description: 'RSG Futures', tickSize: 0.01 },
-  RSV: { shortName: 'RSV', description: 'RSV Futures', tickSize: 0.01 },
+  SOX: { shortName: 'Semiconductor', description: 'PHLX Semiconductor Index Futures', tickSize: 0.1 },
+  ZN: { shortName: '10Y Note', description: '10-Year Treasury Note Futures', tickSize: 0.015625 },
+  ZB: { shortName: '30Y Bond', description: '30-Year Treasury Bond Futures', tickSize: 0.03125 },
+  ZF: { shortName: '5Y Note', description: '5-Year Treasury Note Futures', tickSize: 0.0078125 },
+  CL: { shortName: 'Crude Oil', description: 'WTI Crude Oil Futures', tickSize: 0.01 },
+  GC: { shortName: 'Gold', description: 'Gold Futures', tickSize: 0.1 },
+  SI: { shortName: 'Silver', description: 'Silver Futures', tickSize: 0.005 },
 }
 
-export const INGESTION_SYMBOLS: IngestionSymbol[] = SYMBOL_UNIVERSE_25.map((code) => {
+export const INGESTION_SYMBOLS: IngestionSymbol[] = ACTIVE_SYMBOLS.map((code) => {
   const meta = META[code]
   return {
     code,

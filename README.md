@@ -91,7 +91,7 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rabid_raccoon?schema=
 Backfill is intentionally a local machine operation. Runtime API fallback pulls are disabled.
 
 `ingest:market` is hard-locked to:
-- `33` symbols
+- `32` symbols
 - `730` days
 - `1h` prices aggregated from Databento `1m`
 - Databento-only + zero-fake policy

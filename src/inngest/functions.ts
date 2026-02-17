@@ -9,9 +9,8 @@ import { runNewsScrape } from '../lib/news-scrape'
 export { backfillMesAllTimeframes } from './backfill-mes'
 
 const MARKET_SYMBOL_BATCHES: string[][] = [
-  ['MES', 'ES', 'NQ', 'MNQ', 'YM', 'MYM', 'RTY', 'M2K', 'EMD', 'NKD'],
-  ['XAE', 'XAF', 'XAV', 'XAI', 'XAB', 'XAR', 'XAK', 'XAU', 'XAY', 'XAP', 'XAZ'],
-  ['SXT', 'RS1', 'RSG', 'RSV'],
+  ['MES', 'ES', 'NQ', 'YM', 'RTY', 'SOX'],
+  ['ZN', 'ZB', 'ZF', 'CL', 'GC', 'SI'],
 ]
 
 const ECON_RELEASE_BATCHES: Array<{ id: string; releaseIds: number[] }> = [
