@@ -24,26 +24,12 @@ interface MacroIngestOptions {
   dryRun?: boolean
 }
 
-type MacroSource = 'FRED' | 'YAHOO'
+type MacroSource = 'FRED'
 type SeriesCategory = 'RATES' | 'VOLATILITY' | 'FX' | 'EQUITY' | 'OTHER'
-type MacroDomain = 'RATES' | 'YIELDS' | 'FX' | 'VOL_INDICES' | 'INDEXES'
+type MacroDomain = 'RATES' | 'YIELDS' | 'FX' | 'VOL_INDICES'
 
 function toJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue
-}
-
-interface YahooChartResult {
-  chart?: {
-    result?: Array<{
-      timestamp?: number[]
-      indicators?: {
-        quote?: Array<{
-          close?: Array<number | null>
-        }>
-      }
-    }>
-    error?: { description?: string }
-  }
 }
 
 function toUtcDateOnlyFromUnixSeconds(unixSeconds: number): Date {
@@ -108,28 +94,6 @@ async function upsertDataSourceRegistry(): Promise<void> {
     },
   })
 
-  await prisma.dataSourceRegistry.upsert({
-    where: { sourceId: 'econ-yahoo-indicators' },
-    create: {
-      sourceId: 'econ-yahoo-indicators',
-      sourceName: 'Yahoo Macro Proxy Indicators',
-      description: 'Daily macro proxy closes sourced from Yahoo Finance.',
-      targetTable: 'mkt_indexes_1d',
-      apiProvider: 'yahoo',
-      updateFrequency: 'daily',
-      ingestionScript: 'scripts/ingest-macro-indicators.ts',
-      isActive: true,
-    },
-    update: {
-      sourceName: 'Yahoo Macro Proxy Indicators',
-      description: 'Daily macro proxy closes sourced from Yahoo Finance.',
-      targetTable: 'mkt_indexes_1d',
-      apiProvider: 'yahoo',
-      updateFrequency: 'daily',
-      ingestionScript: 'scripts/ingest-macro-indicators.ts',
-      isActive: true,
-    },
-  })
 }
 
 function seriesCategoryForDomain(domain: MacroDomain): SeriesCategory {
@@ -141,8 +105,6 @@ function seriesCategoryForDomain(domain: MacroDomain): SeriesCategory {
       return 'FX'
     case 'VOL_INDICES':
       return 'VOLATILITY'
-    case 'INDEXES':
-      return 'EQUITY'
     default:
       return 'OTHER'
   }
@@ -155,94 +117,34 @@ async function insertDomainRows(
 ): Promise<number> {
   if (rows.length === 0) return 0
 
-  if (domain !== 'INDEXES') {
-    const splitData = rows.map((row) => ({
-      seriesId: row.seriesId,
-      eventDate: row.eventDate,
-      value: row.value,
-      source: row.source,
-      rowHash: row.rowHash,
-      metadata: toJson({ sourceSymbol }),
-    }))
+  const splitData = rows.map((row) => ({
+    seriesId: row.seriesId,
+    eventDate: row.eventDate,
+    value: row.value,
+    source: row.source,
+    rowHash: row.rowHash,
+    metadata: toJson({ sourceSymbol }),
+  }))
 
-    const splitInsertMap: Record<string, (() => Promise<{ count: number }>) | undefined> = {
-      RATES: () => prisma.econRates1d.createMany({ data: splitData, skipDuplicates: true }),
-      YIELDS: () => prisma.econYields1d.createMany({ data: splitData, skipDuplicates: true }),
-      FX: () => prisma.econFx1d.createMany({ data: splitData, skipDuplicates: true }),
-      VOL_INDICES: () => prisma.econVolIndices1d.createMany({ data: splitData, skipDuplicates: true }),
-    }
+  const splitInsertMap: Record<string, (() => Promise<{ count: number }>) | undefined> = {
+    RATES: () => prisma.econRates1d.createMany({ data: splitData, skipDuplicates: true }),
+    YIELDS: () => prisma.econYields1d.createMany({ data: splitData, skipDuplicates: true }),
+    FX: () => prisma.econFx1d.createMany({ data: splitData, skipDuplicates: true }),
+    VOL_INDICES: () => prisma.econVolIndices1d.createMany({ data: splitData, skipDuplicates: true }),
+  }
 
-    const splitFn = splitInsertMap[domain]
-    if (splitFn) {
-      try {
-        const inserted = await splitFn()
-        return inserted.count
-      } catch (err) {
-        console.warn(`[macro] split table write failed for ${domain}: ${err instanceof Error ? err.message : err}`)
-      }
+  const splitFn = splitInsertMap[domain]
+  if (splitFn) {
+    try {
+      const inserted = await splitFn()
+      return inserted.count
+    } catch (err) {
+      console.warn(`[macro] split table write failed for ${domain}: ${err instanceof Error ? err.message : err}`)
     }
-    return 0
-  } else if (domain === 'INDEXES') {
-    // Market index
-    const inserted = await prisma.mktIndexes1d.createMany({
-      data: rows.map((row) => ({
-        symbolCode: sourceSymbol,
-        eventDate: row.eventDate,
-        open: row.value,
-        high: row.value,
-        low: row.value,
-        close: row.value,
-        volume: BigInt(0),
-        source: row.source,
-        sourceSymbol,
-        rowHash: row.rowHash,
-        metadata: toJson({ seriesId: row.seriesId }),
-      })),
-      skipDuplicates: true,
-    })
-    return inserted.count
   }
   return 0
 }
 
-async function fetchYahooDailyClose(symbol: string, daysBack: number): Promise<CandleData[]> {
-  const endSec = Math.floor(Date.now() / 1000)
-  const startSec = endSec - daysBack * 24 * 60 * 60
-  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`)
-  url.searchParams.set('interval', '1d')
-  url.searchParams.set('period1', String(startSec))
-  url.searchParams.set('period2', String(endSec))
-  url.searchParams.set('events', 'history')
-  url.searchParams.set('includePrePost', 'false')
-
-  const response = await fetch(url.toString(), {
-    headers: {
-      'User-Agent': 'RabidRaccoon/1.0',
-    },
-  })
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    throw new Error(`Yahoo API error ${response.status}: ${body.slice(0, 300)}`)
-  }
-
-  const data = (await response.json()) as YahooChartResult
-  const result = data.chart?.result?.[0]
-  if (!result || !result.timestamp || !result.indicators?.quote?.[0]?.close) {
-    const detail = data.chart?.error?.description || 'missing chart data'
-    throw new Error(`Yahoo chart parse failed: ${detail}`)
-  }
-
-  const closes = result.indicators.quote[0].close || []
-  const out: CandleData[] = []
-  for (let i = 0; i < result.timestamp.length; i++) {
-    const ts = result.timestamp[i]
-    const close = closes[i]
-    if (!Number.isFinite(ts) || !Number.isFinite(close || NaN)) continue
-    const c = Number(close)
-    out.push({ time: ts, open: c, high: c, low: c, close: c, volume: 0 })
-  }
-  return out
-}
 
 export async function runIngestMacroIndicators(options?: MacroIngestOptions): Promise<MacroIngestSummary> {
   loadDotEnvFiles()
@@ -324,16 +226,6 @@ export async function runIngestMacroIndicators(options?: MacroIngestOptions): Pr
       frequency: 'daily',
       units: 'percent',
       fetcher: () => fetchTenYearYieldCandles(startDate, endDate),
-    },
-    {
-      seriesId: 'FXI_CLOSE',
-      displayName: 'iShares China Large-Cap ETF Close',
-      domain: 'INDEXES',
-      source: 'YAHOO',
-      sourceSymbol: 'FXI',
-      frequency: 'daily',
-      units: 'price',
-      fetcher: () => fetchYahooDailyClose('FXI', daysBack),
     },
   ]
 
