@@ -12,7 +12,7 @@ const SERIES = FRED_SERIES.filter((s) => s.domain === DOMAIN)
  */
 export const ingestEconLabor = inngest.createFunction(
   { id: 'ingest-econ-labor', retries: 2 },
-  { cron: '30 7 * * *' },
+  { cron: '0 10 * * *' },
   async ({ step }) => {
     const results: FredSeriesResult[] = []
 

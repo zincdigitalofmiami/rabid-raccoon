@@ -8,7 +8,7 @@ import { runIngestMeasuredMoveSignals } from '../../../scripts/ingest-mm-signals
  */
 export const ingestMeasuredMoves = inngest.createFunction(
   { id: 'ingest-measured-moves', retries: 2 },
-  { cron: '50 7 * * *' },
+  { cron: '0 17 * * *' },
   async ({ step }) => {
     const result = await step.run('measured-move-signals', async () =>
       runIngestMeasuredMoveSignals({

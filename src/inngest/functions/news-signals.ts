@@ -10,7 +10,7 @@ const NEWS_LAYERS = ['trump_policy', 'volatility', 'banking', 'econ_report'] as 
  */
 export const ingestNewsSignals = inngest.createFunction(
   { id: 'ingest-news-signals', retries: 2 },
-  { cron: '40 7 * * *' },
+  { cron: '0 15 * * *' },
   async ({ step }) => {
     const results: Array<{ layer: string; result: NewsScrapeResult }> = []
 

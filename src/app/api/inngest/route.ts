@@ -2,7 +2,7 @@ import { serve } from 'inngest/next'
 import { inngest } from '@/inngest/client'
 import {
   // Market Data (Databento) — 5 functions
-  ingestMktMes,
+  ingestMktMes1h,
   ingestMktEquityIndices,
   ingestMktTreasuries,
   ingestMktCommodities,
@@ -34,13 +34,13 @@ export const maxDuration = 300
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    // Market Data (staggered 07:00–07:20 UTC)
-    ingestMktMes,
+    // Market Data (Databento)
+    ingestMktMes1h,
     ingestMktEquityIndices,
     ingestMktTreasuries,
     ingestMktCommodities,
     ingestMktFxRates,
-    // FRED Econ (staggered 07:25–07:33 UTC)
+    // FRED Econ (05:00–13:00 UTC, 1hr apart)
     ingestEconRates,
     ingestEconYields,
     ingestEconVolIndices,
@@ -50,11 +50,11 @@ export const { GET, POST, PUT } = serve({
     ingestEconActivity,
     ingestEconCommodities,
     ingestEconMoney,
-    // Events / News (07:35–07:45 UTC)
+    // Events / News (14:00–16:00 UTC)
     ingestEconCalendar,
     ingestNewsSignals,
     ingestAltNews,
-    // Signals (07:50 UTC)
+    // Signals (17:00 UTC)
     ingestMeasuredMoves,
     // Backfill (event-triggered)
     backfillMesAllTimeframes,

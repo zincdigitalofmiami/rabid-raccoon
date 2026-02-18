@@ -22,7 +22,7 @@ const DAILY_RATES_WINDOWS: Array<{ id: string; startDateStr: string; endDateStr?
  */
 export const ingestEconCalendar = inngest.createFunction(
   { id: 'ingest-econ-calendar', retries: 2 },
-  { cron: '35 7 * * *' },
+  { cron: '0 14 * * *' },
   async ({ step }) => {
     const releaseResults: Array<{ batchId: string; result: Awaited<ReturnType<typeof runIngestEconCalendar>> }> = []
     const ratesResults: Array<{ batchId: string; result: Awaited<ReturnType<typeof runIngestEconCalendar>> }> = []

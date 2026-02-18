@@ -10,7 +10,7 @@ const SYMBOLS = ['CL', 'GC', 'SI', 'NG'] as const
  */
 export const ingestMktCommodities = inngest.createFunction(
   { id: 'ingest-mkt-commodities', retries: 2 },
-  { cron: '15 7 * * *' },
+  { cron: '0 3 * * *' },
   async ({ step }) => {
     const results: Array<{ symbol: string; result: Awaited<ReturnType<typeof runIngestMarketPricesDaily>> }> = []
 
