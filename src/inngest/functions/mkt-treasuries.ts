@@ -1,0 +1,26 @@
+import { inngest } from '../client'
+import { runIngestMarketPricesDaily } from '../../../scripts/ingest-market-prices-daily'
+
+const SYMBOLS = ['ZN', 'ZB', 'ZF'] as const
+
+/**
+ * Treasury futures — one step per symbol.
+ * Target tables: mkt_futures_1h, mkt_futures_1d
+ * Cron: 07:10 UTC daily
+ */
+export const ingestMktTreasuries = inngest.createFunction(
+  { id: 'ingest-mkt-treasuries', retries: 2 },
+  { cron: '10 7 * * *' },
+  async ({ step }) => {
+    const results: Array<{ symbol: string; result: Awaited<ReturnType<typeof runIngestMarketPricesDaily>> }> = []
+
+    for (const symbol of SYMBOLS) {
+      const result = await step.run(`prices-${symbol.toLowerCase()}`, async () =>
+        runIngestMarketPricesDaily({ lookbackHours: 48, dryRun: false, symbols: [symbol] })
+      )
+      results.push({ symbol, result })
+    }
+
+    return { ranAt: new Date().toISOString(), symbols: SYMBOLS, results }
+  }
+)
