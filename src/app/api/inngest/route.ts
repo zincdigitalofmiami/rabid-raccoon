@@ -7,7 +7,7 @@ import {
   ingestMktTreasuries,
   ingestMktCommodities,
   ingestMktFxRates,
-  // FRED Economic Series — 9 functions
+  // FRED Economic Series — 10 functions
   ingestEconRates,
   ingestEconYields,
   ingestEconVolIndices,
@@ -17,6 +17,7 @@ import {
   ingestEconActivity,
   ingestEconCommodities,
   ingestEconMoney,
+  ingestEconIndexes,
   // Events / News — 3 functions
   ingestEconCalendar,
   ingestNewsSignals,
@@ -34,13 +35,13 @@ export const maxDuration = 300
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    // Market Data (Databento)
+    // Market Data (Databento, 00:00–04:00 UTC)
     ingestMktMes1h,
     ingestMktEquityIndices,
     ingestMktTreasuries,
     ingestMktCommodities,
     ingestMktFxRates,
-    // FRED Econ (05:00–13:00 UTC, 1hr apart)
+    // FRED Econ (05:00–14:00 UTC, 1hr apart)
     ingestEconRates,
     ingestEconYields,
     ingestEconVolIndices,
@@ -50,11 +51,12 @@ export const { GET, POST, PUT } = serve({
     ingestEconActivity,
     ingestEconCommodities,
     ingestEconMoney,
-    // Events / News (14:00–16:00 UTC)
+    ingestEconIndexes,
+    // Events / News (15:00–17:00 UTC)
     ingestEconCalendar,
     ingestNewsSignals,
     ingestAltNews,
-    // Signals (17:00 UTC)
+    // Signals (18:00 UTC)
     ingestMeasuredMoves,
     // Backfill (event-triggered)
     backfillMesAllTimeframes,

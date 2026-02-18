@@ -32,7 +32,7 @@ curl -X PUT "https://rabid-raccoon.vercel.app/api/inngest" -H "Content-Type: app
 
 Expected response: `{"message":"Successfully registered","modified":true}`
 
-## Inngest Schedule (18 cron + 1 event-triggered)
+## Inngest Schedule (19 cron + 1 event-triggered)
 
 All cron jobs run 1 hour apart to prevent concurrency crashes.
 
@@ -52,10 +52,11 @@ All cron jobs run 1 hour apart to prevent concurrency crashes.
 | 11:00 | 6 AM    | ingest-econ-activity         | FRED Econ     |
 | 12:00 | 7 AM    | ingest-econ-commodities      | FRED Econ     |
 | 13:00 | 8 AM    | ingest-econ-money            | FRED Econ     |
-| 14:00 | 9 AM    | ingest-econ-calendar         | Events/News   |
-| 15:00 | 10 AM   | ingest-news-signals          | Events/News   |
-| 16:00 | 11 AM   | ingest-alt-news              | Events/News   |
-| 17:00 | 12 PM   | ingest-measured-moves        | Signals       |
+| 14:00 | 9 AM    | ingest-econ-indexes          | FRED Econ     |
+| 15:00 | 10 AM   | ingest-econ-calendar         | Events/News   |
+| 16:00 | 11 AM   | ingest-news-signals          | Events/News   |
+| 17:00 | 12 PM   | ingest-alt-news              | Events/News   |
+| 18:00 | 1 PM    | ingest-measured-moves        | Signals       |
 | —     | —       | backfill-mes-all-timeframes  | Backfill (event-triggered) |
 
 ## Environment Boundaries

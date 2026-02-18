@@ -29,6 +29,7 @@ type EconDomain =
   | 'ACTIVITY'
   | 'MONEY'
   | 'COMMODITIES'
+  | 'INDEXES'
 
 interface SeriesSpec {
   seriesId: string
@@ -50,7 +51,7 @@ function hashRow(seriesId: string, eventDate: Date, value: number, source: strin
 
 // ─── COMPLETE FRED SERIES CATALOG ──────────────────────────────────────────
 
-// Data Dictionary v2.0 — 47 KEEP series only
+// Data Dictionary v2.1 — 50 series (47 original + 3 equity indexes)
 export const FRED_SERIES: SeriesSpec[] = [
   // ── RATES (5) ──
   { seriesId: 'DFF', domain: 'RATES', displayName: 'Federal Funds Effective Rate', units: 'percent', frequency: 'daily' },
@@ -116,6 +117,11 @@ export const FRED_SERIES: SeriesSpec[] = [
   { seriesId: 'WALCL', domain: 'MONEY', displayName: 'Fed Total Assets', units: 'millions', frequency: 'weekly' },
   { seriesId: 'RRPONTSYD', domain: 'MONEY', displayName: 'Overnight Reverse Repo', units: 'billions', frequency: 'daily' },
   { seriesId: 'M2SL', domain: 'MONEY', displayName: 'M2 Money Supply', units: 'billions', frequency: 'monthly' },
+
+  // ── INDEXES (3) — FRED equity indices ──
+  { seriesId: 'SP500', domain: 'INDEXES', displayName: 'S&P 500', units: 'index', frequency: 'daily' },
+  { seriesId: 'NASDAQCOM', domain: 'INDEXES', displayName: 'NASDAQ Composite', units: 'index', frequency: 'daily' },
+  { seriesId: 'DJIA', domain: 'INDEXES', displayName: 'Dow Jones Industrial Average', units: 'index', frequency: 'daily' },
 ]
 
 // ─── DOMAIN INSERT FUNCTIONS ───────────────────────────────────────────────
@@ -159,6 +165,7 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
     ACTIVITY: () => prisma.econActivity1d.createMany({ data: splitData, skipDuplicates: true }),
     MONEY: () => prisma.econMoney1d.createMany({ data: splitData, skipDuplicates: true }),
     COMMODITIES: () => prisma.econCommodities1d.createMany({ data: splitData, skipDuplicates: true }),
+    INDEXES: () => prisma.econIndexes1d.createMany({ data: splitData, skipDuplicates: true }),
   }
 
   try {
@@ -251,6 +258,7 @@ async function truncateEconTables(): Promise<void> {
     prisma.econActivity1d.deleteMany(),
     prisma.econMoney1d.deleteMany(),
     prisma.econCommodities1d.deleteMany(),
+    prisma.econIndexes1d.deleteMany(),
   ])
   const seriesResult = await prisma.economicSeries.deleteMany()
   const total = splitResults.reduce((sum, r) => sum + r.count, 0) + seriesResult.count
@@ -405,6 +413,7 @@ function domainToCategory(domain: EconDomain) {
     ACTIVITY: 'ACTIVITY',
     MONEY: 'MONEY',
     COMMODITIES: 'COMMODITIES',
+    INDEXES: 'EQUITY',
   }
   return map[domain] as Parameters<typeof prisma.economicSeries.create>[0]['data']['category']
 }
@@ -413,12 +422,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-run()
-  .then(() => {
-    console.log('\n[fred-complete] done.')
-    process.exit(0)
-  })
-  .catch((err) => {
-    console.error(`[fred-complete] fatal: ${err instanceof Error ? err.message : err}`)
-    process.exit(1)
-  })
+if (import.meta.url === `file://${process.argv[1]}`) {
+  run()
+    .then(() => {
+      console.log('\n[fred-complete] done.')
+      process.exit(0)
+    })
+    .catch((err) => {
+      console.error(`[fred-complete] fatal: ${err instanceof Error ? err.message : err}`)
+      process.exit(1)
+    })
+}
