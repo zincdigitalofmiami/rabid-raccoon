@@ -19,6 +19,7 @@
  * Usage:
  *   npx tsx scripts/build-lean-dataset.ts
  *   npx tsx scripts/build-lean-dataset.ts --timeframe=15m
+ *   npx tsx scripts/build-lean-dataset.ts --start-date=2022-01-01
  *   npx tsx scripts/build-lean-dataset.ts --days-back=365
  *   npx tsx scripts/build-lean-dataset.ts --out=datasets/autogluon/mes_lean_1h.csv
  */
@@ -423,37 +424,51 @@ async function run(): Promise<void> {
   loadDotEnvFiles()
 
   const timeframe = parseArg('timeframe', '1h') as '1h' | '15m'
-  const daysBack = Number(parseArg('days-back', '730'))
+  const startDateArg = parseArg('start-date', '2020-01-01')
+  const daysBackArg = parseArg('days-back', '')
   const defaultOut = timeframe === '15m'
     ? 'datasets/autogluon/mes_lean_15m.csv'
     : 'datasets/autogluon/mes_lean_1h.csv'
   const outFile = parseArg('out', defaultOut)
-  const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
+  // --days-back overrides --start-date if provided; otherwise default to 2020-01-01
+  const start = daysBackArg
+    ? new Date(Date.now() - Number(daysBackArg) * 24 * 60 * 60 * 1000)
+    : new Date(startDateArg + 'T00:00:00Z')
   const calendarLoadStart = new Date(start.getTime() - (EVENT_LOOKBACK_WINDOW_DAYS + 60) * MS_PER_DAY)
 
   const barsPerDay = timeframe === '15m' ? 96 : 24
   const velocityLookback = 5 * barsPerDay  // 5 trading days
 
+  const daysBack = Math.ceil((Date.now() - start.getTime()) / (24 * 60 * 60 * 1000))
   console.log(`[lean-dataset] Building LEAN MES ${timeframe} dataset for intraday trading`)
-  console.log(`[lean-dataset] Timeframe: ${timeframe}, Days back: ${daysBack}`)
+  console.log(`[lean-dataset] Timeframe: ${timeframe}, Start: ${start.toISOString().slice(0,10)}, Days back: ${daysBack}`)
   console.log(`[lean-dataset] Bars/day: ${barsPerDay}, Velocity lookback: ${velocityLookback} bars`)
 
-  // ── 1. Load MES candles ──
+  // ── 1. Load MES candles (paginated to stay under Prisma Accelerate 5MB limit) ──
   const tableName = timeframe === '15m' ? 'mktFuturesMes15m' : 'mktFuturesMes1h'
-  const rawCandles = await (prisma as any)[tableName].findMany({
-    where: { eventTime: { gte: start } },
-    orderBy: { eventTime: 'asc' },
-    select: { eventTime: true, open: true, high: true, low: true, close: true, volume: true },
-  })
-
-  const candles: MesCandle[] = rawCandles.map((r: any) => ({
-    eventTime: r.eventTime,
-    open: toNum(r.open),
-    high: toNum(r.high),
-    low: toNum(r.low),
-    close: toNum(r.close),
-    volume: r.volume,
-  }))
+  const candles: MesCandle[] = []
+  const CHUNK_MS = 365 * 24 * 60 * 60 * 1000 // 1 year per chunk
+  let chunkStart = start
+  const now = new Date()
+  while (chunkStart < now) {
+    const chunkEnd = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, now.getTime()))
+    const rawChunk = await (prisma as any)[tableName].findMany({
+      where: { eventTime: { gte: chunkStart, lt: chunkEnd } },
+      orderBy: { eventTime: 'asc' },
+      select: { eventTime: true, open: true, high: true, low: true, close: true, volume: true },
+    })
+    for (const r of rawChunk) {
+      candles.push({
+        eventTime: r.eventTime,
+        open: toNum(r.open),
+        high: toNum(r.high),
+        low: toNum(r.low),
+        close: toNum(r.close),
+        volume: r.volume,
+      })
+    }
+    chunkStart = chunkEnd
+  }
 
   if (candles.length < 200) {
     throw new Error(`Insufficient MES ${timeframe} data (${candles.length} rows, need 200+)`)
@@ -469,25 +484,31 @@ async function run(): Promise<void> {
   // Map: symbolCode → Map<isoString → bar>
   const crossAssetBars = new Map<string, Map<string, CrossAssetBar>>()
 
+  const crossAssetStart = new Date(start.getTime() - 200 * 60 * 60 * 1000) // extra 200h for warmup
   for (const sym of CROSS_ASSET_SYMBOLS) {
-    const rows = await prisma.mktFutures1h.findMany({
-      where: {
-        symbolCode: sym.code,
-        eventTime: { gte: new Date(start.getTime() - 200 * 60 * 60 * 1000) }, // extra 200h for warmup
-      },
-      orderBy: { eventTime: 'asc' },
-      select: { eventTime: true, close: true, volume: true },
-    })
     const barMap = new Map<string, CrossAssetBar>()
-    for (const r of rows) {
-      barMap.set(r.eventTime.toISOString(), {
-        eventTime: r.eventTime,
-        close: toNum(r.close),
-        volume: r.volume,
+    let caChunkStart = crossAssetStart
+    while (caChunkStart < now) {
+      const caChunkEnd = new Date(Math.min(caChunkStart.getTime() + CHUNK_MS, now.getTime()))
+      const rows = await prisma.mktFutures1h.findMany({
+        where: {
+          symbolCode: sym.code,
+          eventTime: { gte: caChunkStart, lt: caChunkEnd },
+        },
+        orderBy: { eventTime: 'asc' },
+        select: { eventTime: true, close: true, volume: true },
       })
+      for (const r of rows) {
+        barMap.set(r.eventTime.toISOString(), {
+          eventTime: r.eventTime,
+          close: toNum(r.close),
+          volume: r.volume,
+        })
+      }
+      caChunkStart = caChunkEnd
     }
     crossAssetBars.set(sym.code, barMap)
-    console.log(`  ${sym.code.padEnd(4)} ${rows.length} hourly bars`)
+    console.log(`  ${sym.code.padEnd(4)} ${barMap.size} hourly bars`)
   }
 
   // Align each symbol's close prices to MES timestamps
