@@ -40,6 +40,27 @@ import {
 import fs from 'node:fs'
 import path from 'node:path'
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+const EVENT_LOOKBACK_WINDOW_DAYS = 365 * 3
+const EVENT_LOOKBACK_MIN_OBS = 6
+const EVENT_FEATURE_LAG_DAYS = 1
+const BHG_RESOLUTION_LAG_MS = 24 * 60 * 60 * 1000
+
+interface EventSignalConfig {
+  column: string
+  names: string[]
+  weight: number
+}
+
+const EVENT_SIGNAL_CONFIGS: EventSignalConfig[] = [
+  { column: 'nfp_release_z', names: ['NFP'], weight: 3 },
+  { column: 'cpi_release_z', names: ['CPI'], weight: 3 },
+  { column: 'retail_sales_release_z', names: ['Retail Sales'], weight: 2 },
+  { column: 'ppi_release_z', names: ['PPI'], weight: 2 },
+  { column: 'gdp_release_z', names: ['GDP'], weight: 2 },
+  { column: 'claims_release_z', names: ['Jobless Claims'], weight: 1 },
+]
+
 // ─── LEAN FRED SERIES — Only what moves intraday or sets daily tone ──────
 
 interface FredSeriesConfig {
@@ -125,6 +146,28 @@ interface MesCandle {
 
 type FredLookup = Map<string, number>
 
+interface CalendarEventLite {
+  eventDate: Date
+  eventName: string
+  eventType: string
+  impactRating: string | null
+  eventTime: string | null
+  actual: number | null
+}
+
+interface EventSignalRow {
+  releaseMs: number
+  dateKey: string
+  eventName: string
+  actual: number
+}
+
+interface BhgOutcomeRow {
+  goTimeMs: number
+  direction: 'BULLISH' | 'BEARISH'
+  outcomeR: number
+}
+
 // ─── HELPERS ──────────────────────────────────────────────────────────────
 
 function pctChange(current: number, previous: number): number | null {
@@ -187,6 +230,172 @@ function rollingMinMax(values: number[], window: number): { min: (number | null)
   return { min: mins, max: maxs }
 }
 
+function parseEventDateTimeMs(eventDate: Date, eventTime: string | null): number {
+  const base = new Date(Date.UTC(
+    eventDate.getUTCFullYear(),
+    eventDate.getUTCMonth(),
+    eventDate.getUTCDate(),
+    0, 0, 0, 0
+  ))
+  if (!eventTime) return base.getTime()
+
+  const match = eventTime.match(/(\d{1,2}):(\d{2})/)
+  if (!match) return base.getTime()
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return base.getTime()
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return base.getTime()
+
+  base.setUTCHours(hours, minutes, 0, 0)
+  return base.getTime()
+}
+
+function stdDev(values: number[]): number | null {
+  if (values.length < 2) return null
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length
+  return Math.sqrt(variance)
+}
+
+function buildReleaseChangeZLookup(
+  rows: EventSignalRow[],
+  names: string[],
+  windowDays: number,
+  minObs: number
+): { lookup: FredLookup; sortedKeys: string[]; computed: number } {
+  const nameSet = new Set(names.map((name) => name.toUpperCase()))
+  const filtered = rows
+    .filter((row) => nameSet.has(row.eventName.toUpperCase()))
+    .sort((a, b) => a.releaseMs - b.releaseMs)
+
+  let prevActual: number | null = null
+  const deltas: Array<{ releaseMs: number; delta: number }> = []
+  const lookup: FredLookup = new Map()
+  let computed = 0
+
+  for (const row of filtered) {
+    if (prevActual != null) {
+      const delta = row.actual - prevActual
+      const cutoff = row.releaseMs - windowDays * MS_PER_DAY
+      const windowDeltas = deltas
+        .filter((point) => point.releaseMs >= cutoff)
+        .map((point) => point.delta)
+
+      if (windowDeltas.length >= minObs) {
+        const sigma = stdDev(windowDeltas)
+        if (sigma != null && sigma > 0) {
+          lookup.set(row.dateKey, delta / sigma)
+          computed += 1
+        }
+      }
+      deltas.push({ releaseMs: row.releaseMs, delta })
+    }
+
+    prevActual = row.actual
+  }
+
+  return {
+    lookup,
+    sortedKeys: [...lookup.keys()].sort(),
+    computed,
+  }
+}
+
+function weightedAverage(values: Array<number | null>, weights: number[]): number | null {
+  let weightedSum = 0
+  let weightTotal = 0
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i]
+    if (value == null) continue
+    const weight = weights[i]
+    weightedSum += value * weight
+    weightTotal += weight
+  }
+  if (weightTotal === 0) return null
+  return weightedSum / weightTotal
+}
+
+function incrementCount(map: Map<string, number>, key: string): void {
+  map.set(key, (map.get(key) ?? 0) + 1)
+}
+
+function trailingCountLagged(
+  ts: Date,
+  countsByDate: ReadonlyMap<string, number>,
+  trailingDays: number,
+  lagDays: number
+): number {
+  const endMs = ts.getTime() - lagDays * MS_PER_DAY
+  const startMs = endMs - (trailingDays - 1) * MS_PER_DAY
+  let total = 0
+  for (let ms = startMs; ms <= endMs; ms += MS_PER_DAY) {
+    total += countsByDate.get(dateKeyUtc(new Date(ms))) ?? 0
+  }
+  return total
+}
+
+function centeredCount(
+  ts: Date,
+  countsByDate: ReadonlyMap<string, number>,
+  daysBack: number,
+  daysForward: number
+): number {
+  const centerDayMs = new Date(Date.UTC(
+    ts.getUTCFullYear(),
+    ts.getUTCMonth(),
+    ts.getUTCDate(),
+    0, 0, 0, 0
+  )).getTime()
+  const startMs = centerDayMs - daysBack * MS_PER_DAY
+  const endMs = centerDayMs + daysForward * MS_PER_DAY
+  let total = 0
+  for (let ms = startMs; ms <= endMs; ms += MS_PER_DAY) {
+    total += countsByDate.get(dateKeyUtc(new Date(ms))) ?? 0
+  }
+  return total
+}
+
+function lowerBound(sorted: readonly number[], target: number): number {
+  let lo = 0
+  let hi = sorted.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (sorted[mid] < target) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+function upperBound(sorted: readonly number[], target: number): number {
+  let lo = 0
+  let hi = sorted.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (sorted[mid] <= target) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+function countInTimeRange(sortedTimes: readonly number[], startInclusive: number, endInclusive: number): number {
+  if (sortedTimes.length === 0 || endInclusive < startInclusive) return 0
+  const startIdx = lowerBound(sortedTimes, startInclusive)
+  const endIdx = upperBound(sortedTimes, endInclusive)
+  return Math.max(0, endIdx - startIdx)
+}
+
+function rollingWinRate(points: readonly BhgOutcomeRow[]): number | null {
+  if (points.length === 0) return null
+  const wins = points.filter((point) => point.outcomeR > 0).length
+  return wins / points.length
+}
+
+function rollingAvgOutcome(points: readonly BhgOutcomeRow[]): number | null {
+  if (points.length === 0) return null
+  const sum = points.reduce((acc, point) => acc + point.outcomeR, 0)
+  return sum / points.length
+}
+
 // ─── MAIN ─────────────────────────────────────────────────────────────────
 
 async function run(): Promise<void> {
@@ -199,6 +408,7 @@ async function run(): Promise<void> {
     : 'datasets/autogluon/mes_lean_1h.csv'
   const outFile = parseArg('out', defaultOut)
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
+  const calendarLoadStart = new Date(start.getTime() - (EVENT_LOOKBACK_WINDOW_DAYS + 60) * MS_PER_DAY)
 
   const barsPerDay = timeframe === '15m' ? 96 : 24
   const velocityLookback = 5 * barsPerDay  // 5 trading days
@@ -262,25 +472,130 @@ async function run(): Promise<void> {
     }
   }
 
-  // ── 3. Load econ_calendar for event flags ──
-  console.log('[lean-dataset] Loading economic calendar for event flags...')
-  const calendarEvents = await prisma.econCalendar.findMany({
-    where: { eventDate: { gte: start } },
-    select: { eventDate: true, eventName: true, eventType: true, impactRating: true },
+  // ── 3. Load econ_calendar for event, regime, and release-signal features ──
+  console.log('[lean-dataset] Loading economic calendar for event and release-signal features...')
+  const calendarEventsRaw = await prisma.econCalendar.findMany({
+    where: { eventDate: { gte: calendarLoadStart } },
+    select: {
+      eventDate: true,
+      eventName: true,
+      eventType: true,
+      impactRating: true,
+      eventTime: true,
+      actual: true,
+    },
     orderBy: { eventDate: 'asc' },
   })
 
-  // Build calendar lookup: dateKey → events[]
-  const calendarLookup = new Map<string, typeof calendarEvents>()
+  const calendarEvents: CalendarEventLite[] = calendarEventsRaw.map((evt) => ({
+    eventDate: evt.eventDate,
+    eventName: evt.eventName,
+    eventType: evt.eventType,
+    impactRating: evt.impactRating,
+    eventTime: evt.eventTime,
+    actual: evt.actual == null ? null : toNum(evt.actual),
+  }))
+
+  const calendarLookup = new Map<string, CalendarEventLite[]>()
+  const calendarCountsByDate = new Map<string, number>()
+  const highImpactReleaseTimesMs: number[] = []
+  const eventSignalRows: EventSignalRow[] = []
+
   for (const evt of calendarEvents) {
-    const key = dateKeyUtc(evt.eventDate)
-    const list = calendarLookup.get(key) || []
+    const dateKey = dateKeyUtc(evt.eventDate)
+    const list = calendarLookup.get(dateKey) || []
     list.push(evt)
-    calendarLookup.set(key, list)
+    calendarLookup.set(dateKey, list)
+    incrementCount(calendarCountsByDate, dateKey)
+
+    const releaseMs = parseEventDateTimeMs(evt.eventDate, evt.eventTime)
+    if (evt.impactRating?.toLowerCase() === 'high') {
+      highImpactReleaseTimesMs.push(releaseMs)
+    }
+    if (evt.actual != null && Number.isFinite(evt.actual)) {
+      eventSignalRows.push({
+        releaseMs,
+        dateKey,
+        eventName: evt.eventName,
+        actual: evt.actual,
+      })
+    }
+  }
+  highImpactReleaseTimesMs.sort((a, b) => a - b)
+
+  const eventSignalLookups = new Map<string, { lookup: FredLookup; sortedKeys: string[] }>()
+  for (const config of EVENT_SIGNAL_CONFIGS) {
+    const built = buildReleaseChangeZLookup(
+      eventSignalRows,
+      config.names,
+      EVENT_LOOKBACK_WINDOW_DAYS,
+      EVENT_LOOKBACK_MIN_OBS
+    )
+    eventSignalLookups.set(config.column, { lookup: built.lookup, sortedKeys: built.sortedKeys })
+    console.log(`  ${config.column.padEnd(24)} ${String(built.computed).padStart(4)} z-points`)
   }
   console.log(`  Calendar events: ${calendarEvents.length} rows, ${calendarLookup.size} unique dates`)
 
-  // ── 4. Build FRED arrays for velocity/momentum/percentile features ──
+  // ── 4. Load news_signals for 7d layer/category features ──
+  console.log('[lean-dataset] Loading news_signals for trailing regime counts...')
+  const newsSignals = await prisma.newsSignal.findMany({
+    where: { pubDate: { gte: new Date(start.getTime() - 45 * MS_PER_DAY) } },
+    select: { pubDate: true, layer: true, category: true },
+    orderBy: { pubDate: 'asc' },
+  })
+
+  const tariffCountsByDate = new Map<string, number>()
+  const selloffCountsByDate = new Map<string, number>()
+  const rallyCountsByDate = new Map<string, number>()
+
+  for (const signal of newsSignals) {
+    const dateKey = dateKeyUtc(signal.pubDate)
+    const layer = signal.layer.toLowerCase()
+    const category = signal.category.toLowerCase()
+
+    if (layer.includes('tariff') || category.includes('tariff')) incrementCount(tariffCountsByDate, dateKey)
+    if (layer.includes('selloff') || category.includes('selloff')) incrementCount(selloffCountsByDate, dateKey)
+    if (layer.includes('rally') || category.includes('rally')) incrementCount(rallyCountsByDate, dateKey)
+  }
+  console.log(`  News signals: ${newsSignals.length} rows`)
+
+  // ── 5. Load BHG outcomes for rolling setup-quality features ──
+  console.log('[lean-dataset] Loading bhg_setups for rolling performance features...')
+  const bhgRows = await prisma.bhgSetup.findMany({
+    where: { goTime: { gte: new Date(start.getTime() - 400 * MS_PER_DAY) } },
+    select: {
+      goTime: true,
+      direction: true,
+      tp1Hit: true,
+      tp2Hit: true,
+      slHit: true,
+    },
+    orderBy: { goTime: 'asc' },
+  })
+
+  const bhgAllGoTimesMs: number[] = []
+  const bhgResolvedRows: BhgOutcomeRow[] = []
+  for (const row of bhgRows) {
+    if (!row.goTime) continue
+    const goTimeMs = row.goTime.getTime()
+    bhgAllGoTimesMs.push(goTimeMs)
+
+    let outcomeR: number | null = null
+    if (row.tp2Hit === true) outcomeR = 2
+    else if (row.tp1Hit === true) outcomeR = 1
+    else if (row.slHit === true) outcomeR = -1
+
+    if (outcomeR != null) {
+      bhgResolvedRows.push({
+        goTimeMs,
+        direction: row.direction,
+        outcomeR,
+      })
+    }
+  }
+  console.log(`  BHG setups: ${bhgRows.length} total, ${bhgResolvedRows.length} with resolved outcomes`)
+
+  // ── 6. Build FRED arrays for velocity/momentum/percentile features ──
   console.log('[lean-dataset] Building FRED arrays for derived features...')
 
   const buildArr = (column: string): (number | null)[] => {
@@ -298,7 +613,7 @@ async function run(): Promise<void> {
 
   console.log('[lean-dataset] Built 5 FRED arrays for velocity/percentile features')
 
-  // ── 5. Precompute MES technical indicators ──
+  // ── 7. Precompute MES technical indicators ──
   console.log('[lean-dataset] Computing technical indicators...')
 
   const closes = candles.map((c) => c.close)
@@ -316,7 +631,7 @@ async function run(): Promise<void> {
   const { min: lo120, max: hi120 } = rollingMinMax(closes, 120)
   const volMa24 = rollingMean(volumes, 24)
 
-  // ── 6. Assemble feature matrix ──
+  // ── 8. Assemble feature matrix ──
   console.log('[lean-dataset] Assembling lean feature matrix...')
 
   // Forward target horizons depend on timeframe
@@ -346,13 +661,27 @@ async function run(): Promise<void> {
     // Derived — velocity/regime (6)
     'fed_midpoint', 'vix_percentile_20d', 'vix_1d_change',
     'dgs10_velocity_5d', 'dollar_momentum_5d', 'hy_spread_momentum_5d',
-    // Calendar event flags (2)
-    'is_fomc_day', 'is_high_impact_day',
+    // Calendar + event timing (6)
+    'is_fomc_day', 'is_high_impact_day', 'is_cpi_day', 'is_nfp_day',
+    'events_this_week_count', 'hours_to_next_high_impact',
+    // Release signal proxies (7) — z-scored release deltas from econ_calendar actuals
+    'nfp_release_z', 'cpi_release_z', 'retail_sales_release_z', 'ppi_release_z',
+    'gdp_release_z', 'claims_release_z', 'econ_surprise_index',
+    // News layer regime (4)
+    'tariff_count_7d', 'selloff_count_7d', 'rally_count_7d', 'net_sentiment_7d',
+    // BHG rolling quality feedback (9)
+    'bhg_win_rate_last20', 'bhg_win_rate_last50', 'bhg_avg_outcome_r_last20',
+    'bhg_consecutive_wins', 'bhg_consecutive_losses',
+    'bhg_setups_count_7d', 'bhg_setups_count_30d',
+    'bhg_bull_win_rate_20', 'bhg_bear_win_rate_20',
   ]
 
   console.log(`[lean-dataset] Header: ${header.length} columns`)
 
   const rows: string[][] = []
+  let nextHighImpactIdx = 0
+  let bhgResolvedCursor = 0
+  const eventSignalWeights = EVENT_SIGNAL_CONFIGS.map((config) => config.weight)
 
   for (let i = 0; i < candles.length; i++) {
     const c = candles[i]
@@ -431,14 +760,95 @@ async function run(): Promise<void> {
     const dollarMomentum5d = pctDeltaBack(dxyArr, i, velocityLookback)
     const hySpreadMomentum5d = deltaBack(hyOasArr, i, velocityLookback)
 
-    // Calendar event flags
+    // Calendar + event timing
     const todayKey = dateKeyUtc(ts)
     const todayEvents = calendarLookup.get(todayKey) || []
-    const isFomcDay = todayEvents.some(e =>
-      e.eventName.includes('FOMC') || e.eventType.includes('FOMC') ||
-      e.eventName.includes('Federal Funds') || e.eventName.includes('Fed Interest')
-    ) ? 1 : 0
-    const isHighImpactDay = todayEvents.some(e => e.impactRating === 'high') ? 1 : 0
+    const isFomcDay = todayEvents.some((event) => {
+      const eventName = event.eventName.toUpperCase()
+      const eventType = event.eventType.toUpperCase()
+      return (
+        eventName.includes('FOMC') ||
+        eventType.includes('FOMC') ||
+        eventName.includes('FEDERAL FUNDS') ||
+        eventType.includes('RATE_DECISION')
+      )
+    }) ? 1 : 0
+    const isHighImpactDay = todayEvents.some((event) => event.impactRating?.toLowerCase() === 'high') ? 1 : 0
+    const isCpiDay = todayEvents.some((event) => event.eventName.toUpperCase().includes('CPI')) ? 1 : 0
+    const isNfpDay = todayEvents.some((event) => event.eventName.toUpperCase().includes('NFP')) ? 1 : 0
+    const eventsThisWeekCount = centeredCount(ts, calendarCountsByDate, 3, 3)
+
+    const tsMs = ts.getTime()
+    while (nextHighImpactIdx < highImpactReleaseTimesMs.length && highImpactReleaseTimesMs[nextHighImpactIdx] < tsMs) {
+      nextHighImpactIdx += 1
+    }
+    const hoursToNextHighImpact = nextHighImpactIdx < highImpactReleaseTimesMs.length
+      ? (highImpactReleaseTimesMs[nextHighImpactIdx] - tsMs) / (60 * 60 * 1000)
+      : null
+
+    // Release signal proxies (z-scored release deltas from econ_calendar actuals)
+    const releaseSignalValues = EVENT_SIGNAL_CONFIGS.map((config) => {
+      const signal = eventSignalLookups.get(config.column)
+      if (!signal) return null
+      return asofLookupByDateKey(signal.lookup, signal.sortedKeys, laggedTargetKey(EVENT_FEATURE_LAG_DAYS))
+    })
+    const [
+      nfpReleaseZ,
+      cpiReleaseZ,
+      retailSalesReleaseZ,
+      ppiReleaseZ,
+      gdpReleaseZ,
+      claimsReleaseZ,
+    ] = releaseSignalValues
+    const econSurpriseIndex = weightedAverage(releaseSignalValues, eventSignalWeights)
+
+    // News layer regime
+    const tariffCount7d = trailingCountLagged(ts, tariffCountsByDate, 7, 1)
+    const selloffCount7d = trailingCountLagged(ts, selloffCountsByDate, 7, 1)
+    const rallyCount7d = trailingCountLagged(ts, rallyCountsByDate, 7, 1)
+    const sentimentTotal = rallyCount7d + selloffCount7d
+    const netSentiment7d = sentimentTotal > 0 ? (rallyCount7d - selloffCount7d) / sentimentTotal : null
+
+    // BHG rolling quality feedback (strictly historical + 24h resolution lag)
+    while (
+      bhgResolvedCursor < bhgResolvedRows.length &&
+      bhgResolvedRows[bhgResolvedCursor].goTimeMs <= tsMs - BHG_RESOLUTION_LAG_MS
+    ) {
+      bhgResolvedCursor += 1
+    }
+    const last20Start = Math.max(0, bhgResolvedCursor - 20)
+    const last50Start = Math.max(0, bhgResolvedCursor - 50)
+    const last20 = bhgResolvedRows.slice(last20Start, bhgResolvedCursor)
+    const last50 = bhgResolvedRows.slice(last50Start, bhgResolvedCursor)
+    const last20Bull = last20.filter((row) => row.direction === 'BULLISH')
+    const last20Bear = last20.filter((row) => row.direction === 'BEARISH')
+
+    const bhgWinRateLast20 = rollingWinRate(last20)
+    const bhgWinRateLast50 = rollingWinRate(last50)
+    const bhgAvgOutcomeRLast20 = rollingAvgOutcome(last20)
+    const bhgBullWinRate20 = rollingWinRate(last20Bull)
+    const bhgBearWinRate20 = rollingWinRate(last20Bear)
+
+    let bhgConsecutiveWins: number | null = null
+    let bhgConsecutiveLosses: number | null = null
+    if (bhgResolvedCursor > 0) {
+      let winStreak = 0
+      for (let j = bhgResolvedCursor - 1; j >= 0; j--) {
+        if (bhgResolvedRows[j].outcomeR > 0) winStreak += 1
+        else break
+      }
+      bhgConsecutiveWins = winStreak
+
+      let lossStreak = 0
+      for (let j = bhgResolvedCursor - 1; j >= 0; j--) {
+        if (bhgResolvedRows[j].outcomeR < 0) lossStreak += 1
+        else break
+      }
+      bhgConsecutiveLosses = lossStreak
+    }
+
+    const bhgSetupsCount7d = countInTimeRange(bhgAllGoTimesMs, tsMs - 7 * MS_PER_DAY, tsMs)
+    const bhgSetupsCount30d = countInTimeRange(bhgAllGoTimesMs, tsMs - 30 * MS_PER_DAY, tsMs)
 
     // ── ASSEMBLE ROW ──
     // CRITICAL: order MUST match header exactly
@@ -465,8 +875,19 @@ async function run(): Promise<void> {
       // Derived — velocity/regime (6)
       fedMidpoint, vixPercentile20d, vix1dChange,
       dgs10Velocity5d, dollarMomentum5d, hySpreadMomentum5d,
-      // Calendar flags (2)
-      isFomcDay, isHighImpactDay,
+      // Calendar + event timing (6)
+      isFomcDay, isHighImpactDay, isCpiDay, isNfpDay,
+      eventsThisWeekCount, hoursToNextHighImpact,
+      // Release signal proxies (7)
+      nfpReleaseZ, cpiReleaseZ, retailSalesReleaseZ, ppiReleaseZ,
+      gdpReleaseZ, claimsReleaseZ, econSurpriseIndex,
+      // News layer regime (4)
+      tariffCount7d, selloffCount7d, rallyCount7d, netSentiment7d,
+      // BHG rolling quality feedback (9)
+      bhgWinRateLast20, bhgWinRateLast50, bhgAvgOutcomeRLast20,
+      bhgConsecutiveWins, bhgConsecutiveLosses,
+      bhgSetupsCount7d, bhgSetupsCount30d,
+      bhgBullWinRate20, bhgBearWinRate20,
     ]
 
     // Sanity check: row length must match header
@@ -510,7 +931,15 @@ async function run(): Promise<void> {
     'yield_curve_slope', 'credit_spread_diff', 'real_rate_10y', 'fed_liquidity',
     'fed_midpoint', 'vix_percentile_20d', 'vix_1d_change',
     'dgs10_velocity_5d', 'dollar_momentum_5d', 'hy_spread_momentum_5d',
-    'is_fomc_day', 'is_high_impact_day',
+    'is_fomc_day', 'is_high_impact_day', 'is_cpi_day', 'is_nfp_day',
+    'events_this_week_count', 'hours_to_next_high_impact',
+    'nfp_release_z', 'cpi_release_z', 'retail_sales_release_z', 'ppi_release_z',
+    'gdp_release_z', 'claims_release_z', 'econ_surprise_index',
+    'tariff_count_7d', 'selloff_count_7d', 'rally_count_7d', 'net_sentiment_7d',
+    'bhg_win_rate_last20', 'bhg_win_rate_last50', 'bhg_avg_outcome_r_last20',
+    'bhg_consecutive_wins', 'bhg_consecutive_losses',
+    'bhg_setups_count_7d', 'bhg_setups_count_30d',
+    'bhg_bull_win_rate_20', 'bhg_bear_win_rate_20',
   ]
   console.log(`\n[lean-dataset] Derived feature coverage:`)
   for (const col of derivedCols) {

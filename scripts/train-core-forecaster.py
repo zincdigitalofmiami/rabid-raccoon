@@ -1,43 +1,35 @@
 """
 train-core-forecaster.py
 
-Core Return Forecaster — trains AutoGluon 1.5 TabularPredictor regressors for
-multiple horizons with walk-forward OOF and purge gaps.
+MES Core Return Forecaster — AutoGluon 1.5 TabularPredictor
+Optimized for 1h/4h day-trading horizons with walk-forward validation.
 
-Supports two dataset modes:
-  --dataset=1h   (default) → mes_1h_complete.csv, horizons: 1h/4h/24h/1w
-  --dataset=15m             → mes_15m_complete.csv, horizons: 15m/1h/4h
+Dataset: mes_lean_1h.csv (66 columns, 11,688 rows)
+  - 22 MES technicals, 19 FRED macro, 10 derived features
+  - 5 time features, 2 calendar flags, 8 identity/target columns
 
-Supports horizon filtering:
-  --horizons=15m,1h         → only train specified horizons
+Models: GBM (LightGBM), CAT (CatBoost), XGB (XGBoost), XT (ExtraTrees), NN_TORCH
+  - Stacked ensemble via auto_stack (weighted blend of all 5)
+  - KNN, FASTAI, RF excluded (curse of dimensionality / CPU-unreliable / redundant)
 
 Walk-forward scheme:
   - 5 expanding-window folds
-  - Purge gap = target horizon bars
-  - Embargo = 2x purge gap
+  - Purge gap = target horizon bars (prevents label leakage)
+  - Embargo = 2x purge (prevents autocorrelation bleed)
   - Produces OOF predictions for every training row
 
-AutoGluon best_quality preset:
-  - Zeroshot portfolio: ~100 pre-tuned configs (GBM, CAT, XGB, RF, XT, NN_TORCH, FASTAI)
-  - auto_stack=True with dynamic_stacking
-  - 8 internal bag folds, 1 bag set
-  - Text column (headlines_7d) → n-gram + special feature extraction
-  - eval_metric=MAE (robust to fat-tailed return distributions)
-
 Outputs:
-  - models/core_forecaster/{horizon}/   (AutoGluon model artifacts)
-  - datasets/autogluon/core_oof_{dataset}.csv (OOF predictions + MAE per row)
-  - models/reports/core_forecaster/{dataset}/{horizon}/ (metrics/charts/tear sheets)
-  - Console: OOF MAE, RMSE, R^2 per horizon
+  - models/core_forecaster/{horizon}/fold_N/  (AutoGluon artifacts per fold)
+  - datasets/autogluon/core_oof_1h.csv        (OOF predictions + actuals)
+  - models/reports/core_forecaster/...         (metrics, charts, tear sheets)
 
-Setup:
-  pip install "autogluon>=1.5" pandas scikit-learn
-  pip install -r requirements-finance.txt
-  python scripts/train-core-forecaster.py --dataset=1h
-  python scripts/train-core-forecaster.py --dataset=1h --horizons=1h --presets=medium_quality --time-limit=120
+Usage:
+  python scripts/train-core-forecaster.py
+  python scripts/train-core-forecaster.py --time-limit=1200 --skip-reports
+  python scripts/train-core-forecaster.py --horizons=1h --presets=medium_quality
 
-Note: AutoGluon >=1.5 TabularPredictor auto-detects text columns (headlines_7d)
-and uses n-gram + special feature extraction. No custom NLP needed.
+Training time estimate (default settings):
+  2400s × 5 folds × 2 horizons = ~6.7 hours on Apple Silicon
 """
 
 import sys
@@ -56,61 +48,38 @@ MODEL_DIR = PROJECT_ROOT / "models" / "core_forecaster"
 
 # Parse CLI args
 import argparse
-parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", default="1h", choices=["1h", "15m"])
-parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (e.g. 15m,1h)")
-parser.add_argument("--presets", default="best_quality", help="AutoGluon presets (best_quality, medium_quality, etc.)")
-parser.add_argument("--time-limit", type=int, default=3600, help="Seconds per fold (3600 = 1 hour)")
-parser.add_argument(
-    "--report-root",
-    default="models/reports",
-    help="Directory for model reports (relative to project root unless absolute).",
-)
-parser.add_argument(
-    "--skip-reports",
-    action="store_true",
-    help="Skip report artifact generation.",
-)
+parser = argparse.ArgumentParser(description="MES Core Return Forecaster")
+parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (e.g. 1h,4h)")
+parser.add_argument("--presets", default="best_quality", help="AutoGluon presets")
+parser.add_argument("--time-limit", type=int, default=2400, help="Seconds per fold (default: 2400 = 40 min)")
+parser.add_argument("--report-root", default="models/reports", help="Directory for reports")
+parser.add_argument("--skip-reports", action="store_true", help="Skip report generation")
 args = parser.parse_args()
 
-DATASET_CONFIGS = {
-    "1h": {
-        "path": PROJECT_ROOT / "datasets" / "autogluon" / "mes_1h_complete.csv",
-        "oof_output": PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_1h.csv",
-        "horizons": {
-            "1h":  {"target": "target_ret_1h",  "purge_bars": 1,   "embargo_bars": 2},
-            "4h":  {"target": "target_ret_4h",  "purge_bars": 4,   "embargo_bars": 8},
-            "24h": {"target": "target_ret_24h", "purge_bars": 24,  "embargo_bars": 48},
-            "1w":  {"target": "target_ret_1w",  "purge_bars": 168, "embargo_bars": 336},
-        },
-        "drop_cols": {"item_id", "timestamp", "target",
-                      "target_ret_1h", "target_ret_4h", "target_ret_8h", "target_ret_24h", "target_ret_1w"},
-    },
-    "15m": {
-        "path": PROJECT_ROOT / "datasets" / "autogluon" / "mes_15m_complete.csv",
-        "oof_output": PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_15m.csv",
-        "horizons": {
-            "15m": {"target": "target_ret_15m", "purge_bars": 1,  "embargo_bars": 2},
-            "1h":  {"target": "target_ret_1h",  "purge_bars": 4,  "embargo_bars": 8},
-            "4h":  {"target": "target_ret_4h",  "purge_bars": 16, "embargo_bars": 32},
-        },
-        "drop_cols": {"item_id", "timestamp", "target",
-                      "target_ret_15m", "target_ret_1h", "target_ret_4h"},
-    },
+# ─── Dataset: mes_lean_1h.csv (the ONLY dataset) ─────────────────────────────
+
+DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
+OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_1h.csv"
+
+# Day-trading horizons only: 1h (scalp signal) and 4h (runner signal)
+HORIZONS = {
+    "1h": {"target": "target_ret_1h", "purge_bars": 1,  "embargo_bars": 2},
+    "4h": {"target": "target_ret_4h", "purge_bars": 4,  "embargo_bars": 8},
 }
 
-cfg = DATASET_CONFIGS[args.dataset]
-DATASET_PATH = cfg["path"]
-OOF_OUTPUT = cfg["oof_output"]
-HORIZONS = cfg["horizons"]
-DROP_COLS = cfg["drop_cols"]
+# Identity + all forward target columns — NEVER used as features
+DROP_COLS = {
+    "item_id", "timestamp", "target",
+    "target_ret_1h", "target_ret_4h", "target_ret_8h",
+    "target_ret_24h", "target_ret_1w",
+}
 
-# Filter horizons if specified
+# Filter horizons if specified via CLI
 if args.horizons:
     requested = set(args.horizons.split(","))
     HORIZONS = {k: v for k, v in HORIZONS.items() if k in requested}
     if not HORIZONS:
-        print(f"ERROR: No valid horizons in '{args.horizons}'. Available: {list(cfg['horizons'].keys())}")
+        print(f"ERROR: No valid horizons in '{args.horizons}'. Available: 1h, 4h")
         sys.exit(1)
 
 N_FOLDS = 5
@@ -119,6 +88,12 @@ PRESETS = args.presets
 REPORT_ROOT = Path(args.report_root)
 if not REPORT_ROOT.is_absolute():
     REPORT_ROOT = PROJECT_ROOT / REPORT_ROOT
+
+# Models that DON'T serve us — excluded from training
+# KNN:    curse of dimensionality on 58-feature space
+# FASTAI: unreliable on CPU-only Apple Silicon, wastes time budget
+# RF:     redundant with ExtraTrees, slower training
+EXCLUDED_MODELS = ["KNN", "FASTAI", "RF"]
 
 
 # ─── Walk-Forward Splitter ────────────────────────────────────────────────────
@@ -131,6 +106,10 @@ def walk_forward_splits(n: int, n_folds: int, purge: int, embargo: int):
       train = [0, split_point)
       gap   = [split_point, split_point + purge + embargo)   # purged
       val   = [split_point + purge + embargo, next_split)
+
+    Anti-leakage:
+      purge  = bars matching target horizon (removes label overlap)
+      embargo = 2x purge (removes autocorrelation bleed)
     """
     fold_size = n // (n_folds + 1)
     splits = []
@@ -154,57 +133,65 @@ def walk_forward_splits(n: int, n_folds: int, purge: int, embargo: int):
 
 def main():
     try:
-        from autogluon.tabular import TabularPredictor, FeatureMetadata
+        from autogluon.tabular import TabularPredictor
     except ImportError:
         print("ERROR: AutoGluon not installed.")
-        print("Install with: pip install 'autogluon>=1.5' pandas scikit-learn")
+        print("Install: pip install 'autogluon>=1.5' pandas scikit-learn")
         sys.exit(1)
 
     generate_regression_report = None
     if not args.skip_reports:
         try:
-            from model_report_utils import generate_regression_report as _generate_regression_report
-            generate_regression_report = _generate_regression_report
+            from model_report_utils import generate_regression_report as _grr
+            generate_regression_report = _grr
         except Exception as exc:
-            print("ERROR: Report dependencies are unavailable.")
-            print("Install with: pip install -r requirements-finance.txt")
-            print(f"Details: {exc}")
-            sys.exit(1)
+            print(f"WARNING: Report dependencies unavailable ({exc})")
+            print("Continuing without reports. Install: pip install -r requirements-finance.txt")
+            generate_regression_report = None
 
-    print(f"Loading dataset from {DATASET_PATH}")
+    # ─── Load & validate dataset ──────────────────────────────────────────────
+
+    if not DATASET_PATH.exists():
+        print(f"ERROR: Dataset not found at {DATASET_PATH}")
+        print("Run: npx tsx scripts/build-lean-dataset.ts")
+        sys.exit(1)
+
+    print(f"Loading dataset: {DATASET_PATH}")
     df = pd.read_csv(DATASET_PATH)
     print(f"  Rows: {len(df):,}  Columns: {len(df.columns)}")
-    print(f"  Presets: {PRESETS}  Time limit/fold: {TIME_LIMIT_PER_FOLD}s")
-    print(f"  Reports: {'disabled' if args.skip_reports else REPORT_ROOT}")
 
-    # Sort by timestamp (critical for walk-forward)
+    # Validate expected column count
+    if len(df.columns) != 66:
+        print(f"  WARNING: Expected 66 columns, got {len(df.columns)}")
+        print(f"  Columns: {list(df.columns)}")
+
+    # Sort by timestamp (critical for walk-forward integrity)
     df = df.sort_values("timestamp").reset_index(drop=True)
 
     # Drop rows with NaN targets
+    target_cols = [h["target"] for h in HORIZONS.values()]
     initial_len = len(df)
-    df = df.dropna(subset=[h["target"] for h in HORIZONS.values()])
-    print(f"  After dropping NaN targets: {len(df):,} rows ({initial_len - len(df)} dropped)")
+    df = df.dropna(subset=target_cols)
+    dropped = initial_len - len(df)
+    if dropped > 0:
+        print(f"  Dropped {dropped} rows with NaN targets → {len(df):,} remaining")
 
-    # Feature columns
+    # Feature columns = everything except identity + targets
     feature_cols = [c for c in df.columns if c not in DROP_COLS]
-    print(f"  Feature columns: {len(feature_cols)}")
+    print(f"  Features: {len(feature_cols)}")
+    print(f"  Horizons: {list(HORIZONS.keys())}")
+    print(f"  Presets: {PRESETS}  |  Time/fold: {TIME_LIMIT_PER_FOLD}s  |  Folds: {N_FOLDS}")
+    print(f"  Excluded models: {EXCLUDED_MODELS}")
 
-    # Build FeatureMetadata to force text column detection
-    text_cols = [c for c in feature_cols if c in ("headlines_7d", "headlines_24h")]
-    feature_metadata = None
-    if text_cols:
-        # Create metadata from a sample to detect types, then force text columns
-        sample = df[feature_cols].head(5)
-        feature_metadata = FeatureMetadata.from_df(sample)
-        feature_metadata = feature_metadata.add_special_types(
-            {col: ["text"] for col in text_cols}
-        )
-        print(f"  Text columns: {text_cols} (forced via FeatureMetadata)")
+    total_time_est = TIME_LIMIT_PER_FOLD * N_FOLDS * len(HORIZONS)
+    print(f"  Est. total training time: {total_time_est / 3600:.1f} hours")
+    print(f"  Reports: {'DISABLED' if args.skip_reports else REPORT_ROOT}")
 
-    # Initialize OOF dataframe
+    # Initialize OOF predictions dataframe
     oof_df = df[["timestamp"]].copy()
-
     results = {}
+
+    # ─── Train each horizon ───────────────────────────────────────────────────
 
     for horizon_name, config in HORIZONS.items():
         target_col = config["target"]
@@ -212,27 +199,27 @@ def main():
         embargo = config["embargo_bars"]
 
         print(f"\n{'='*60}")
-        print(f"HORIZON: {horizon_name}  (target={target_col}, purge={purge}, embargo={embargo})")
+        print(f"HORIZON: {horizon_name}  target={target_col}  purge={purge}  embargo={embargo}")
         print(f"{'='*60}")
 
-        # Walk-forward splits
         splits = walk_forward_splits(len(df), N_FOLDS, purge, embargo)
-        print(f"  Folds: {len(splits)}")
+        print(f"  Walk-forward folds: {len(splits)}")
 
         oof_preds = pd.Series(np.nan, index=df.index, dtype=float)
 
         for fold_i, (train_idx, val_idx) in enumerate(splits):
-            print(f"\n  Fold {fold_i + 1}/{len(splits)}: train={len(train_idx):,}  val={len(val_idx):,}")
+            print(f"\n  ── Fold {fold_i + 1}/{len(splits)} ──")
+            print(f"  Train: {len(train_idx):,} rows  |  Val: {len(val_idx):,} rows")
 
             train_data = df.iloc[train_idx][feature_cols + [target_col]]
             val_data = df.iloc[val_idx][feature_cols + [target_col]]
 
-            # Drop rows where target is NaN (shouldn't happen after earlier dropna, but safety)
+            # Safety: drop any residual NaN targets
             train_data = train_data.dropna(subset=[target_col])
             val_data = val_data.dropna(subset=[target_col])
 
             if len(train_data) < 100 or len(val_data) < 10:
-                print(f"    Skipping (insufficient data)")
+                print(f"    SKIP: insufficient data")
                 continue
 
             fold_dir = MODEL_DIR / horizon_name / f"fold_{fold_i}"
@@ -246,37 +233,60 @@ def main():
                 verbosity=2,
             )
 
-            fit_kwargs = dict(
+            # ─── THE OPTIMIZED FIT CALL ───────────────────────────────────
+            #
+            # Models kept: GBM, CAT, XGB, XT, NN_TORCH → stacked ensemble
+            # Models killed: KNN, FASTAI, RF
+            #
+            # Key tuning:
+            #   num_bag_folds=5      (down from default 8 — we already have 5 WF folds)
+            #   num_stack_levels=1   (single stack is optimal for 58 features)
+            #   early_stopping=50    (prevents GBM/XGB overfitting on long time budgets)
+            #   num_gpus=0           (CPU-only for Apple Silicon reliability)
+            #   sequential_local     (memory-safe on unified memory)
+            #
+            predictor.fit(
                 train_data=train_data,
                 time_limit=TIME_LIMIT_PER_FOLD,
                 presets=PRESETS,
-                num_gpus=0,                       # CPU-only for Apple Silicon reliability
-                excluded_model_types=["KNN"],     # curse of dimensionality on 80+ features
+                num_gpus=0,
+                excluded_model_types=EXCLUDED_MODELS,
+                num_bag_folds=5,
+                num_stack_levels=1,
                 ag_args_ensemble={
-                    "fold_fitting_strategy": "sequential_local",  # memory-safe on unified memory
+                    "fold_fitting_strategy": "sequential_local",
+                },
+                ag_args_fit={
+                    "num_early_stopping_rounds": 50,
                 },
             )
-            if feature_metadata is not None:
-                fit_kwargs["feature_metadata"] = feature_metadata
 
-            predictor.fit(**fit_kwargs)
-
-            # Print leaderboard for this fold
+            # Fold leaderboard
             leaderboard = predictor.leaderboard(val_data, silent=True)
-            print(f"\n    ── Fold {fold_i + 1} Leaderboard (top 10) ──")
+            print(f"\n    Leaderboard (top 10):")
             print(leaderboard.head(10).to_string())
 
+            # OOF predictions for this fold
             preds = predictor.predict(val_data[feature_cols])
             preds_np = preds.to_numpy() if hasattr(preds, "to_numpy") else np.asarray(preds)
             oof_preds.loc[val_data.index] = preds_np
 
-            # Fold metrics
+            # Fold-level metrics
             actuals = val_data[target_col].values
             fold_mae = mean_absolute_error(actuals, preds_np)
             fold_rmse = np.sqrt(mean_squared_error(actuals, preds_np))
             print(f"\n    Fold MAE: {fold_mae:.6f}  RMSE: {fold_rmse:.6f}")
 
-        # Overall OOF metrics
+            # Feature importance from best single model (not ensemble)
+            try:
+                importance = predictor.feature_importance(val_data, silent=True)
+                top5 = importance.head(5)
+                print(f"    Top 5 features: {list(top5.index)}")
+            except Exception:
+                pass  # Some folds may not support importance
+
+        # ─── Aggregate OOF metrics for this horizon ───────────────────────────
+
         oof_mask = oof_preds.notna()
         oof_actual = df.loc[oof_mask, target_col].values
         oof_pred = oof_preds[oof_mask].values
@@ -286,60 +296,74 @@ def main():
             rmse = np.sqrt(mean_squared_error(oof_actual, oof_pred))
             r2 = r2_score(oof_actual, oof_pred)
 
-            results[horizon_name] = {"MAE": mae, "RMSE": rmse, "R2": r2, "n_oof": len(oof_actual)}
+            results[horizon_name] = {
+                "MAE": mae, "RMSE": rmse, "R2": r2,
+                "n_oof": len(oof_actual),
+            }
 
-            print(f"\n  OOF Results ({horizon_name}):")
+            print(f"\n  ═══ OOF Results: {horizon_name} ═══")
             print(f"    MAE:  {mae:.6f}")
             print(f"    RMSE: {rmse:.6f}")
-            print(f"    R^2:  {r2:.4f}")
+            print(f"    R²:   {r2:.4f}")
             print(f"    n:    {len(oof_actual):,}")
 
+            # Generate report artifacts if enabled
             if generate_regression_report is not None:
-                report_dir = REPORT_ROOT / "core_forecaster" / args.dataset / horizon_name
-                report_summary = generate_regression_report(
-                    model_name=f"core_forecaster_{args.dataset}_{horizon_name}",
-                    timestamps=df.loc[oof_mask, "timestamp"],
-                    actual=oof_actual,
-                    predicted=oof_pred,
-                    out_dir=report_dir,
-                    metadata={
-                        "dataset": args.dataset,
-                        "horizon": horizon_name,
-                        "target_col": target_col,
-                        "folds": len(splits),
-                        "purge_bars": purge,
-                        "embargo_bars": embargo,
-                        "presets": PRESETS,
-                        "time_limit_per_fold": TIME_LIMIT_PER_FOLD,
-                        "feature_count": len(feature_cols),
-                    },
-                )
-                results[horizon_name]["report_summary"] = str(report_dir / "summary.json")
-                pyfolio = report_summary.get("pyfolio", {})
-                pyfolio_state = "enabled" if pyfolio.get("enabled") else "skipped"
-                print(f"    Report: {report_dir} (pyfolio: {pyfolio_state})")
+                report_dir = REPORT_ROOT / "core_forecaster" / "1h" / horizon_name
+                try:
+                    report_summary = generate_regression_report(
+                        model_name=f"core_forecaster_1h_{horizon_name}",
+                        timestamps=df.loc[oof_mask, "timestamp"],
+                        actual=oof_actual,
+                        predicted=oof_pred,
+                        out_dir=report_dir,
+                        metadata={
+                            "horizon": horizon_name,
+                            "target_col": target_col,
+                            "folds": len(splits),
+                            "purge_bars": purge,
+                            "embargo_bars": embargo,
+                            "presets": PRESETS,
+                            "time_limit_per_fold": TIME_LIMIT_PER_FOLD,
+                            "feature_count": len(feature_cols),
+                            "excluded_models": EXCLUDED_MODELS,
+                        },
+                    )
+                    pyfolio_state = "enabled" if report_summary.get("pyfolio", {}).get("enabled") else "skipped"
+                    print(f"    Report: {report_dir} (pyfolio: {pyfolio_state})")
+                except Exception as exc:
+                    print(f"    Report generation failed: {exc}")
         else:
-            print(f"  WARNING: No OOF predictions for {horizon_name}")
+            print(f"\n  WARNING: No OOF predictions for {horizon_name}")
 
-        # Store OOF predictions
+        # Store in OOF output
         oof_df[f"oof_{horizon_name}"] = oof_preds
         oof_df[f"actual_{horizon_name}"] = df[target_col]
 
-    # ─── Save OOF output ──────────────────────────────────────────────────────
+    # ─── Save OOF predictions ─────────────────────────────────────────────────
 
     OOF_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     oof_df.to_csv(OOF_OUTPUT, index=False)
-    print(f"\nOOF predictions saved to {OOF_OUTPUT}")
+    print(f"\nOOF predictions saved: {OOF_OUTPUT}")
 
-    # ─── Summary ──────────────────────────────────────────────────────────────
+    # ─── Final Summary ────────────────────────────────────────────────────────
 
     print(f"\n{'='*60}")
-    print("SUMMARY: Core Return Forecaster OOF Results")
+    print("SUMMARY: MES Core Return Forecaster")
     print(f"{'='*60}")
-    print(f"{'Horizon':<10} {'MAE':>10} {'RMSE':>10} {'R^2':>8} {'n':>8}")
-    print(f"{'-'*46}")
+    print(f"Dataset:  mes_lean_1h.csv ({len(df):,} rows × {len(df.columns)} cols)")
+    print(f"Features: {len(feature_cols)}")
+    print(f"Models:   GBM + CAT + XGB + XT + NN_TORCH → WeightedEnsemble")
+    print(f"Presets:  {PRESETS}  |  Time/fold: {TIME_LIMIT_PER_FOLD}s")
+    print()
+    print(f"{'Horizon':<10} {'MAE':>10} {'RMSE':>10} {'R²':>8} {'n':>8}")
+    print(f"{'-'*48}")
     for h, r in results.items():
         print(f"{h:<10} {r['MAE']:>10.6f} {r['RMSE']:>10.6f} {r['R2']:>8.4f} {r['n_oof']:>8,}")
+
+    if results:
+        print(f"\nNext: Use models/core_forecaster/{{horizon}}/fold_N/ for inference")
+        print(f"      OOF file: {OOF_OUTPUT}")
 
 
 if __name__ == "__main__":
