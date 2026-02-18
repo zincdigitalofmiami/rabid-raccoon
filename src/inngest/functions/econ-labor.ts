@@ -1,14 +1,14 @@
 import { inngest } from '../client'
-import { FRED_SERIES, runIngestOneFredSeries, type FredSeriesResult } from '../../../scripts/ingest-fred-complete'
+import { FRED_SERIES, runIngestOneFredSeries, FredSeriesResult } from '../../../scripts/ingest-fred-complete'
 
 const DOMAIN = 'LABOR'
 const LOOKBACK_DAYS = 45
 const SERIES = FRED_SERIES.filter((s) => s.domain === DOMAIN)
 
 /**
- * FRED Labor — ICSA, CCSA, PAYEMS, UNRATE
+ * FRED labor series — ICSA, CCSA, PAYEMS (NFP), UNRATE.
  * Target table: econ_labor_1d
- * Cron: 07:30 UTC daily
+ * Runs daily at 07:30 UTC.
  */
 export const ingestEconLabor = inngest.createFunction(
   { id: 'ingest-econ-labor', retries: 2 },

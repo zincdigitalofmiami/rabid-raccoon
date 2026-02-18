@@ -89,6 +89,7 @@ test('computeTargets ignores measured-move targets that violate direction', () =
     entry: 6960,
     stop: 7070,
     target: 7050,
+    target1236: 7074,
     quality: 75,
     status: 'ACTIVE',
   }

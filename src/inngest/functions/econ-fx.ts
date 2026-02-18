@@ -1,14 +1,14 @@
 import { inngest } from '../client'
-import { FRED_SERIES, runIngestOneFredSeries, type FredSeriesResult } from '../../../scripts/ingest-fred-complete'
+import { FRED_SERIES, runIngestOneFredSeries, FredSeriesResult } from '../../../scripts/ingest-fred-complete'
 
 const DOMAIN = 'FX'
 const LOOKBACK_DAYS = 45
 const SERIES = FRED_SERIES.filter((s) => s.domain === DOMAIN)
 
 /**
- * FRED FX — DXY, EUR/USD, JPY/USD, CNY/USD, MXN/USD
+ * FRED FX series — DXY (DTWEXBGS), EUR/USD, JPY/USD, CNY/USD, MXN/USD.
  * Target table: econ_fx_1d
- * Cron: 07:29 UTC daily
+ * Runs daily at 07:29 UTC.
  */
 export const ingestEconFx = inngest.createFunction(
   { id: 'ingest-econ-fx', retries: 2 },

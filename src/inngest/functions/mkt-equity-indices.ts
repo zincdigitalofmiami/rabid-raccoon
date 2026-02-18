@@ -4,9 +4,9 @@ import { runIngestMarketPricesDaily } from '../../../scripts/ingest-market-price
 const SYMBOLS = ['ES', 'NQ', 'YM', 'RTY', 'SOX'] as const
 
 /**
- * Equity index futures — one step per symbol for isolated retries.
+ * Equity index futures — one step per symbol for isolated retry.
  * Target tables: mkt_futures_1h, mkt_futures_1d
- * Cron: 07:05 UTC daily (5 min after MES to stagger Databento load)
+ * Runs daily at 07:05 UTC (staggered 5min after MES for Databento budget).
  */
 export const ingestMktEquityIndices = inngest.createFunction(
   { id: 'ingest-mkt-equity-indices', retries: 2 },
@@ -15,7 +15,7 @@ export const ingestMktEquityIndices = inngest.createFunction(
     const results: Array<{ symbol: string; result: Awaited<ReturnType<typeof runIngestMarketPricesDaily>> }> = []
 
     for (const symbol of SYMBOLS) {
-      const result = await step.run(`prices-${symbol.toLowerCase()}`, async () =>
+      const result = await step.run(`market-prices-${symbol.toLowerCase()}`, async () =>
         runIngestMarketPricesDaily({ lookbackHours: 48, dryRun: false, symbols: [symbol] })
       )
       results.push({ symbol, result })

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { InstantAnalysisResult } from '@/lib/instant-analysis'
 import type { MarketContext } from '@/lib/market-context'
 
@@ -36,6 +36,7 @@ interface TradeCard {
   entry: number
   stop: number
   target: number
+  target1236: number
   quality: number
   status: string
   retracementRatio: number
@@ -44,12 +45,14 @@ interface TradeCard {
   pointC: number
   projectedD: number
   riskReward: number
+  distanceToEntry: number
 }
 
 interface TradesResult {
   currentTrade: TradeCard | null
   upcoming15m: TradeCard[]
   upcoming1h: TradeCard[]
+  meta?: { currentPrice: number | null }
 }
 
 // ─── Props ──────────────────────────────────────────────────
@@ -79,7 +82,7 @@ export default function AnalysePanel({ onResult, onCaptureChart }: AnalysePanelP
   const [tradesResult, setTradesResult] = useState<TradesResult | null>(null)
   const [tradesError, setTradesError] = useState<string | null>(null)
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>(null)
+  const [activeTab, setActiveTab] = useState<ActiveTab>('trades')
 
   // ─── Handlers ───────────────────────────────────────────────
 
@@ -128,7 +131,7 @@ export default function AnalysePanel({ onResult, onCaptureChart }: AnalysePanelP
     }
   }
 
-  async function handleUpcomingTrades() {
+  const handleUpcomingTrades = useCallback(async () => {
     setTradesLoading(true)
     setTradesError(null)
     setActiveTab('trades')
@@ -145,7 +148,12 @@ export default function AnalysePanel({ onResult, onCaptureChart }: AnalysePanelP
     } finally {
       setTradesLoading(false)
     }
-  }
+  }, [])
+
+  // Auto-load trades on mount so the panel is populated immediately
+  useEffect(() => {
+    handleUpcomingTrades()
+  }, [handleUpcomingTrades])
 
   const anyLoading = chartLoading || marketLoading || tradesLoading
 
@@ -648,12 +656,27 @@ function DirectionBadge({ direction }: { direction: 'BULLISH' | 'BEARISH' }) {
 function TradeCardContent({ card }: { card: TradeCard }) {
   const color = card.direction === 'BULLISH' ? '#26a69a' : '#ef5350'
   const qualityColor = card.quality >= 80 ? '#26a69a' : card.quality >= 60 ? '#ffa726' : '#ef5350'
+  const fibLabel = card.retracementRatio <= 0.40 ? '.382' : card.retracementRatio <= 0.55 ? '.500' : '.618'
+  // Proximity indicator for FORMING setups
+  const isForming = card.status === 'FORMING'
+  const proximityPct = isForming && card.target > 0
+    ? Math.min(100, (card.distanceToEntry / Math.abs(card.target - card.entry)) * 100)
+    : 0
+  const proximityColor = proximityPct < 20 ? '#ffa726' : 'rgba(255,255,255,0.15)'
 
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
         <DirectionBadge direction={card.direction} />
         <div className="flex items-center gap-3">
+          {isForming && (
+            <div className="text-right">
+              <span className="block text-[9px] text-white/25 uppercase">To Entry</span>
+              <span className="text-lg font-black tabular-nums" style={{ color: proximityColor }}>
+                {card.distanceToEntry.toFixed(1)}
+              </span>
+            </div>
+          )}
           <div className="text-right">
             <span className="block text-[9px] text-white/25 uppercase">Quality</span>
             <span className="text-lg font-black tabular-nums" style={{ color: qualityColor }}>
@@ -669,21 +692,27 @@ function TradeCardContent({ card }: { card: TradeCard }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 mb-3">
+      {/* Entry / Stop / Target 1.0 / Target 1.236 */}
+      <div className="grid grid-cols-4 gap-2 mb-3">
         <div className="rounded-lg bg-white/[0.03] p-2.5 text-center">
-          <span className="block text-[9px] text-white/25 uppercase tracking-wider mb-1">Entry</span>
-          <span className="text-base font-black text-white tabular-nums">{card.entry.toFixed(2)}</span>
+          <span className="block text-[9px] text-white/25 uppercase tracking-wider mb-1">Entry (C)</span>
+          <span className="text-sm font-black text-white tabular-nums">{card.entry.toFixed(2)}</span>
         </div>
         <div className="rounded-lg bg-[#ef5350]/[0.05] p-2.5 text-center">
           <span className="block text-[9px] text-[#ef5350]/50 uppercase tracking-wider mb-1">Stop</span>
-          <span className="text-base font-black text-[#ef5350] tabular-nums">{card.stop.toFixed(2)}</span>
+          <span className="text-sm font-black text-[#ef5350] tabular-nums">{card.stop.toFixed(2)}</span>
         </div>
         <div className="rounded-lg bg-[#26a69a]/[0.05] p-2.5 text-center">
-          <span className="block text-[9px] text-[#26a69a]/50 uppercase tracking-wider mb-1">Target</span>
-          <span className="text-base font-black text-[#26a69a] tabular-nums">{card.target.toFixed(2)}</span>
+          <span className="block text-[9px] text-[#26a69a]/50 uppercase tracking-wider mb-1">T 1.0×</span>
+          <span className="text-sm font-black text-[#26a69a] tabular-nums">{card.target.toFixed(2)}</span>
+        </div>
+        <div className="rounded-lg p-2.5 text-center" style={{ background: `${color}08`, border: `1px solid ${color}20` }}>
+          <span className="block text-[9px] uppercase tracking-wider mb-1" style={{ color: `${color}70` }}>T 1.236×</span>
+          <span className="text-sm font-black tabular-nums" style={{ color }}>{card.target1236.toFixed(2)}</span>
         </div>
       </div>
 
+      {/* ABCD pivots */}
       <div className="grid grid-cols-4 gap-2 text-xs">
         <div className="rounded-lg bg-white/[0.02] p-2">
           <span className="block text-[9px] text-white/20 uppercase">A</span>
@@ -704,7 +733,7 @@ function TradeCardContent({ card }: { card: TradeCard }) {
       </div>
 
       <div className="mt-2 flex items-center gap-4 text-[11px] text-white/30">
-        <span>Retrace: {(card.retracementRatio * 100).toFixed(1)}%</span>
+        <span>Retrace: {fibLabel} ({(card.retracementRatio * 100).toFixed(1)}%)</span>
         <span>{card.timeframe}</span>
         <span className="uppercase">{card.status}</span>
       </div>

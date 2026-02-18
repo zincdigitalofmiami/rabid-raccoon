@@ -55,23 +55,27 @@ export function detectMeasuredMoves(
     let entry: number
     let stop: number
 
+    let target1236: number
+
     if (isBullish) {
       // Bullish: A(low) → B(high) → C(low retrace) → D(high target)
       projectedD = c.price + abDistance
-      entry = b.price - abDistance * 0.5   // .500 retrace of AB = point C area
+      entry = c.price                               // actual C pivot — where the pattern confirmed
       stop = b.price - abDistance * 0.618 - abDistance * 0.02 // just beyond .618
+      target1236 = c.price + abDistance * 1.236    // 123.6% measured move extension
     } else {
       // Bearish: A(high) → B(low) → C(high retrace) → D(low target)
       projectedD = c.price - abDistance
-      entry = b.price + abDistance * 0.5
+      entry = c.price                               // actual C pivot
       stop = b.price + abDistance * 0.618 + abDistance * 0.02
+      target1236 = c.price - abDistance * 1.236    // 123.6% extension
     }
 
     // Score quality: 50% retrace = perfect (100), edges of range = lower
     const idealDeviation = Math.abs(bcRetrace - 0.5)
     const quality = Math.round(100 - idealDeviation * 500) // 0 deviation = 100, 0.118 = ~41
 
-    // Determine status based on current price
+    // Determine status based on current price relative to C (entry pivot)
     let status: MeasuredMove['status']
     if (isBullish) {
       if (currentPrice >= projectedD) {
@@ -105,6 +109,7 @@ export function detectMeasuredMoves(
       entry,
       stop,
       target: projectedD,
+      target1236,
       quality,
       status,
     })

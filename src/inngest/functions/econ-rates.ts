@@ -1,14 +1,15 @@
 import { inngest } from '../client'
-import { FRED_SERIES, runIngestOneFredSeries, type FredSeriesResult } from '../../../scripts/ingest-fred-complete'
+import { FRED_SERIES, runIngestOneFredSeries, FredSeriesResult } from '../../../scripts/ingest-fred-complete'
 
 const DOMAIN = 'RATES'
 const LOOKBACK_DAYS = 45
 const SERIES = FRED_SERIES.filter((s) => s.domain === DOMAIN)
 
 /**
- * FRED Rates — DFF, DFEDTARL, DFEDTARU, T10Y2Y, SOFR
+ * FRED rates series — DFF, DFEDTARL, DFEDTARU, T10Y2Y, SOFR.
  * Target table: econ_rates_1d
- * Cron: 07:25 UTC daily
+ * One step per series for isolated retry.
+ * Runs daily at 07:25 UTC.
  */
 export const ingestEconRates = inngest.createFunction(
   { id: 'ingest-econ-rates', retries: 2 },

@@ -1,14 +1,14 @@
 import { inngest } from '../client'
-import { FRED_SERIES, runIngestOneFredSeries, type FredSeriesResult } from '../../../scripts/ingest-fred-complete'
+import { FRED_SERIES, runIngestOneFredSeries, FredSeriesResult } from '../../../scripts/ingest-fred-complete'
 
 const DOMAIN = 'COMMODITIES'
 const LOOKBACK_DAYS = 45
 const SERIES = FRED_SERIES.filter((s) => s.domain === DOMAIN)
 
 /**
- * FRED Commodities — WTI, Brent, Copper
+ * FRED commodities series — WTI, Brent, Copper.
  * Target table: econ_commodities_1d
- * Cron: 07:32 UTC daily
+ * Runs daily at 07:32 UTC.
  */
 export const ingestEconCommodities = inngest.createFunction(
   { id: 'ingest-econ-commodities', retries: 2 },

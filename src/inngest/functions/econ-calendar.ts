@@ -15,19 +15,21 @@ const DAILY_RATES_WINDOWS: Array<{ id: string; startDateStr: string; endDateStr?
 ]
 
 /**
- * Economic calendar — release dates, actuals, surprises.
+ * Economic calendar releases + daily Treasury rates + earnings.
  * Target tables: econ_calendar, macro_reports_1d
- * One step per release tier + daily rates windows + earnings.
- * Cron: 07:35 UTC daily
+ * One step per release tier + one per rates window + one for earnings.
+ * Runs daily at 07:35 UTC.
  */
 export const ingestEconCalendar = inngest.createFunction(
-  { id: 'ingest-econ-calendar', retries: 1 },
+  { id: 'ingest-econ-calendar', retries: 2 },
   { cron: '35 7 * * *' },
   async ({ step }) => {
-    // Release tiers
-    const releaseResults = []
+    const releaseResults: Array<{ batchId: string; result: Awaited<ReturnType<typeof runIngestEconCalendar>> }> = []
+    const ratesResults: Array<{ batchId: string; result: Awaited<ReturnType<typeof runIngestEconCalendar>> }> = []
+
+    // Release tiers (FOMC, NFP, CPI, PPI, etc.)
     for (const batch of RELEASE_BATCHES) {
-      const result = await step.run(`releases-${batch.id}`, async () =>
+      const result = await step.run(`econ-calendar-${batch.id}`, async () =>
         runIngestEconCalendar({
           startDateStr: '2020-01-01',
           releaseIds: batch.releaseIds,
@@ -39,9 +41,8 @@ export const ingestEconCalendar = inngest.createFunction(
     }
 
     // Daily Treasury rates
-    const ratesResults = []
     for (const window of DAILY_RATES_WINDOWS) {
-      const result = await step.run(`rates-${window.id}`, async () =>
+      const result = await step.run(`econ-calendar-${window.id}`, async () =>
         runIngestEconCalendar({
           startDateStr: window.startDateStr,
           endDateStr: window.endDateStr,
@@ -50,11 +51,11 @@ export const ingestEconCalendar = inngest.createFunction(
           continueOnError: true,
         })
       )
-      ratesResults.push({ windowId: window.id, result })
+      ratesResults.push({ batchId: window.id, result })
     }
 
     // Earnings
-    const earnings = await step.run('earnings', async () =>
+    const earningsResult = await step.run('econ-calendar-earnings', async () =>
       runIngestEconCalendar({
         startDateStr: '2020-01-01',
         releaseIds: [],
@@ -63,6 +64,11 @@ export const ingestEconCalendar = inngest.createFunction(
       })
     )
 
-    return { ranAt: new Date().toISOString(), releaseResults, ratesResults, earnings }
+    return {
+      ranAt: new Date().toISOString(),
+      releaseResults,
+      ratesResults,
+      earningsResult,
+    }
   }
 )

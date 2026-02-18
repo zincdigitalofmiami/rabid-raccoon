@@ -1,14 +1,14 @@
 import { inngest } from '../client'
-import { FRED_SERIES, runIngestOneFredSeries, type FredSeriesResult } from '../../../scripts/ingest-fred-complete'
+import { FRED_SERIES, runIngestOneFredSeries, FredSeriesResult } from '../../../scripts/ingest-fred-complete'
 
 const DOMAIN = 'ACTIVITY'
 const LOOKBACK_DAYS = 45
 const SERIES = FRED_SERIES.filter((s) => s.domain === DOMAIN)
 
 /**
- * FRED Activity — GDP, Retail Sales, UMich Sentiment, IndPro, Trade Balance, China Imports
+ * FRED activity series — GDP, Retail Sales, UMich Sentiment, IndPro, Trade Balance, China Imports.
  * Target table: econ_activity_1d
- * Cron: 07:31 UTC daily
+ * Runs daily at 07:31 UTC.
  */
 export const ingestEconActivity = inngest.createFunction(
   { id: 'ingest-econ-activity', retries: 2 },

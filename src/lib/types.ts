@@ -71,6 +71,7 @@ export interface MeasuredMove {
   entry: number
   stop: number
   target: number
+  target1236: number
   quality: number
   status: 'FORMING' | 'ACTIVE' | 'TARGET_HIT' | 'STOPPED_OUT'
 }

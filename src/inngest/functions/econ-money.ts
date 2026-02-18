@@ -1,14 +1,14 @@
 import { inngest } from '../client'
-import { FRED_SERIES, runIngestOneFredSeries, type FredSeriesResult } from '../../../scripts/ingest-fred-complete'
+import { FRED_SERIES, runIngestOneFredSeries, FredSeriesResult } from '../../../scripts/ingest-fred-complete'
 
 const DOMAIN = 'MONEY'
 const LOOKBACK_DAYS = 45
 const SERIES = FRED_SERIES.filter((s) => s.domain === DOMAIN)
 
 /**
- * FRED Money — WALCL (Fed Assets), RRP, M2
+ * FRED money/liquidity series — WALCL (Fed balance sheet), RRP, M2.
  * Target table: econ_money_1d
- * Cron: 07:33 UTC daily
+ * Runs daily at 07:33 UTC.
  */
 export const ingestEconMoney = inngest.createFunction(
   { id: 'ingest-econ-money', retries: 2 },

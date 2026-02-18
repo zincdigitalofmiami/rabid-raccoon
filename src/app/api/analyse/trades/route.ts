@@ -15,6 +15,7 @@ interface TradeCard {
   entry: number
   stop: number
   target: number
+  target1236: number
   quality: number
   status: MeasuredMove['status']
   retracementRatio: number
@@ -23,6 +24,7 @@ interface TradeCard {
   pointC: number
   projectedD: number
   riskReward: number
+  distanceToEntry: number
 }
 
 function prismaRowToCandle(row: {
@@ -45,7 +47,8 @@ function prismaRowToCandle(row: {
 
 function moveToCard(
   move: MeasuredMove,
-  timeframe: '15M' | '1H'
+  timeframe: '15M' | '1H',
+  currentPrice: number
 ): TradeCard {
   const risk = Math.abs(move.entry - move.stop)
   const reward = Math.abs(move.target - move.entry)
@@ -55,6 +58,7 @@ function moveToCard(
     entry: Number(move.entry.toFixed(2)),
     stop: Number(move.stop.toFixed(2)),
     target: Number(move.target.toFixed(2)),
+    target1236: Number(move.target1236.toFixed(2)),
     quality: move.quality,
     status: move.status,
     retracementRatio: Number(move.retracementRatio.toFixed(3)),
@@ -63,6 +67,7 @@ function moveToCard(
     pointC: Number(move.pointC.price.toFixed(2)),
     projectedD: Number(move.projectedD.toFixed(2)),
     riskReward: risk > 0 ? Number((reward / risk).toFixed(1)) : 0,
+    distanceToEntry: Number(Math.abs(currentPrice - move.entry).toFixed(2)),
   }
 }
 
@@ -75,7 +80,7 @@ function detectMovesForCandles(
   const currentPrice = candles[candles.length - 1].close
   const swings = detectSwings(candles)
   const moves = detectMeasuredMoves(swings.highs, swings.lows, currentPrice)
-  return moves.map((m) => moveToCard(m, timeframe))
+  return moves.map((m) => moveToCard(m, timeframe, currentPrice))
 }
 
 export async function POST(): Promise<Response> {
@@ -97,17 +102,20 @@ export async function POST(): Promise<Response> {
     const cards15m = detectMovesForCandles(candles15m, '15M')
     const cards1h = detectMovesForCandles(candles1h, '1H')
 
-    // Current trade: first ACTIVE move (15m priority, then 1h)
-    const allCards = [...cards15m, ...cards1h]
-    const currentTrade = allCards.find((c) => c.status === 'ACTIVE') || null
+    const currentPrice1h = candles1h.length > 0 ? candles1h[candles1h.length - 1].close : null
 
-    // Upcoming: FORMING moves, sorted by quality
+    // Current trade: first ACTIVE move (1h priority for reliability, then 15m)
+    const active1h = cards1h.find((c) => c.status === 'ACTIVE') || null
+    const active15m = cards15m.find((c) => c.status === 'ACTIVE') || null
+    const currentTrade = active1h ?? active15m
+
+    // Upcoming: FORMING moves sorted by distance-to-entry ascending (closest first = most actionable)
     const upcoming15m = cards15m
       .filter((c) => c.status === 'FORMING')
-      .sort((a, b) => b.quality - a.quality)
+      .sort((a, b) => a.distanceToEntry - b.distanceToEntry)
     const upcoming1h = cards1h
       .filter((c) => c.status === 'FORMING')
-      .sort((a, b) => b.quality - a.quality)
+      .sort((a, b) => a.distanceToEntry - b.distanceToEntry)
 
     return NextResponse.json({
       currentTrade,
@@ -116,6 +124,7 @@ export async function POST(): Promise<Response> {
       meta: {
         candles15mCount: candles15m.length,
         candles1hCount: candles1h.length,
+        currentPrice: currentPrice1h,
       },
     })
   } catch (error) {
