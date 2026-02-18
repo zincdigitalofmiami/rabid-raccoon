@@ -1,0 +1,52 @@
+scripts/ingest-fred-complete.ts
+  753ed6c392cd329b 54,129-137,149,174-238
+scripts/ingest-market-prices-daily.ts
+  753ed6c392cd329b 132-140,146-147,153-157,159,172-182,234,249-259,322,427
+  0a6aded63953e2a5 16-19,117-125,194-233,295-299,314-315,321,330,333,335-346,350,353-377,379-388,390-426,430
+scripts/seed-new-symbols.ts
+  0a6aded63953e2a5 1-47
+src/lib/ingestion-symbols.ts
+  0a6aded63953e2a5 14-26,29-34,48-53
+src/inngest/functions.ts
+  0a6aded63953e2a5 8,13-14
+  753ed6c392cd329b 7,12,31-32,38-48,50,53-60,62-63,65,68,73,92,118,128,143-144
+src/lib/signals.ts
+  0a6aded63953e2a5 132-133,135-141
+src/lib/databento.ts
+  753ed6c392cd329b 148-153
+scripts/build-lean-dataset.ts
+  0a6aded63953e2a5 39,137-156,463-514,707-773,817-832,1047-1112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.2",
+  "base_commit_sha": "83af7bb62c5a1ea2de42baf10e98b4a58c927301",
+  "prompts": {
+    "0a6aded63953e2a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0509c6a8-6e26-429e-8a75-95431206f58e",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 490,
+      "total_deletions": 92,
+      "accepted_lines": 457,
+      "overriden_lines": 0
+    },
+    "753ed6c392cd329b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b43d258-fc9d-4733-84fc-175b8e70d64a",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 179,
+      "total_deletions": 32,
+      "accepted_lines": 159,
+      "overriden_lines": 0
+    }
+  }
+}
