@@ -36,3 +36,4 @@ models/reports/
 
 /src/generated/prisma
 .env*.local
+prisma/dev.db
