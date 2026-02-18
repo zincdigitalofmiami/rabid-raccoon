@@ -12,7 +12,7 @@ import {
 
 const DAILY_LOOKBACK_HOURS_DEFAULT = 72
 const INSERT_BATCH_SIZE = 1000
-const MES_RAW_SCHEMA = 'ohlcv-1m'
+const MES_HOURLY_SCHEMA = 'ohlcv-1h'
 const NON_MES_DAILY_SCHEMA = 'ohlcv-1d'
 const NON_MES_HOURLY_SCHEMA = 'ohlcv-1h'
 /** @deprecated kept for log/audit compatibility */
@@ -294,7 +294,7 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
         targetMesTable: 'mkt_futures_mes_1h',
         targetNonMesHourlyTable: 'mkt_futures_1h',
         targetNonMesDailyTable: 'mkt_futures_1d',
-        sourceSchemaMes: MES_RAW_SCHEMA,
+        sourceSchemaMes: MES_HOURLY_SCHEMA,
         sourceSchemaHourly: NON_MES_HOURLY_SCHEMA,
         sourceSchemaDaily: NON_MES_DAILY_SCHEMA,
       }),
@@ -312,7 +312,7 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
     for (const symbol of symbols) {
       try {
         if (symbol.code === 'MES') {
-          // ── MES: fetch 1m, aggregate to 1h, write to mkt_futures_mes_1h ──
+          // ── MES: fetch 1h directly, write to mkt_futures_mes_1h ──
           const latestTime = await latestSymbolTime(symbol.code)
           const overlapMs = 2 * 60 * 60 * 1000
           const overlapStart = latestTime
@@ -327,22 +327,21 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
               stypeIn: 'continuous',
               start: overlapStart.toISOString(),
               end: now.toISOString(),
-              schema: MES_RAW_SCHEMA,
+              schema: MES_HOURLY_SCHEMA,
             }),
             120_000,
-            `Databento MES ${MES_RAW_SCHEMA}`
+            `Databento MES ${MES_HOURLY_SCHEMA}`
           )
 
           if (records.length > 0) {
             const rawCandles = toCandles(records)
             const uniqueCandles = dedupeAndSort(rawCandles)
-            const aggregated = aggregateCandles(uniqueCandles, 60)
             const filtered = latestTime
-              ? aggregated.filter((c) => asUtcDateFromUnixSeconds(c.time) >= overlapStart)
-              : aggregated
+              ? uniqueCandles.filter((c) => asUtcDateFromUnixSeconds(c.time) >= overlapStart)
+              : uniqueCandles
 
             const result = await insertCandlesByPolicy(
-              symbol.code, symbol.dataset, MES_RAW_SCHEMA, filtered, resolved.dryRun,
+              symbol.code, symbol.dataset, MES_HOURLY_SCHEMA, filtered, resolved.dryRun,
               { lookbackHours: resolved.lookbackHours, fetchedAt, rawRecordCount: records.length, validatedCount: rawCandles.length, aggregationMinutes: 60, databentoSymbol: symbol.databentoSymbol }
             )
             rowsProcessed += result.processed

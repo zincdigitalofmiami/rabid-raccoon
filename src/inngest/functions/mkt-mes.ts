@@ -2,7 +2,7 @@ import { inngest } from '../client'
 import { runIngestMarketPricesDaily } from '../../../scripts/ingest-market-prices-daily'
 
 /**
- * MES market data — fetches 1m from Databento, resamples to 1h.
+ * MES market data — fetches 1h directly from Databento.
  * Target tables: mkt_futures_mes_1h, mkt_futures_mes_15m, mkt_futures_mes_1d
  * Runs daily at 07:00 UTC (2 AM EST).
  */
