@@ -139,7 +139,19 @@ export function toCandles(records: DatabentoOhlcvRecord[]): CandleData[] {
         volume: Number(r.volume),
       }
     })
-    .filter((c) => c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0 && !isNaN(c.open))
+    .filter(
+      (c) =>
+        c.open > 0 &&
+        c.high > 0 &&
+        c.low > 0 &&
+        c.close > 0 &&
+        c.high >= c.low &&
+        !isNaN(c.open) &&
+        !isNaN(c.high) &&
+        !isNaN(c.low) &&
+        !isNaN(c.close) &&
+        !isNaN(c.volume)
+    )
     .sort((a, b) => a.time - b.time)
 }
 

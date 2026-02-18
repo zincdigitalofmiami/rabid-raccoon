@@ -51,7 +51,7 @@ function hashRow(seriesId: string, eventDate: Date, value: number, source: strin
 // ─── COMPLETE FRED SERIES CATALOG ──────────────────────────────────────────
 
 // Data Dictionary v2.0 — 47 KEEP series only
-const FRED_SERIES: SeriesSpec[] = [
+export const FRED_SERIES: SeriesSpec[] = [
   // ── RATES (5) ──
   { seriesId: 'DFF', domain: 'RATES', displayName: 'Federal Funds Effective Rate', units: 'percent', frequency: 'daily' },
   { seriesId: 'DFEDTARL', domain: 'RATES', displayName: 'Fed Funds Target Range Lower', units: 'percent', frequency: 'daily' },
@@ -126,6 +126,15 @@ interface ValueRow {
   value: number
   source: DataSource
   rowHash: string
+  metadata?: Prisma.InputJsonValue
+}
+
+export interface FredSeriesResult {
+  seriesId: string
+  domain: EconDomain
+  fetched: number
+  inserted: number
+  error?: string
 }
 
 async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<number> {
@@ -137,7 +146,7 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
     value: r.value,
     source: r.source,
     rowHash: r.rowHash,
-    metadata: toJson({ provider: r.source }),
+    metadata: r.metadata ?? toJson({ provider: r.source }),
   }))
 
   const splitInsertMap: Record<EconDomain, () => Promise<{ count: number }>> = {
@@ -160,6 +169,71 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
   }
 
   return 0
+}
+
+// ─── PER-SERIES EXPORT (used by Inngest per-step invocation) ───────────────
+
+export async function runIngestOneFredSeries(
+  spec: SeriesSpec,
+  daysBack: number
+): Promise<FredSeriesResult> {
+  const startDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const endDate = new Date().toISOString().slice(0, 10)
+  const fetchedAt = new Date().toISOString()
+
+  try {
+    const obs = await fetchFredSeries(spec.seriesId, startDate, endDate)
+    const rows: ValueRow[] = obs
+      .filter((o) => o.value !== '.' && Number.isFinite(Number(o.value)))
+      .map((o) => {
+        const value = Number(o.value)
+        const eventDate = new Date(`${o.date}T00:00:00Z`)
+        return {
+          seriesId: spec.seriesId,
+          eventDate,
+          value,
+          source: 'FRED' as DataSource,
+          rowHash: hashRow(spec.seriesId, eventDate, value, 'FRED'),
+          metadata: toJson({
+            seriesId: spec.seriesId,
+            domain: spec.domain,
+            displayName: spec.displayName,
+            frequency: spec.frequency,
+            units: spec.units,
+            daysBack,
+            fetchedAt,
+            observationCount: obs.length,
+          }),
+        }
+      })
+
+    await prisma.economicSeries.upsert({
+      where: { seriesId: spec.seriesId },
+      create: {
+        seriesId: spec.seriesId,
+        displayName: spec.displayName,
+        category: domainToCategory(spec.domain),
+        source: 'FRED',
+        sourceSymbol: spec.seriesId,
+        frequency: spec.frequency,
+        units: spec.units,
+        isActive: true,
+      },
+      update: {
+        displayName: spec.displayName,
+        category: domainToCategory(spec.domain),
+        frequency: spec.frequency,
+        units: spec.units,
+        isActive: true,
+      },
+    })
+
+    const inserted = await insertDomain(spec.domain, rows)
+    return { seriesId: spec.seriesId, domain: spec.domain, fetched: rows.length, inserted }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return { seriesId: spec.seriesId, domain: spec.domain, fetched: 0, inserted: 0, error: msg.slice(0, 300) }
+  }
 }
 
 // ─── TRUNCATE ──────────────────────────────────────────────────────────────

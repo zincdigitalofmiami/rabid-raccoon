@@ -1,17 +1,17 @@
 import { inngest } from './client'
-import { runIngestMacroIndicators } from '../../scripts/ingest-macro-indicators'
 import { runIngestMarketPricesDaily } from '../../scripts/ingest-market-prices-daily'
 import { runIngestAltNewsFeeds } from '../../scripts/ingest-alt-news-feeds'
 import { runIngestMeasuredMoveSignals } from '../../scripts/ingest-mm-signals'
 import { runIngestEconCalendar } from '../lib/ingest/econ-calendar'
 import { runNewsScrape } from '../lib/news-scrape'
+import { FRED_SERIES, runIngestOneFredSeries } from '../../scripts/ingest-fred-complete'
+import { INGESTION_SYMBOL_CODES } from '../lib/ingestion-symbols'
 
 export { backfillMesAllTimeframes } from './backfill-mes'
 
-const MARKET_SYMBOL_BATCHES: string[][] = [
-  ['MES', 'ES', 'NQ', 'YM', 'RTY', 'SOX'],
-  ['ZN', 'ZB', 'ZF', 'CL', 'GC', 'SI'],
-]
+// One step per symbol — isolated failures, isolated retries, no cross-contamination
+// Derived from ingestion-symbols.ts so new symbols are picked up automatically
+const MARKET_SYMBOLS = INGESTION_SYMBOL_CODES
 
 const ECON_RELEASE_BATCHES: Array<{ id: string; releaseIds: number[] }> = [
   { id: 'tier1-fomc-nfp-cpi-pce', releaseIds: [101, 50, 10, 53] },
@@ -28,30 +28,49 @@ const ECON_DAILY_RATES_WINDOWS: Array<{ id: string; startDateStr: string; endDat
 
 const NEWS_LAYERS = ['trump_policy', 'volatility', 'banking', 'econ_report'] as const
 
+const FRED_LOOKBACK_DAYS = 45
+
 export const dailyIngestionJob = inngest.createFunction(
   { id: 'daily-ingestion-job', retries: 1 },
   { cron: '0 7 * * *' },
   async ({ step }) => {
-    const marketBatches: Array<{ batch: number; symbols: string[]; result: Awaited<ReturnType<typeof runIngestMarketPricesDaily>> }> = []
 
-    for (let i = 0; i < MARKET_SYMBOL_BATCHES.length; i++) {
-      const symbols = MARKET_SYMBOL_BATCHES[i]
-      const result = await step.run(`market-prices-batch-${i + 1}`, async () =>
-        runIngestMarketPricesDaily({ lookbackHours: 48, dryRun: false, symbols })
+    // ── 1. Databento market prices — one isolated step per symbol ─────────
+    // Each symbol has its own API budget. One rate-limit or timeout does NOT
+    // kill the others, and Inngest only retries the failed symbol's step.
+    const marketResults: Array<{
+      symbol: string
+      result: Awaited<ReturnType<typeof runIngestMarketPricesDaily>>
+    }> = []
+
+    for (const symbol of MARKET_SYMBOLS) {
+      const result = await step.run(`market-prices-${symbol.toLowerCase()}`, async () =>
+        runIngestMarketPricesDaily({ lookbackHours: 48, dryRun: false, symbols: [symbol] })
       )
-      marketBatches.push({ batch: i + 1, symbols, result })
+      marketResults.push({ symbol, result })
     }
 
-    const macro = await step.run('macro-indicators-daily', async () =>
-      runIngestMacroIndicators({ daysBack: 45, dryRun: false })
-    )
+    // ── 2. FRED economic series — one isolated step per series (47 total) ─
+    // FRED rate-limits at 120 req/min. Each step is one series.
+    // A FRED outage on one series does not block the other 46.
+    const fredResults: Array<Awaited<ReturnType<typeof runIngestOneFredSeries>>> = []
 
+    for (const spec of FRED_SERIES) {
+      const result = await step.run(`fred-series-${spec.seriesId.toLowerCase()}`, async () =>
+        runIngestOneFredSeries(spec, FRED_LOOKBACK_DAYS)
+      )
+      fredResults.push(result)
+    }
+
+    // ── 3. Alt news RSS feeds ─────────────────────────────────────────────
     const altNews = await step.run('alt-news-rss-daily', async () => runIngestAltNewsFeeds())
 
+    // ── 4. Measured move signals (MES 1h, 120-day lookback) ───────────────
     const mm = await step.run('measured-move-signals', async () =>
       runIngestMeasuredMoveSignals({ timeframe: '1h', daysBack: 120, symbols: ['MES'], dryRun: false })
     )
 
+    // ── 5. Economic calendar releases — one step per tier ─────────────────
     const econCalendarReleases: Array<{
       batchId: string
       releaseIds: number[]
@@ -67,14 +86,10 @@ export const dailyIngestionJob = inngest.createFunction(
           continueOnError: true,
         })
       )
-
-      econCalendarReleases.push({
-        batchId: batch.id,
-        releaseIds: batch.releaseIds,
-        result,
-      })
+      econCalendarReleases.push({ batchId: batch.id, releaseIds: batch.releaseIds, result })
     }
 
+    // ── 6. Daily Treasury rates — one step per time window ────────────────
     const econCalendarDailyRates: Array<{
       batchId: string
       startDateStr: string
@@ -92,7 +107,6 @@ export const dailyIngestionJob = inngest.createFunction(
           continueOnError: true,
         })
       )
-
       econCalendarDailyRates.push({
         batchId: window.id,
         startDateStr: window.startDateStr,
@@ -101,6 +115,7 @@ export const dailyIngestionJob = inngest.createFunction(
       })
     }
 
+    // ── 7. Earnings ───────────────────────────────────────────────────────
     const econCalendarEarnings = await step.run('econ-calendar-earnings', async () =>
       runIngestEconCalendar({
         startDateStr: '2020-01-01',
@@ -110,6 +125,7 @@ export const dailyIngestionJob = inngest.createFunction(
       })
     )
 
+    // ── 8. News scrape — one step per layer ───────────────────────────────
     const newsScrape: Array<{
       layer: (typeof NEWS_LAYERS)[number]
       result: Awaited<ReturnType<typeof runNewsScrape>>
@@ -124,8 +140,8 @@ export const dailyIngestionJob = inngest.createFunction(
 
     return {
       ranAt: new Date().toISOString(),
-      marketBatches,
-      macro,
+      marketResults,
+      fredResults,
       altNews,
       mm,
       econCalendarReleases,

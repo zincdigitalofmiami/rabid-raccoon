@@ -129,17 +129,16 @@ export function generateSignal(data: SymbolData): TradeSignal {
   }
 }
 
-// Intermarket weights — VIX, ZN, ZB, DXY are inverse to equities
+// Intermarket weights — regime-aligned: tech-AI-rates-geopolitics
+// Invert=true means the symbol moves OPPOSITE to equities (bonds, yen, dollar risk)
 const SYMBOL_WEIGHTS: Record<string, { weight: number; invert: boolean }> = {
-  MES: { weight: 0.40, invert: false },
-  NQ: { weight: 0.10, invert: false },
-  YM: { weight: 0.10, invert: false },
-  RTY: { weight: 0.10, invert: false },
-  VX: { weight: 0.10, invert: true },
-  US10Y: { weight: 0.05, invert: true },
-  ZN: { weight: 0.05, invert: true },
-  ZB: { weight: 0.05, invert: true },
-  DX: { weight: 0.05, invert: true },
+  MES:  { weight: 0.40, invert: false }, // primary target
+  NQ:   { weight: 0.20, invert: false }, // tech beta / duration sensitivity
+  SOX:  { weight: 0.15, invert: false }, // semiconductor leadership
+  ZN:   { weight: 0.10, invert: true  }, // 10Y rate impulse (invert: bonds up = yields down = equities up)
+  CL:   { weight: 0.05, invert: false }, // energy / AI power narrative
+  '6E': { weight: 0.05, invert: true  }, // USD liquidity (invert: EUR up = USD weak = equities up)
+  '6J': { weight: 0.05, invert: true  }, // carry unwind stress (invert: yen up = carry unwind = risk off)
 }
 
 export function generateCompositeSignal(allSymbolData: SymbolData[]): CompositeSignal {

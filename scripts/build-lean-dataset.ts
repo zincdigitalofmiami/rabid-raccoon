@@ -36,6 +36,7 @@ import {
   rollingPercentile,
   deltaBack,
   pctDeltaBack,
+  alignCrossAssetBars,
 } from './feature-utils'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -132,6 +133,26 @@ const IDX_TIPS10Y = featureIndex('fred_tips10y')
 const FRED_LAG_BY_COLUMN = new Map(
   FRED_FEATURES.map((f) => [f.column, conservativeLagDaysForFrequency(f.frequency)])
 )
+
+// ─── CROSS-ASSET SYMBOLS — regime-aligned intermarket features ────────────
+// These are loaded from mkt_futures_1h (hourly, multi-symbol table).
+// 6 technicals per symbol × 8 symbols = 48 columns + 6 derived = 54 total.
+
+interface CrossAssetSymbol {
+  code: string       // DB symbolCode
+  prefix: string     // feature column prefix (safe for CSV headers)
+}
+
+const CROSS_ASSET_SYMBOLS: CrossAssetSymbol[] = [
+  { code: 'NQ',  prefix: 'nq'  },  // tech beta / duration
+  { code: 'SOX', prefix: 'sox' },  // semiconductor leadership
+  { code: 'ZN',  prefix: 'zn'  },  // 10Y rate impulse
+  { code: 'CL',  prefix: 'cl'  },  // energy / AI power narrative
+  { code: '6E',  prefix: 'e6'  },  // EUR/USD — USD liquidity (prefix avoids leading digit)
+  { code: '6J',  prefix: 'j6'  },  // JPY/USD — carry unwind stress
+  { code: 'NG',  prefix: 'ng'  },  // natural gas — AI data center power
+  { code: 'SR3', prefix: 'sr3' },  // 3-month SOFR — front-end policy shock
+]
 
 // ─── TYPES ────────────────────────────────────────────────────────────────
 
@@ -439,6 +460,58 @@ async function run(): Promise<void> {
   }
   console.log(`[lean-dataset] MES ${timeframe} candles: ${candles.length}`)
 
+  // ── 1b. Load cross-asset hourly candles from mkt_futures_1h ──
+  // Only meaningful for 1h timeframe; for 15m we still align on the hourly bars.
+  console.log(`[lean-dataset] Loading cross-asset hourly candles (${CROSS_ASSET_SYMBOLS.map(s => s.code).join(', ')})...`)
+
+  interface CrossAssetBar { eventTime: Date; close: number; volume: bigint | null }
+
+  // Map: symbolCode → Map<isoString → bar>
+  const crossAssetBars = new Map<string, Map<string, CrossAssetBar>>()
+
+  for (const sym of CROSS_ASSET_SYMBOLS) {
+    const rows = await prisma.mktFutures1h.findMany({
+      where: {
+        symbolCode: sym.code,
+        eventTime: { gte: new Date(start.getTime() - 200 * 60 * 60 * 1000) }, // extra 200h for warmup
+      },
+      orderBy: { eventTime: 'asc' },
+      select: { eventTime: true, close: true, volume: true },
+    })
+    const barMap = new Map<string, CrossAssetBar>()
+    for (const r of rows) {
+      barMap.set(r.eventTime.toISOString(), {
+        eventTime: r.eventTime,
+        close: toNum(r.close),
+        volume: r.volume,
+      })
+    }
+    crossAssetBars.set(sym.code, barMap)
+    console.log(`  ${sym.code.padEnd(4)} ${rows.length} hourly bars`)
+  }
+
+  // Align each symbol's close prices to MES timestamps
+  const crossAssetAligned = new Map<string, (number | null)[]>()
+  for (const sym of CROSS_ASSET_SYMBOLS) {
+    const barMap = crossAssetBars.get(sym.code)!
+    const closeMap = new Map<string, number>()
+    for (const [key, bar] of barMap) closeMap.set(key, bar.close)
+    crossAssetAligned.set(sym.code, alignCrossAssetBars(candles.map(c => c.eventTime), closeMap))
+  }
+
+  // Also align volumes for vol_ratio
+  const crossAssetVolAligned = new Map<string, (number | null)[]>()
+  for (const sym of CROSS_ASSET_SYMBOLS) {
+    const barMap = crossAssetBars.get(sym.code)!
+    const volMap = new Map<string, number>()
+    for (const [key, bar] of barMap) {
+      if (bar.volume != null) volMap.set(key, Number(bar.volume))
+    }
+    crossAssetVolAligned.set(sym.code, alignCrossAssetBars(candles.map(c => c.eventTime), volMap))
+  }
+
+  console.log(`[lean-dataset] Cross-asset bars aligned to MES timeline`)
+
   // ── 2. Load FRED series ──
   console.log(`[lean-dataset] Loading ${FRED_FEATURES.length} FRED series (lean set)...`)
 
@@ -631,6 +704,73 @@ async function run(): Promise<void> {
   const { min: lo120, max: hi120 } = rollingMinMax(closes, 120)
   const volMa24 = rollingMean(volumes, 24)
 
+  // ── 7b. Precompute cross-asset technical indicators ──
+  // For each symbol: ret_1h, ret_4h, ret_24h, rsi14, dist_ma24, vol_ratio
+  interface CrossAssetTechnicals {
+    ret1h: (number | null)[]
+    ret4h: (number | null)[]
+    ret24h: (number | null)[]
+    rsi14: (number | null)[]
+    distMa24: (number | null)[]
+    volRatio: (number | null)[]
+  }
+
+  const crossAssetTech = new Map<string, CrossAssetTechnicals>()
+  for (const sym of CROSS_ASSET_SYMBOLS) {
+    const symCloses = crossAssetAligned.get(sym.code)!
+    const symVols = crossAssetVolAligned.get(sym.code)!
+
+    // Fill nulls for RSI/MA computation (forward-fill within array)
+    const filledCloses: number[] = []
+    let lastClose = 0
+    for (const v of symCloses) {
+      if (v != null) { lastClose = v; filledCloses.push(v) }
+      else filledCloses.push(lastClose)
+    }
+
+    const symRsi14 = computeRSI(filledCloses, 14)
+    const symMa24 = rollingMean(filledCloses, 24)
+    const symVolMa24 = rollingMean(symVols.map(v => v ?? 0), 24)
+
+    const ret1h: (number | null)[] = []
+    const ret4h: (number | null)[] = []
+    const ret24h: (number | null)[] = []
+    const distMa24: (number | null)[] = []
+    const volRatio: (number | null)[] = []
+
+    for (let i = 0; i < symCloses.length; i++) {
+      const cur = symCloses[i]
+      const prev1 = i >= 1 ? symCloses[i - 1] : null
+      const prev4 = i >= 4 ? symCloses[i - 4] : null
+      const prev24 = i >= 24 ? symCloses[i - 24] : null
+      const ma = symMa24[i]
+      const volMa = symVolMa24[i]
+      const vol = symVols[i]
+
+      ret1h.push(cur != null && prev1 != null && prev1 !== 0 ? (cur - prev1) / Math.abs(prev1) : null)
+      ret4h.push(cur != null && prev4 != null && prev4 !== 0 ? (cur - prev4) / Math.abs(prev4) : null)
+      ret24h.push(cur != null && prev24 != null && prev24 !== 0 ? (cur - prev24) / Math.abs(prev24) : null)
+      distMa24.push(cur != null && ma != null && ma !== 0 ? (cur - ma) / ma : null)
+      volRatio.push(vol != null && volMa != null && volMa > 0 ? vol / volMa : null)
+
+      // Mask RSI/distMa if underlying close was null (no bar)
+      if (symCloses[i] == null) {
+        symRsi14[i] = null
+      }
+    }
+
+    crossAssetTech.set(sym.code, {
+      ret1h,
+      ret4h,
+      ret24h,
+      rsi14: symRsi14,
+      distMa24,
+      volRatio,
+    })
+  }
+
+  console.log(`[lean-dataset] Cross-asset technicals computed for ${CROSS_ASSET_SYMBOLS.length} symbols`)
+
   // ── 8. Assemble feature matrix ──
   console.log('[lean-dataset] Assembling lean feature matrix...')
 
@@ -674,6 +814,22 @@ async function run(): Promise<void> {
     'bhg_consecutive_wins', 'bhg_consecutive_losses',
     'bhg_setups_count_7d', 'bhg_setups_count_30d',
     'bhg_bull_win_rate_20', 'bhg_bear_win_rate_20',
+    // Cross-asset technicals (8 symbols × 6 = 48)
+    ...CROSS_ASSET_SYMBOLS.flatMap(sym => [
+      `${sym.prefix}_ret_1h`,
+      `${sym.prefix}_ret_4h`,
+      `${sym.prefix}_ret_24h`,
+      `${sym.prefix}_rsi14`,
+      `${sym.prefix}_dist_ma24`,
+      `${sym.prefix}_vol_ratio`,
+    ]),
+    // Derived regime features (6)
+    'sox_minus_nq',        // semis vs tech spread
+    'nq_minus_mes',        // tech premium vs broad market
+    'yield_proxy',         // -ret(ZN) — rate impulse direction
+    'usd_shock',           // -ret(6E) — dollar liquidity
+    'carry_stress',        // abs(ret(6J)) — carry unwind magnitude
+    'mes_zn_corr_21d',     // rolling 21-day MES vs ZN correlation
   ]
 
   console.log(`[lean-dataset] Header: ${header.length} columns`)
@@ -888,6 +1044,72 @@ async function run(): Promise<void> {
       bhgConsecutiveWins, bhgConsecutiveLosses,
       bhgSetupsCount7d, bhgSetupsCount30d,
       bhgBullWinRate20, bhgBearWinRate20,
+      // Cross-asset technicals (8 symbols × 6 = 48)
+      ...CROSS_ASSET_SYMBOLS.flatMap(sym => {
+        const tech = crossAssetTech.get(sym.code)!
+        return [
+          tech.ret1h[i],
+          tech.ret4h[i],
+          tech.ret24h[i],
+          tech.rsi14[i],
+          tech.distMa24[i],
+          tech.volRatio[i],
+        ]
+      }),
+      // Derived regime features (6)
+      (() => {
+        // sox_minus_nq: SOX ret_1h − NQ ret_1h
+        const sox = crossAssetTech.get('SOX')!.ret1h[i]
+        const nq = crossAssetTech.get('NQ')!.ret1h[i]
+        return sox != null && nq != null ? sox - nq : null
+      })(),
+      (() => {
+        // nq_minus_mes: NQ ret_1h − MES ret_1h
+        const nq = crossAssetTech.get('NQ')!.ret1h[i]
+        const mesRet = i >= 1 && candles[i - 1].close !== 0
+          ? (close - candles[i - 1].close) / Math.abs(candles[i - 1].close)
+          : null
+        return nq != null && mesRet != null ? nq - mesRet : null
+      })(),
+      (() => {
+        // yield_proxy: -ret(ZN)
+        const znRet = crossAssetTech.get('ZN')!.ret1h[i]
+        return znRet != null ? -znRet : null
+      })(),
+      (() => {
+        // usd_shock: -ret(6E)
+        const e6Ret = crossAssetTech.get('6E')!.ret1h[i]
+        return e6Ret != null ? -e6Ret : null
+      })(),
+      (() => {
+        // carry_stress: abs(ret(6J))
+        const j6Ret = crossAssetTech.get('6J')!.ret1h[i]
+        return j6Ret != null ? Math.abs(j6Ret) : null
+      })(),
+      (() => {
+        // mes_zn_corr_21d: rolling 21-bar correlation between MES and ZN returns
+        if (i < 21) return null
+        const mesRets: number[] = []
+        const znRets: number[] = []
+        for (let j = i - 20; j <= i; j++) {
+          const mRet = j >= 1 && candles[j - 1].close !== 0
+            ? (candles[j].close - candles[j - 1].close) / Math.abs(candles[j - 1].close)
+            : null
+          const zRet = crossAssetTech.get('ZN')!.ret1h[j]
+          if (mRet != null && zRet != null) { mesRets.push(mRet); znRets.push(zRet) }
+        }
+        if (mesRets.length < 10) return null
+        const meanM = mesRets.reduce((a, b) => a + b, 0) / mesRets.length
+        const meanZ = znRets.reduce((a, b) => a + b, 0) / znRets.length
+        let cov = 0, varM = 0, varZ = 0
+        for (let k = 0; k < mesRets.length; k++) {
+          cov += (mesRets[k] - meanM) * (znRets[k] - meanZ)
+          varM += (mesRets[k] - meanM) ** 2
+          varZ += (znRets[k] - meanZ) ** 2
+        }
+        const denom = Math.sqrt(varM * varZ)
+        return denom > 0 ? cov / denom : null
+      })(),
     ]
 
     // Sanity check: row length must match header

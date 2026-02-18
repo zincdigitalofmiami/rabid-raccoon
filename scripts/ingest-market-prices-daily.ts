@@ -13,7 +13,10 @@ import {
 const DAILY_LOOKBACK_HOURS_DEFAULT = 72
 const INSERT_BATCH_SIZE = 1000
 const MES_RAW_SCHEMA = 'ohlcv-1m'
-const NON_MES_RAW_SCHEMA = 'ohlcv-1d'
+const NON_MES_DAILY_SCHEMA = 'ohlcv-1d'
+const NON_MES_HOURLY_SCHEMA = 'ohlcv-1h'
+/** @deprecated kept for log/audit compatibility */
+const NON_MES_RAW_SCHEMA = NON_MES_DAILY_SCHEMA
 
 interface DailyIngestOptions {
   dryRun?: boolean
@@ -111,10 +114,28 @@ async function latestSymbolTime(symbolCode: string): Promise<Date | null> {
   return row?.eventDate ?? null
 }
 
+async function latestSymbolHourlyTime(symbolCode: string): Promise<Date | null> {
+  const row = await prisma.mktFutures1h.findFirst({
+    where: { symbolCode },
+    orderBy: { eventTime: 'desc' },
+    select: { eventTime: true },
+  })
+  return row?.eventTime ?? null
+}
+
 function dedupeAndSort(candles: ReturnType<typeof toCandles>): ReturnType<typeof toCandles> {
   const byTime = new Map<number, (typeof candles)[number]>()
   for (const candle of candles) byTime.set(candle.time, candle)
   return [...byTime.values()].sort((a, b) => a.time - b.time)
+}
+
+interface InsertContext {
+  lookbackHours: number
+  fetchedAt: string
+  rawRecordCount: number
+  validatedCount: number
+  aggregationMinutes: number
+  databentoSymbol: string
 }
 
 async function insertCandlesByPolicy(
@@ -122,14 +143,20 @@ async function insertCandlesByPolicy(
   dataset: string,
   sourceSchema: string,
   candles: ReturnType<typeof aggregateCandles>,
-  dryRun: boolean
+  dryRun: boolean,
+  ctx: InsertContext
 ): Promise<{ processed: number; inserted: number }> {
   const processed = candles.length
   let inserted = 0
   if (dryRun || processed === 0) return { processed, inserted }
 
+  // Secondary guard: enforce high >= low and all-positive before insert
+  const valid = candles.filter(
+    (c) => c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0 && c.high >= c.low
+  )
+
   if (symbolCode === 'MES') {
-    const rows: Prisma.MktFuturesMes1hCreateManyInput[] = candles.map((candle) => {
+    const rows: Prisma.MktFuturesMes1hCreateManyInput[] = valid.map((candle) => {
       const eventTime = asUtcDateFromUnixSeconds(candle.time)
       return {
         eventTime,
@@ -142,6 +169,17 @@ async function insertCandlesByPolicy(
         sourceDataset: dataset,
         sourceSchema,
         rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
+        metadata: toJson({
+          symbolCode,
+          databentoSymbol: ctx.databentoSymbol,
+          dataset,
+          sourceSchema,
+          aggregationMinutes: ctx.aggregationMinutes,
+          lookbackHours: ctx.lookbackHours,
+          fetchedAt: ctx.fetchedAt,
+          rawRecordCount: ctx.rawRecordCount,
+          validatedCount: ctx.validatedCount,
+        }),
       }
     })
 
@@ -153,7 +191,47 @@ async function insertCandlesByPolicy(
     return { processed, inserted }
   }
 
-  const rows: Prisma.MktFutures1dCreateManyInput[] = candles.map((candle) => {
+  // Non-MES: route to correct table based on source schema
+  if (sourceSchema === NON_MES_HOURLY_SCHEMA) {
+    // Hourly candles → mkt_futures_1h
+    const rows: Prisma.MktFutures1hCreateManyInput[] = valid.map((candle) => {
+      const eventTime = asUtcDateFromUnixSeconds(candle.time)
+      return {
+        symbolCode,
+        eventTime,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
+        source: 'DATABENTO',
+        sourceDataset: dataset,
+        sourceSchema,
+        rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
+        metadata: toJson({
+          symbolCode,
+          databentoSymbol: ctx.databentoSymbol,
+          dataset,
+          sourceSchema,
+          aggregationMinutes: ctx.aggregationMinutes,
+          lookbackHours: ctx.lookbackHours,
+          fetchedAt: ctx.fetchedAt,
+          rawRecordCount: ctx.rawRecordCount,
+          validatedCount: ctx.validatedCount,
+        }),
+      }
+    })
+
+    for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
+      const batch = rows.slice(i, i + INSERT_BATCH_SIZE)
+      const result = await prisma.mktFutures1h.createMany({ data: batch, skipDuplicates: true })
+      inserted += result.count
+    }
+    return { processed, inserted }
+  }
+
+  // Daily candles → mkt_futures_1d
+  const rows: Prisma.MktFutures1dCreateManyInput[] = valid.map((candle) => {
     const eventTime = asUtcDateFromUnixSeconds(candle.time)
     const eventDate = startOfUtcDay(eventTime)
     return {
@@ -168,6 +246,17 @@ async function insertCandlesByPolicy(
       sourceDataset: dataset,
       sourceSchema,
       rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
+      metadata: toJson({
+        symbolCode,
+        databentoSymbol: ctx.databentoSymbol,
+        dataset,
+        sourceSchema,
+        aggregationMinutes: ctx.aggregationMinutes,
+        lookbackHours: ctx.lookbackHours,
+        fetchedAt: ctx.fetchedAt,
+        rawRecordCount: ctx.rawRecordCount,
+        validatedCount: ctx.validatedCount,
+      }),
     }
   })
 
@@ -203,9 +292,11 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
         lookbackHours: resolved.lookbackHours,
         symbolsRequested: symbols.map((s) => s.code),
         targetMesTable: 'mkt_futures_mes_1h',
-        targetNonMesTable: 'mkt_futures_1d',
-        sourceSchemaMes1h: MES_RAW_SCHEMA,
-        sourceSchemaNonMes1d: NON_MES_RAW_SCHEMA,
+        targetNonMesHourlyTable: 'mkt_futures_1h',
+        targetNonMesDailyTable: 'mkt_futures_1d',
+        sourceSchemaMes: MES_RAW_SCHEMA,
+        sourceSchemaHourly: NON_MES_HOURLY_SCHEMA,
+        sourceSchemaDaily: NON_MES_DAILY_SCHEMA,
       }),
     },
   })
@@ -220,50 +311,123 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
 
     for (const symbol of symbols) {
       try {
-        const latestTime = await latestSymbolTime(symbol.code)
-        const overlapMs = symbol.code === 'MES' ? 2 * 60 * 60 * 1000 : 2 * 24 * 60 * 60 * 1000
-        const sourceSchema = symbol.code === 'MES' ? MES_RAW_SCHEMA : NON_MES_RAW_SCHEMA
-        const overlapStart = latestTime
-          ? new Date(latestTime.getTime() - overlapMs)
-          : new Date(now.getTime() - resolved.lookbackHours * 60 * 60 * 1000)
+        if (symbol.code === 'MES') {
+          // ── MES: fetch 1m, aggregate to 1h, write to mkt_futures_mes_1h ──
+          const latestTime = await latestSymbolTime(symbol.code)
+          const overlapMs = 2 * 60 * 60 * 1000
+          const overlapStart = latestTime
+            ? new Date(latestTime.getTime() - overlapMs)
+            : new Date(now.getTime() - resolved.lookbackHours * 60 * 60 * 1000)
 
-        const records = await withTimeout(
-          fetchOhlcv({
-            dataset: symbol.dataset,
-            symbol: symbol.databentoSymbol,
-            stypeIn: 'continuous',
-            start: overlapStart.toISOString(),
-            end: now.toISOString(),
-            schema: sourceSchema,
-          }),
-          symbol.code === 'MES' ? 120_000 : 60_000,
-          `Databento ${symbol.code} ${sourceSchema}`
-        )
+          const fetchedAt = new Date().toISOString()
+          const records = await withTimeout(
+            fetchOhlcv({
+              dataset: symbol.dataset,
+              symbol: symbol.databentoSymbol,
+              stypeIn: 'continuous',
+              start: overlapStart.toISOString(),
+              end: now.toISOString(),
+              schema: MES_RAW_SCHEMA,
+            }),
+            120_000,
+            `Databento MES ${MES_RAW_SCHEMA}`
+          )
 
-        if (records.length === 0) {
+          if (records.length > 0) {
+            const rawCandles = toCandles(records)
+            const uniqueCandles = dedupeAndSort(rawCandles)
+            const aggregated = aggregateCandles(uniqueCandles, 60)
+            const filtered = latestTime
+              ? aggregated.filter((c) => asUtcDateFromUnixSeconds(c.time) >= overlapStart)
+              : aggregated
+
+            const result = await insertCandlesByPolicy(
+              symbol.code, symbol.dataset, MES_RAW_SCHEMA, filtered, resolved.dryRun,
+              { lookbackHours: resolved.lookbackHours, fetchedAt, rawRecordCount: records.length, validatedCount: rawCandles.length, aggregationMinutes: 60, databentoSymbol: symbol.databentoSymbol }
+            )
+            rowsProcessed += result.processed
+            rowsInserted += result.inserted
+          }
+
           symbolsProcessed.push(symbol.code)
-          continue
+        } else {
+          // ── Non-MES: fetch both ohlcv-1h and ohlcv-1d, write to mkt_futures_1h + mkt_futures_1d ──
+          const overlapHourly = 2 * 60 * 60 * 1000
+          const overlapDaily = 2 * 24 * 60 * 60 * 1000
+          const fallbackStart = new Date(now.getTime() - resolved.lookbackHours * 60 * 60 * 1000)
+
+          // ── 1h fetch ──
+          const latestHourly = await latestSymbolHourlyTime(symbol.code)
+          const hourlyStart = latestHourly
+            ? new Date(latestHourly.getTime() - overlapHourly)
+            : fallbackStart
+
+          const fetchedAt = new Date().toISOString()
+          const hourlyRecords = await withTimeout(
+            fetchOhlcv({
+              dataset: symbol.dataset,
+              symbol: symbol.databentoSymbol,
+              stypeIn: 'continuous',
+              start: hourlyStart.toISOString(),
+              end: now.toISOString(),
+              schema: NON_MES_HOURLY_SCHEMA,
+            }),
+            90_000,
+            `Databento ${symbol.code} ${NON_MES_HOURLY_SCHEMA}`
+          )
+
+          if (hourlyRecords.length > 0) {
+            const rawHourly = toCandles(hourlyRecords)
+            const uniqueHourly = dedupeAndSort(rawHourly)
+            const filteredHourly = latestHourly
+              ? uniqueHourly.filter((c) => asUtcDateFromUnixSeconds(c.time) >= hourlyStart)
+              : uniqueHourly
+
+            const hourlyResult = await insertCandlesByPolicy(
+              symbol.code, symbol.dataset, NON_MES_HOURLY_SCHEMA, filteredHourly, resolved.dryRun,
+              { lookbackHours: resolved.lookbackHours, fetchedAt, rawRecordCount: hourlyRecords.length, validatedCount: rawHourly.length, aggregationMinutes: 60, databentoSymbol: symbol.databentoSymbol }
+            )
+            rowsProcessed += hourlyResult.processed
+            rowsInserted += hourlyResult.inserted
+          }
+
+          // ── 1d fetch ──
+          const latestDaily = await latestSymbolTime(symbol.code)
+          const dailyStart = latestDaily
+            ? new Date(latestDaily.getTime() - overlapDaily)
+            : fallbackStart
+
+          const dailyRecords = await withTimeout(
+            fetchOhlcv({
+              dataset: symbol.dataset,
+              symbol: symbol.databentoSymbol,
+              stypeIn: 'continuous',
+              start: dailyStart.toISOString(),
+              end: now.toISOString(),
+              schema: NON_MES_DAILY_SCHEMA,
+            }),
+            60_000,
+            `Databento ${symbol.code} ${NON_MES_DAILY_SCHEMA}`
+          )
+
+          if (dailyRecords.length > 0) {
+            const rawDaily = toCandles(dailyRecords)
+            const uniqueDaily = dedupeAndSort(rawDaily)
+            const aggregatedDaily = aggregateCandles(uniqueDaily, 1440)
+            const filteredDaily = latestDaily
+              ? aggregatedDaily.filter((c) => asUtcDateFromUnixSeconds(c.time) >= dailyStart)
+              : aggregatedDaily
+
+            const dailyResult = await insertCandlesByPolicy(
+              symbol.code, symbol.dataset, NON_MES_DAILY_SCHEMA, filteredDaily, resolved.dryRun,
+              { lookbackHours: resolved.lookbackHours, fetchedAt, rawRecordCount: dailyRecords.length, validatedCount: rawDaily.length, aggregationMinutes: 1440, databentoSymbol: symbol.databentoSymbol }
+            )
+            rowsProcessed += dailyResult.processed
+            rowsInserted += dailyResult.inserted
+          }
+
+          symbolsProcessed.push(symbol.code)
         }
-
-        const rawCandles = toCandles(records)
-        const uniqueCandles = dedupeAndSort(rawCandles)
-        const aggregated = aggregateCandles(uniqueCandles, symbol.code === 'MES' ? 60 : 1440)
-
-        // MES remains 1h. Non-MES is daily-only.
-        const filtered = latestTime
-          ? aggregated.filter((c) => asUtcDateFromUnixSeconds(c.time) >= overlapStart)
-          : aggregated
-
-        const result = await insertCandlesByPolicy(
-          symbol.code,
-          symbol.dataset,
-          sourceSchema,
-          filtered,
-          resolved.dryRun
-        )
-        rowsProcessed += result.processed
-        rowsInserted += result.inserted
-        symbolsProcessed.push(symbol.code)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         symbolsFailed[symbol.code] = message.slice(0, 400)
