@@ -1,0 +1,278 @@
+# yaml-language-server: $schema=https://cubic.dev/schema/cubic-repository-config.schema.json
+# cubic.yaml — Rabid Raccoon (MES futures trading platform)
+# Surgical rules based on actual codebase patterns and past incidents
+version: 1
+reviews:
+  enabled: true
+  sensitivity: high
+  incremental_commits: true
+  check_drafts: true
+  architecture_diagrams: false
+  show_ai_feedback_buttons: true
+  resolve_threads_when_addressed: true
+  custom_instructions: |
+    This is Rabid Raccoon — an MES futures trading platform (Next.js on Vercel) with Inngest
+    background jobs, Prisma ORM, Databento market data, and AI forecasting. The Inngest client
+    ID MUST always be "rabid-raccoon" — never "fusion-jobs". This project shares a Vercel team
+    with ZINC-FUSION-V15 and must remain fully isolated. Review every change as if bad data
+    could cause a trader to take a wrong position. Zero tolerance for silent data corruption.
+  ignore:
+    files:
+      - "**/*.md"
+      - ".vscode/**"
+      - "public/**"
+      - ".next/**"
+      - "node_modules/**"
+      - "prisma/migrations/**"
+  custom_rules:
+    # ═══════════════════════════════════════════════════════════════════
+    # INNGEST ISOLATION — The #1 production incident source
+    # ═══════════════════════════════════════════════════════════════════
+    - name: "CRITICAL: Inngest client ID must be 'rabid-raccoon'"
+      description: |
+        The Inngest client MUST use id: "rabid-raccoon". Any other value causes
+        cross-project contamination with ZINC-FUSION-V15 — shared concurrency pools,
+        mixed runs, overloaded dashboards. This was the root cause of our February 2026
+        Inngest overload incident. Flag ANY change to this value as CRITICAL/blocking.
+      include:
+        - "src/inngest/client.ts"
+
+    - name: "CRITICAL: All side effects must be inside step.run()"
+      description: |
+        Inngest uses deterministic replay. Code outside step.run() executes on EVERY
+        step retry — causing duplicate Databento API calls (burning credits), double DB
+        writes, and corrupted ingestion logs. Check: every fetch(), prisma.*, console.log
+        with dynamic data, and Date.now() call MUST be inside a step.run() block.
+      include:
+        - "src/inngest/**/*.ts"
+
+    - name: Inngest serve handler must register ALL functions
+      description: |
+        Every function exported from src/inngest/functions.ts MUST appear in the
+        functions array in route.ts serve() call. Missing functions silently never
+        execute — no error, no warning, just missing data. Count the exports vs the
+        array entries and flag any mismatch.
+      include:
+        - "src/inngest/functions.ts"
+        - "src/app/api/inngest/route.ts"
+
+    - name: Event names must be namespaced to prevent cross-project fan-out
+      description: |
+        RR and V15 may share an Inngest event bus. Any inngest.send() or event trigger
+        with a generic name like "data/updated" or "sync/complete" will fire functions
+        in BOTH projects. All event names must use "rr/" or "backfill/" prefix.
+      include:
+        - "src/inngest/**/*.ts"
+        - "src/app/api/**/*.ts"
+
+    # ═══════════════════════════════════════════════════════════════════
+    # DATA INTEGRITY — Zero tolerance for fake/stale/corrupt market data
+    # ═══════════════════════════════════════════════════════════════════
+    - name: "CRITICAL: OHLCV candles must be validated before insert"
+      description: |
+        Every code path that inserts OHLCV data MUST validate: open > 0, high > 0,
+        low > 0, close > 0, high >= low, high >= open, high >= close, low <= open,
+        low <= close. Zero or negative prices indicate API failures or bad data from
+        Databento. The existing backfill-mes.ts filters on open/high/low/close > 0 but
+        does NOT check high >= low or OHLC relationship integrity. NaN and Infinity
+        must also be rejected. Silent insertion of bad candles corrupts the entire
+        trading signal chain.
+      include:
+        - "src/inngest/**/*.ts"
+        - "scripts/**/*.ts"
+        - "src/lib/databento.ts"
+
+    - name: "CRITICAL: Volume must use BigInt, never Number"
+      description: |
+        MES volume can exceed Number.MAX_SAFE_INTEGER in aggregate. All volume fields
+        MUST use BigInt. Watch for: Math.round(volume), parseInt(volume), or volume
+        arithmetic that implicitly converts to Number. The existing code correctly uses
+        BigInt(Math.max(0, Math.trunc(c.volume || 0))) but any new code must follow
+        this pattern. Flag any volume handled as a plain number.
+      include:
+        - "src/inngest/**/*.ts"
+        - "src/lib/**/*.ts"
+
+    - name: Duplicate candles must be caught by rowHash + skipDuplicates
+      description: |
+        All createMany() calls MUST include skipDuplicates: true. Additionally, every
+        inserted row should have a rowHash computed from a deterministic key (symbol +
+        timestamp + close price). Without both defenses, Inngest retries create duplicate
+        candles that corrupt aggregations, moving averages, and VWAP calculations.
+      include:
+        - "src/inngest/**/*.ts"
+
+    - name: Deduplication must happen BEFORE insert, not after
+      description: |
+        The dedupeAndSort() pattern in backfill-mes.ts is correct — dedup in memory
+        before batch insert. Watch for any code path that inserts first, then tries to
+        clean up duplicates with DELETE. That pattern causes race conditions with
+        concurrent Inngest step executions and leaves ghost rows during the window
+        between insert and cleanup.
+      include:
+        - "src/inngest/**/*.ts"
+        - "scripts/**/*.ts"
+
+    - name: Timestamps must be UTC, never local timezone
+      description: |
+        All Date objects for market data MUST be constructed in UTC. Watch for: new Date()
+        without explicit UTC, toISOString() on locally-constructed dates, and any date
+        parsing that doesn't account for timezone. Databento returns Unix timestamps in
+        UTC — conversion must preserve this. A single timezone-shifted candle creates
+        gaps or overlaps in the time series that break charting and signal generation.
+      include:
+        - "src/inngest/**/*.ts"
+        - "src/lib/**/*.ts"
+        - "scripts/**/*.ts"
+
+    - name: Empty API responses must be handled, never silently skipped
+      description: |
+        When Databento, FRED, or any data source returns zero records, the function
+        must log this explicitly and return a result indicating no data. Never silently
+        return without logging — this is how stale data accumulates. If an API returns
+        no data for a date range that should have data, that's an anomaly worth flagging
+        in the ingestion run log.
+      include:
+        - "src/inngest/**/*.ts"
+        - "src/lib/**/*.ts"
+
+    # ═══════════════════════════════════════════════════════════════════
+    # STALE DATA & ANOMALY DETECTION
+    # ═══════════════════════════════════════════════════════════════════
+    - name: Ingestion runs MUST be logged to ingestionRun table
+      description: |
+        Every Inngest function that writes data MUST create an ingestionRun record on
+        completion with: job name, status, rowsProcessed, rowsInserted, and a details
+        JSON blob. Without this, the staleness monitor can't detect when a pipeline goes
+        silent. A function that runs successfully but inserts zero rows for 3+ consecutive
+        runs is a stale data signal — the logging makes this detectable.
+      include:
+        - "src/inngest/**/*.ts"
+
+    - name: "WARNING: No DELETE or UPDATE on time-series landing tables"
+      description: |
+        Time-series tables (mkt_futures_mes_15m, mkt_futures_mes_1h, mkt_futures_mes_1d)
+        are append-only. DELETE and UPDATE operations on these tables indicate quiet data
+        corruption. The only acceptable writes are INSERT (via createMany with
+        skipDuplicates). If data needs correction, insert a new row with updated values
+        and let the unique constraint handle dedup. Flag any DELETE FROM or UPDATE on
+        these tables as CRITICAL.
+      include:
+        - "src/**/*.ts"
+        - "scripts/**/*.ts"
+
+    - name: Cache-Control headers must match data freshness
+      description: |
+        API routes serving market data use stale-while-revalidate caching. Verify that
+        cache durations match the data's actual refresh rate. Live MES data (s-maxage=15)
+        must not be cached longer than the polling interval. Daily data (s-maxage=300)
+        is fine. Mismatched caching causes stale prices on the dashboard, which can
+        mislead trading decisions.
+      include:
+        - "src/app/api/**/*.ts"
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SECRETS & ENVIRONMENT SAFETY
+    # ═══════════════════════════════════════════════════════════════════
+    - name: No hardcoded secrets, keys, tokens, or connection strings
+      description: |
+        All sensitive values must come from process.env. Flag any string literal that
+        looks like an API key, token, database URL, or signing key. This includes
+        Databento, FRED, OpenAI, Anthropic, and Inngest credentials. Also flag any
+        .env file committed to git.
+      include:
+        - "src/**/*.ts"
+        - "src/**/*.tsx"
+        - "scripts/**/*"
+        - ".env*"
+
+    - name: No cross-project env var references
+      description: |
+        RR must never reference WORKFLOW_INNGEST_SIGNING_KEY, INNGEST_ENV, or any
+        V15-specific environment variable names. RR uses only INNGEST_SIGNING_KEY and
+        INNGEST_EVENT_KEY. The WORKFLOW_ prefix is a V15 legacy pattern.
+      include:
+        - "src/**/*.ts"
+        - "*.config.*"
+
+    # ═══════════════════════════════════════════════════════════════════
+    # PRISMA & DATABASE SAFETY
+    # ═══════════════════════════════════════════════════════════════════
+    - name: Prisma batch size must not exceed 100 rows
+      description: |
+        Prisma Accelerate has a hard batch limit. The existing INSERT_BATCH = 100 in
+        backfill-mes.ts is correct. Any new createMany call must chunk at ≤100 rows.
+        Exceeding this causes silent truncation or hard failures depending on the
+        Accelerate version.
+      include:
+        - "src/inngest/**/*.ts"
+        - "scripts/**/*.ts"
+
+    - name: Database connections must be released in finally blocks
+      description: |
+        Any code using pool.connect() or prisma.$connect() must release in a finally
+        block. Inngest functions are long-running and concurrent — leaked connections
+        exhaust the pool and cause cascade failures across all functions.
+      include:
+        - "src/inngest/**/*.ts"
+        - "src/app/api/**/*.ts"
+
+    # ═══════════════════════════════════════════════════════════════════
+    # VERCEL RUNTIME
+    # ═══════════════════════════════════════════════════════════════════
+    - name: API routes must declare runtime and maxDuration
+      description: |
+        All route.ts files must export runtime = 'nodejs' and maxDuration. Inngest
+        route needs 300 (5 min). User-facing APIs should use 30-60. Missing maxDuration
+        lets runaway functions consume the entire Vercel execution budget.
+      include:
+        - "src/app/api/**/route.ts"
+
+    - name: Databento calls must have explicit timeouts and retries
+      description: |
+        Every fetchOhlcv() and Databento API call must include timeoutMs (≤120000) and
+        maxAttempts (≤3). Missing timeouts cause Inngest functions to hang until Vercel
+        kills them at maxDuration, wasting compute and blocking concurrency slots.
+      include:
+        - "src/lib/databento.ts"
+        - "src/inngest/**/*.ts"
+
+    # ═══════════════════════════════════════════════════════════════════
+    # CODE QUALITY — Prevent orphaned/misplaced files
+    # ═══════════════════════════════════════════════════════════════════
+    - name: No test data, mock data, or placeholder values in production code
+      description: |
+        Flag any hardcoded arrays of fake OHLCV data, mock prices, placeholder symbols,
+        or test fixtures outside of test files. Also flag comments like "TODO: remove",
+        "HACK", "FIXME", or "temporary" that indicate incomplete work shipped to
+        production. Every number in production code should trace to a real data source.
+      include:
+        - "src/**/*.ts"
+        - "src/**/*.tsx"
+      exclude:
+        - "**/*.test.*"
+        - "**/*.spec.*"
+        - "**/__tests__/**"
+
+    - name: New files must follow project directory conventions
+      description: |
+        Inngest functions go in src/inngest/. Library code goes in src/lib/. API routes
+        go in src/app/api/. Components go in src/components/. Scripts go in scripts/.
+        Flag any .ts file created outside these directories, or any data/config file
+        that appears in the project root without clear purpose.
+      include:
+        - "**/*.ts"
+        - "**/*.tsx"
+
+pr_descriptions:
+  generate: true
+  cubic_review_link: false
+  instructions: |
+    Highlight changes to Inngest functions, environment variables, Prisma schema,
+    Databento integration, or trading signal logic prominently. Call out if the PR
+    introduces new data tables, modifies existing OHLCV pipelines, or changes
+    caching behavior. Note any new dependencies.
+
+issues:
+  fix_with_cubic_buttons: true
+  fix_commits_to_pr: true
