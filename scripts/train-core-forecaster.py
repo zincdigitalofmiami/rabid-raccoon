@@ -4,13 +4,16 @@ train-core-forecaster.py
 MES Core Return Forecaster — AutoGluon 1.5 TabularPredictor
 Optimized for 1h/4h day-trading horizons with walk-forward validation.
 
-Dataset: mes_lean_1h.csv (66 columns, 11,688 rows)
-  - 22 MES technicals, 19 FRED macro, 10 derived features
-  - 5 time features, 2 calendar flags, 8 identity/target columns
+Dataset: mes_lean_1h.csv (~144 columns, ~36K rows from 2020+)
+  - 22 MES technicals (EDSS, MAs, returns, vol)
+  - 48 cross-asset technicals (8 symbols x 6 features)
+  - 19 FRED macro, 10 derived regime features
+  - 6 event/calendar, 7 release signals, 4 news sentiment
+  - 9 BHG quality feedback, 5 time features, 6 cross-asset composites
 
-Models: GBM (LightGBM), CAT (CatBoost), XGB (XGBoost), XT (ExtraTrees), NN_TORCH
-  - Stacked ensemble via auto_stack (weighted blend of all 5)
-  - KNN, FASTAI, RF excluded (curse of dimensionality / CPU-unreliable / redundant)
+Models: GBM (LightGBM), CAT (CatBoost), XGB (XGBoost), XT (ExtraTrees)
+  - Stacked ensemble via auto_stack (weighted blend of all 4)
+  - KNN, FASTAI, RF, NN_TORCH excluded
 
 Walk-forward scheme:
   - 5 expanding-window folds
@@ -29,7 +32,7 @@ Usage:
   python scripts/train-core-forecaster.py --horizons=1h --presets=medium_quality
 
 Training time estimate (default settings):
-  2400s × 5 folds × 2 horizons = ~6.7 hours on Apple Silicon
+  2400s x 5 folds x 2 horizons = ~6.7 hours on Apple Silicon
 """
 
 import sys
@@ -54,6 +57,7 @@ parser.add_argument("--presets", default="best_quality", help="AutoGluon presets
 parser.add_argument("--time-limit", type=int, default=2400, help="Seconds per fold (default: 2400 = 40 min)")
 parser.add_argument("--report-root", default="models/reports", help="Directory for reports")
 parser.add_argument("--skip-reports", action="store_true", help="Skip report generation")
+parser.add_argument("--min-coverage", type=float, default=0.05, help="Min non-null fraction to keep a feature (default: 0.05 = 5%%)")
 args = parser.parse_args()
 
 # ─── Dataset: mes_lean_1h.csv (the ONLY dataset) ─────────────────────────────
@@ -89,11 +93,12 @@ REPORT_ROOT = Path(args.report_root)
 if not REPORT_ROOT.is_absolute():
     REPORT_ROOT = PROJECT_ROOT / REPORT_ROOT
 
-# Models that DON'T serve us — excluded from training
-# KNN:    curse of dimensionality on 58-feature space
-# FASTAI: unreliable on CPU-only Apple Silicon, wastes time budget
-# RF:     redundant with ExtraTrees, slower training
-EXCLUDED_MODELS = ["KNN", "FASTAI", "RF"]
+# Models excluded from training:
+# KNN:      curse of dimensionality on 130+ feature space
+# FASTAI:   unreliable on CPU-only Apple Silicon, wastes time budget
+# RF:       redundant with ExtraTrees, slower training
+# NN_TORCH: tends to overfit on weak financial signal with tabular data
+EXCLUDED_MODELS = ["KNN", "FASTAI", "RF", "NN_TORCH"]
 
 
 # ─── Walk-Forward Splitter ────────────────────────────────────────────────────
@@ -160,11 +165,6 @@ def main():
     df = pd.read_csv(DATASET_PATH)
     print(f"  Rows: {len(df):,}  Columns: {len(df.columns)}")
 
-    # Validate expected column count
-    if len(df.columns) != 66:
-        print(f"  WARNING: Expected 66 columns, got {len(df.columns)}")
-        print(f"  Columns: {list(df.columns)}")
-
     # Sort by timestamp (critical for walk-forward integrity)
     df = df.sort_values("timestamp").reset_index(drop=True)
 
@@ -174,11 +174,29 @@ def main():
     df = df.dropna(subset=target_cols)
     dropped = initial_len - len(df)
     if dropped > 0:
-        print(f"  Dropped {dropped} rows with NaN targets → {len(df):,} remaining")
+        print(f"  Dropped {dropped} rows with NaN targets -> {len(df):,} remaining")
 
     # Feature columns = everything except identity + targets
     feature_cols = [c for c in df.columns if c not in DROP_COLS]
-    print(f"  Features: {len(feature_cols)}")
+
+    # ─── Auto-drop near-empty features ────────────────────────────────────────
+    # Features with <MIN_COVERAGE non-null values are noise for tree models.
+    # BHG features (0.2% coverage) and net_sentiment (0.1%) get dropped here.
+
+    min_coverage = args.min_coverage
+    sparse_cols = []
+    for col in feature_cols:
+        coverage = df[col].notna().mean()
+        if coverage < min_coverage:
+            sparse_cols.append((col, coverage))
+
+    if sparse_cols:
+        print(f"\n  Dropping {len(sparse_cols)} sparse features (<{min_coverage:.0%} non-null):")
+        for col, cov in sparse_cols:
+            print(f"    {col:<32} {cov:.1%}")
+        feature_cols = [c for c in feature_cols if c not in {s[0] for s in sparse_cols}]
+
+    print(f"\n  Features: {len(feature_cols)}")
     print(f"  Horizons: {list(HORIZONS.keys())}")
     print(f"  Presets: {PRESETS}  |  Time/fold: {TIME_LIMIT_PER_FOLD}s  |  Folds: {N_FOLDS}")
     print(f"  Excluded models: {EXCLUDED_MODELS}")
@@ -208,7 +226,7 @@ def main():
         oof_preds = pd.Series(np.nan, index=df.index, dtype=float)
 
         for fold_i, (train_idx, val_idx) in enumerate(splits):
-            print(f"\n  ── Fold {fold_i + 1}/{len(splits)} ──")
+            print(f"\n  -- Fold {fold_i + 1}/{len(splits)} --")
             print(f"  Train: {len(train_idx):,} rows  |  Val: {len(val_idx):,} rows")
 
             train_data = df.iloc[train_idx][feature_cols + [target_col]]
@@ -235,13 +253,13 @@ def main():
 
             # ─── THE OPTIMIZED FIT CALL ───────────────────────────────────
             #
-            # Models kept: GBM, CAT, XGB, XT, NN_TORCH → stacked ensemble
-            # Models killed: KNN, FASTAI, RF
+            # Models kept: GBM, CAT, XGB, XT → stacked ensemble
+            # Models killed: KNN, FASTAI, RF, NN_TORCH
             #
             # Key tuning:
-            #   num_bag_folds=5      (down from default 8 — we already have 5 WF folds)
-            #   num_stack_levels=1   (single stack is optimal for 58 features)
-            #   early_stopping=50    (prevents GBM/XGB overfitting on long time budgets)
+            #   num_bag_folds=3      (sufficient with 36K rows; saves ~40% vs 5)
+            #   num_stack_levels=1   (single stack — more = overfitting risk)
+            #   early_stopping=30    (tight for weak financial signal)
             #   num_gpus=0           (CPU-only for Apple Silicon reliability)
             #   sequential_local     (memory-safe on unified memory)
             #
@@ -251,13 +269,13 @@ def main():
                 presets=PRESETS,
                 num_gpus=0,
                 excluded_model_types=EXCLUDED_MODELS,
-                num_bag_folds=5,
+                num_bag_folds=3,
                 num_stack_levels=1,
                 ag_args_ensemble={
                     "fold_fitting_strategy": "sequential_local",
                 },
                 ag_args_fit={
-                    "num_early_stopping_rounds": 50,
+                    "num_early_stopping_rounds": 30,
                 },
             )
 
@@ -301,10 +319,10 @@ def main():
                 "n_oof": len(oof_actual),
             }
 
-            print(f"\n  ═══ OOF Results: {horizon_name} ═══")
+            print(f"\n  === OOF Results: {horizon_name} ===")
             print(f"    MAE:  {mae:.6f}")
             print(f"    RMSE: {rmse:.6f}")
-            print(f"    R²:   {r2:.4f}")
+            print(f"    R2:   {r2:.4f}")
             print(f"    n:    {len(oof_actual):,}")
 
             # Generate report artifacts if enabled
@@ -351,12 +369,12 @@ def main():
     print(f"\n{'='*60}")
     print("SUMMARY: MES Core Return Forecaster")
     print(f"{'='*60}")
-    print(f"Dataset:  mes_lean_1h.csv ({len(df):,} rows × {len(df.columns)} cols)")
+    print(f"Dataset:  mes_lean_1h.csv ({len(df):,} rows x {len(df.columns)} cols)")
     print(f"Features: {len(feature_cols)}")
-    print(f"Models:   GBM + CAT + XGB + XT + NN_TORCH → WeightedEnsemble")
+    print(f"Models:   GBM + CAT + XGB + XT -> WeightedEnsemble")
     print(f"Presets:  {PRESETS}  |  Time/fold: {TIME_LIMIT_PER_FOLD}s")
     print()
-    print(f"{'Horizon':<10} {'MAE':>10} {'RMSE':>10} {'R²':>8} {'n':>8}")
+    print(f"{'Horizon':<10} {'MAE':>10} {'RMSE':>10} {'R2':>8} {'n':>8}")
     print(f"{'-'*48}")
     for h, r in results.items():
         print(f"{h:<10} {r['MAE']:>10.6f} {r['RMSE']:>10.6f} {r['R2']:>8.4f} {r['n_oof']:>8,}")
