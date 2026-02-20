@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { detectSwings } from '@/lib/swing-detection'
-import { calculateFibonacci } from '@/lib/fibonacci'
+import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
 import { advanceBhgSetups } from '@/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
@@ -54,9 +54,9 @@ export async function GET(): Promise<Response> {
     const candles = [...rows].reverse().map(rowToCandle)
     const currentPrice = candles[candles.length - 1].close
 
-    // 2. Run existing modules: swings → fib → measured moves
+    // 2. Run existing modules: swings → fib (multi-period confluence) → measured moves
     const swings = detectSwings(candles, 5, 5, 20)
-    const fibResult = calculateFibonacci(swings.highs, swings.lows)
+    const fibResult = calculateFibonacciMultiPeriod(candles)
 
     if (!fibResult) {
       return NextResponse.json({

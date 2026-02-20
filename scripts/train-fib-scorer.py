@@ -4,7 +4,7 @@ train-fib-scorer.py
 Fib Setup Scorer — Model 2 of 2.
 
 Trains 2 binary classifiers:
-  y1272: P(TP1 hit before SL) — TP1 at 1.272 extension, 4h horizon
+  y1236: P(TP1 hit before SL) — TP1 at 1.236 extension, 4h horizon
   y1618: P(TP2 hit before SL) — TP2 at 1.618 extension, 8h horizon
 
 Composite score: 0.30 * P(TP1) + 0.70 * P(TP2)

@@ -4,8 +4,6 @@
 
 indicator("Rabid Raccoon", shorttitle="🦝 RR", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
-import TradingView/ZigZag/7 as zigzag
-
 //#region === INPUTS & CONFIGURATION ===
 
 // --- Feature Toggles ---
@@ -20,10 +18,9 @@ debugMode           = input.bool(false, "Debug Mode",               group="Featu
 mmLookback          = input.int(20,     "Swing Lookback Period",    minval=5, maxval=100, group="Measured Moves")
 mmTolerance         = input.float(0.1,  "Move Equality Tolerance",  minval=0.01, maxval=0.5, step=0.01, group="Measured Moves")
 
-// --- Fibonacci Settings (ZigZag Auto Fib) ---
-fibDeviation        = input.float(3,    "Fib Deviation",            minval=0, tooltip="ATR multiplier for ZigZag pivot sensitivity", group="Fibonacci")
-fibDepth            = input.int(10,     "Fib Depth",                minval=2, tooltip="Minimum bars between pivots", group="Fibonacci")
-fibReverse          = input.bool(false, "Reverse",                  group="Fibonacci")
+// --- Fibonacci Settings (Multi-Period Confluence) ---
+// Uses Fibonacci-sequence lookback periods (8, 13, 21, 34, 55) to find the
+// highest-confluence anchor — matching TSoFib methodology.
 fibExtendRight      = input.bool(true,  "Extend Right",             group="Fibonacci")
 fibShowPrices       = input.bool(true,  "Show Prices",              group="Fibonacci")
 fibShowLevels       = input.bool(true,  "Show Levels",              group="Fibonacci")
@@ -162,6 +159,75 @@ if debugSwingMarkers
 //#endregion
 
 
+//#region === EHLERS DBLsmooth StochRSI (EDSS) ===
+
+// Replaces: standard RSI + stoch_14
+// DSP-based: roofing filter isolates tradeable cycles, super smoother removes noise
+// Computes on the current timeframe — use on 15m, 1H, and 4H charts
+
+// --- Inputs ---
+edssLength       = input.int(14,  "EDSS Stoch Length",    minval=2,                          group="Ehlers Stochastic")
+edssSignalLength = input.int(3,   "EDSS Signal MA Length", minval=1,                          group="Ehlers Stochastic")
+edssRoofUpper    = input.int(48,  "EDSS Roofing Upper",   minval=2,                          group="Ehlers Stochastic")
+edssRoofLower    = input.int(10,  "EDSS Roofing Lower",   minval=2,                          group="Ehlers Stochastic")
+edssOB           = input.float(0.8, "EDSS Overbought",    minval=0.0, maxval=1.0, step=0.05, group="Ehlers Stochastic")
+edssOS           = input.float(0.2, "EDSS Oversold",      minval=0.0, maxval=1.0, step=0.05, group="Ehlers Stochastic")
+
+// --- Constants ---
+float EDSS_PI = 3.14159265359
+
+// --- Ehlers Super Smoother Filter ---
+// Two-pole Butterworth: half the lag of equivalent EMA/SMA
+_edssSuperSmoother(float price, int lower) =>
+    float a1     = math.exp(-EDSS_PI * math.sqrt(2.0) / lower)
+    float coeff2 = 2.0 * a1 * math.cos(math.sqrt(2.0) * EDSS_PI / lower)
+    float coeff3 = -math.pow(a1, 2)
+    float coeff1 = 1.0 - coeff2 - coeff3
+    var float filt = 0.0
+    filt := coeff1 * (price + nz(price[1])) / 2.0 + coeff2 * nz(filt[1]) + coeff3 * nz(filt[2])
+    filt
+
+// --- Ehlers Roofing Filter ---
+// Highpass strips trend (cycles > upper), super smoother strips noise (cycles < lower)
+_edssRoofingFilter(float price, int upper, int lower) =>
+    float alpha1 = (math.cos(math.sqrt(2.0) * EDSS_PI / upper) + math.sin(math.sqrt(2.0) * EDSS_PI / upper) - 1.0) / math.cos(math.sqrt(2.0) * EDSS_PI / upper)
+    var float highpass = 0.0
+    highpass := math.pow(1.0 - alpha1 / 2.0, 2) * (price - 2.0 * nz(price[1]) + nz(price[2])) +
+                2.0 * (1.0 - alpha1) * nz(highpass[1]) - math.pow(1.0 - alpha1, 2) * nz(highpass[2])
+    _edssSuperSmoother(highpass, lower)
+
+// --- Ehlers Stochastic Core ---
+_edssStochastic(float price, int len, int upper, int lower) =>
+    float filt     = _edssRoofingFilter(price, upper, lower)
+    float highestP = ta.highest(filt, len)
+    float lowestP  = ta.lowest(filt, len)
+    (highestP - lowestP) != 0 ? (filt - lowestP) / (highestP - lowestP) : 0.0
+
+// --- Computed Values ---
+float edssRaw    = _edssStochastic(close, edssLength, edssRoofUpper, edssRoofLower)
+float edssStoch  = _edssSuperSmoother(edssRaw, edssRoofLower)
+float edssSignal = ta.sma(edssStoch, edssSignalLength)
+
+// --- Derived Signals ---
+bool  edssBullCross = ta.crossover(edssStoch, edssSignal)
+bool  edssBearCross = ta.crossunder(edssStoch, edssSignal)
+bool  edssIsOB      = edssStoch > edssOB
+bool  edssIsOS      = edssStoch < edssOS
+bool  edssBullCurl  = edssBullCross and edssStoch[1] < edssOS   // Cross up FROM oversold
+bool  edssBearCurl  = edssBearCross and edssStoch[1] > edssOB   // Cross down FROM overbought
+float edssSlope     = edssStoch - edssStoch[1]
+bool  edssRising    = edssSlope > 0
+bool  edssFalling   = edssSlope < 0
+
+// --- State Classification (dataset feature: edss_state) ---
+// 0=OS↓  1=OS↑(curl)  2=MID↑  3=MID↓  4=OB↑  5=OB↓(curl)
+int edssState = edssIsOS ? (edssRising ? 1 : 0) :
+                edssIsOB ? (edssRising ? 4 : 5) :
+                (edssRising ? 2 : 3)
+
+//#endregion
+
+
 //#region === MEASURED MOVE DETECTION ===
 
 if showMeasuredMoves
@@ -175,48 +241,121 @@ if showMeasuredMoves
 //#endregion
 
 
-//#region === AUTO-FIBONACCI ENGINE ===
+//#region === AUTO-FIBONACCI ENGINE (Multi-Period Confluence) ===
 
-// ZigZag-based Auto Fibonacci (David Hasley / TradingView methodology)
-var int  fibSignalCount = 0
-var bool fibIsBullish   = true
+// Replaces ZigZag-based anchor with Fibonacci-sequence lookback periods.
+// Matches TSoFib (Fibonacci Fractal MTF Confluence) methodology:
+//   For each period N in [8, 13, 21, 34, 55]:
+//     highN = ta.highest(high, N), lowN = ta.lowest(low, N)
+//     Derive 0.382 / 0.5 / 0.618 retracements from that range
+//   Select the anchor whose retracements have the most cross-period agreement.
+//   Direction: isBullish when close >= 0.5 level of winning anchor.
 
-// --- ZigZag Pivot Detection ---
-fibZzUpdate() =>
-    var fibSettings = zigzag.Settings.new(fibDeviation, fibDepth, color(na), false, false, false, false, "Absolute", true)
-    var zigzag.ZigZag fibZZ = zigzag.newInstance(fibSettings)
-    var zigzag.Pivot lastPvt = na
-    var float sPrice = na
-    var float h = na
-    fibSettings.devThreshold := ta.atr(10) / close * 100 * fibDeviation
-    if fibZZ.update()
-        lastPvt := fibZZ.lastPivot()
-        if not na(lastPvt)
-            sPrice := fibReverse ? lastPvt.start.price : lastPvt.end.price
-            float ePrice = fibReverse ? lastPvt.end.price : lastPvt.start.price
-            h := (sPrice > ePrice ? -1 : 1) * math.abs(sPrice - ePrice)
-    [lastPvt, sPrice, h]
-
-[fibPivot, fibSP, fibH] = fibZzUpdate()
-fibIsBullish := not na(fibH) ? fibH > 0 : fibIsBullish
+var bool fibIsBullish = true
 fibExtend = fibExtendRight ? extend.right : extend.none
 
+// --- Compute high/low for each Fibonacci lookback period ---
+fibHigh8  = ta.highest(high, 8)
+fibLow8   = ta.lowest(low,   8)
+fibHigh13 = ta.highest(high, 13)
+fibLow13  = ta.lowest(low,   13)
+fibHigh21 = ta.highest(high, 21)
+fibLow21  = ta.lowest(low,   21)
+fibHigh34 = ta.highest(high, 34)
+fibLow34  = ta.lowest(low,   34)
+fibHigh55 = ta.highest(high, 55)
+fibLow55  = ta.lowest(low,   55)
+
+// --- Score each anchor by counting cross-period confluences at 0.382 / 0.5 / 0.618 ---
+// Tolerance: 0.1% of the anchor range
+_fibScore(float h, float l) =>
+    float rng = h - l
+    if rng <= 0
+        0
+    else
+        float tol = rng * 0.001
+        int score = 0
+        // Compare anchor's mid levels against all other periods' mid levels
+        for ratio = 0 to 2
+            float targetRatio = ratio == 0 ? 0.382 : ratio == 1 ? 0.5 : 0.618
+            float levelSelf = l + rng * targetRatio
+            // Period 8
+            float r8 = fibLow8 + (fibHigh8 - fibLow8)
+            for r = 0 to 2
+                float cmpRatio = r == 0 ? 0.382 : r == 1 ? 0.5 : 0.618
+                float cmpLvl = fibLow8 + (fibHigh8 - fibLow8) * cmpRatio
+                if math.abs(levelSelf - cmpLvl) <= tol
+                    score += 1
+            // Period 13
+            for r = 0 to 2
+                float cmpRatio = r == 0 ? 0.382 : r == 1 ? 0.5 : 0.618
+                float cmpLvl = fibLow13 + (fibHigh13 - fibLow13) * cmpRatio
+                if math.abs(levelSelf - cmpLvl) <= tol
+                    score += 1
+            // Period 21
+            for r = 0 to 2
+                float cmpRatio = r == 0 ? 0.382 : r == 1 ? 0.5 : 0.618
+                float cmpLvl = fibLow21 + (fibHigh21 - fibLow21) * cmpRatio
+                if math.abs(levelSelf - cmpLvl) <= tol
+                    score += 1
+            // Period 34
+            for r = 0 to 2
+                float cmpRatio = r == 0 ? 0.382 : r == 1 ? 0.5 : 0.618
+                float cmpLvl = fibLow34 + (fibHigh34 - fibLow34) * cmpRatio
+                if math.abs(levelSelf - cmpLvl) <= tol
+                    score += 1
+            // Period 55
+            for r = 0 to 2
+                float cmpRatio = r == 0 ? 0.382 : r == 1 ? 0.5 : 0.618
+                float cmpLvl = fibLow55 + (fibHigh55 - fibLow55) * cmpRatio
+                if math.abs(levelSelf - cmpLvl) <= tol
+                    score += 1
+        score
+
+score8  = _fibScore(fibHigh8,  fibLow8)
+score13 = _fibScore(fibHigh13, fibLow13)
+score21 = _fibScore(fibHigh21, fibLow21)
+score34 = _fibScore(fibHigh34, fibLow34)
+score55 = _fibScore(fibHigh55, fibLow55)
+
+// --- Select best anchor (highest confluence score; tie → largest period) ---
+bestScore = math.max(score8, score13, score21, score34, score55)
+fibAnchorHigh = bestScore == score8  ? fibHigh8  :
+                bestScore == score13 ? fibHigh13 :
+                bestScore == score21 ? fibHigh21 :
+                bestScore == score34 ? fibHigh34 : fibHigh55
+fibAnchorLow  = bestScore == score8  ? fibLow8   :
+                bestScore == score13 ? fibLow13  :
+                bestScore == score21 ? fibLow21  :
+                bestScore == score34 ? fibLow34  : fibLow55
+
+// --- Direction: bullish when close >= midpoint of best anchor ---
+float fibMidpoint = fibAnchorLow + (fibAnchorHigh - fibAnchorLow) * 0.5
+fibIsBullish := close >= fibMidpoint
+
+// --- Compute level prices (direction-aware) ---
+float fibRange = fibAnchorHigh - fibAnchorLow
+float fibBase  = fibIsBullish ? fibAnchorLow : fibAnchorHigh
+float fibDir   = fibIsBullish ? 1.0 : -1.0
+
+_fibPrice(float ratio) => fibBase + fibDir * fibRange * ratio
+
 // --- Drawing Helpers ---
-_fibLine(float price, color col) =>
-    var id = line.new(time, close, time, close, xloc=xloc.bar_time, color=color(na), width=1)
-    if not na(fibPivot) and not na(price)
-        line.set_xy1(id, fibPivot.start.time, price)
-        line.set_xy2(id, fibExtendRight ? time : fibPivot.end.time, price)
+_fibDrawLine(float price, color col) =>
+    var id = line.new(bar_index, price, bar_index, price, color=color(na), width=1)
+    if not na(price)
+        line.set_xy1(id, bar_index - 55, price)
+        line.set_xy2(id, bar_index, price)
         line.set_color(id, col)
         line.set_extend(id, fibExtend)
     else
         line.set_color(id, color(na))
     id
 
-_fibLbl(float price, string txt, color col) =>
-    var id = label.new(x=time, y=close, xloc=xloc.bar_time, text="", textcolor=color(na), style=label.style_label_left, textalign=text.align_left, color=#00000000, size=size.small)
-    if not na(fibPivot) and not na(price)
-        label.set_xy(id, fibExtendRight ? time : fibPivot.end.time, price)
+_fibDrawLabel(float price, string txt, color col) =>
+    var id = label.new(x=bar_index, y=price, text="", textcolor=color(na), style=label.style_label_left, textalign=text.align_left, color=#00000000, size=size.small)
+    if not na(price)
+        label.set_xy(id, bar_index, price)
         label.set_text(id, txt)
         label.set_textcolor(id, col)
     else
@@ -227,11 +366,11 @@ _fibTxt(float ratio, float price) =>
     string pr = fibShowPrices ? " (" + str.tostring(price, format.mintick) + ")" : ""
     lv + pr
 
-_fibLevel(bool show, float ratio, color col, line prev) =>
-    float price = fibSP + fibH * ratio
-    bool vis = show and showAutoFib and not na(fibPivot)
-    lineId = _fibLine(price, vis ? col : color(na))
-    _fibLbl(price, vis ? _fibTxt(ratio, price) : "", vis ? col : color(na))
+_fibDrawLevel(bool show, float ratio, color col, line prev) =>
+    float price = _fibPrice(ratio)
+    bool vis = show and showAutoFib
+    lineId = _fibDrawLine(price, vis ? col : color(na))
+    _fibDrawLabel(price, vis ? _fibTxt(ratio, price) : "", vis ? col : color(na))
     if vis
         if not na(prev)
             linefill.new(lineId, prev, color=color.new(col, fibBgTransparency))
@@ -239,22 +378,19 @@ _fibLevel(bool show, float ratio, color col, line prev) =>
     else
         prev
 
-// --- Process Fib Levels ---
-ln0    = _fibLevel(true,              0.0,   #787b86, line(na))
-ln236  = _fibLevel(true,              0.236, #f44336, ln0)
-ln382  = _fibLevel(true,              0.382, #81c784, ln236)
-ln5    = _fibLevel(true,              0.5,   #4caf50, ln382)
-ln618  = _fibLevel(true,              0.618, #009688, ln5)
-ln786  = _fibLevel(true,              0.786, #64b5f6, ln618)
-ln1    = _fibLevel(true,              1.0,   #787b86, ln786)
-ln1272 = _fibLevel(fibShowExtensions, 1.272, #81c784, ln1)
-ln1618 = _fibLevel(fibShowExtensions, 1.618, #2962ff, ln1272)
-
-// --- Entry / Target Labels (.618 entry, .236 TP) --- DISABLED: use var persistent labels only
-// Entry labels are off by default. Enable via settings if desired.
+// --- Draw All Levels ---
+ln0    = _fibDrawLevel(true,              0.0,   #787b86, line(na))
+ln236  = _fibDrawLevel(true,              0.236, #f44336, ln0)
+ln382  = _fibDrawLevel(true,              0.382, #81c784, ln236)
+ln5    = _fibDrawLevel(true,              0.5,   #4caf50, ln382)
+ln618  = _fibDrawLevel(true,              0.618, #009688, ln5)
+ln786  = _fibDrawLevel(true,              0.786, #64b5f6, ln618)
+ln1    = _fibDrawLevel(true,              1.0,   #787b86, ln786)
+ln1236 = _fibDrawLevel(fibShowExtensions, 1.236, #81c784, ln1)
+ln1618 = _fibDrawLevel(fibShowExtensions, 1.618, #2962ff, ln1236)
 
 if showAutoFib and debugMode
-    log.info("Auto-Fibonacci active — signals: " + str.tostring(fibSignalCount))
+    log.info("Multi-Period Fib active — best score: " + str.tostring(bestScore) + " dir: " + (fibIsBullish ? "BULL" : "BEAR"))
 
 //#endregion
 
@@ -323,12 +459,15 @@ if showBreakHookGo
             bool goSignal = false
             float bodySize = math.abs(close - open)
             float avgBody  = ta.sma(math.abs(close - open), 10)
+            // EDSS momentum gate: prevent GO when oscillator is exhausted
+            bool edssConfirmsBull = edssRising and not edssIsOB
+            bool edssConfirmsBear = edssFalling and not edssIsOS
             if bhgBreakBull
-                // Bullish go: strong close above break level with above-average body
-                goSignal := close > bhgBreakLevel and close > open and close > high[1] and bodySize > avgBody * 0.8
+                // Bullish go: strong close above break level with above-average body + EDSS rising
+                goSignal := close > bhgBreakLevel and close > open and close > high[1] and bodySize > avgBody * 0.8 and edssConfirmsBull
             else
-                // Bearish go: strong close below break level with above-average body
-                goSignal := close < bhgBreakLevel and close < open and close < low[1] and bodySize > avgBody * 0.8
+                // Bearish go: strong close below break level with above-average body + EDSS falling
+                goSignal := close < bhgBreakLevel and close < open and close < low[1] and bodySize > avgBody * 0.8 and edssConfirmsBear
 
             if goSignal
                 bhgSignalCount += 1
@@ -371,7 +510,7 @@ if showRiskManagement
 
 // --- Debug Dashboard ---
 if debugMode
-    var table debugTable = table.new(position.top_right, 2, 12, bgcolor=color.new(color.black, 80), border_width=1)
+    var table debugTable = table.new(position.top_right, 2, 14, bgcolor=color.new(color.black, 80), border_width=1)
     table.cell(debugTable, 0, 0, "Module",       text_color=color.white, text_size=size.small)
     table.cell(debugTable, 1, 0, "Status",       text_color=color.white, text_size=size.small)
     table.cell(debugTable, 0, 1, "Measured Moves", text_color=color.gray, text_size=size.small)
@@ -396,5 +535,16 @@ if debugMode
     table.cell(debugTable, 1, 10, str.tostring(bhgSignalCount), text_color=color.lime, text_size=size.small)
     table.cell(debugTable, 0, 11, "BHG Pullbacks", text_color=color.gray, text_size=size.small)
     table.cell(debugTable, 1, 11, str.tostring(bhgPullbackCount), text_color=color.aqua, text_size=size.small)
+    table.cell(debugTable, 0, 12, "EDSS Value",   text_color=color.gray, text_size=size.small)
+    table.cell(debugTable, 1, 12, str.tostring(edssStoch, "#.###"),
+               text_color=edssIsOB ? color.red : edssIsOS ? color.green : color.blue,
+               text_size=size.small)
+    table.cell(debugTable, 0, 13, "EDSS State",   text_color=color.gray, text_size=size.small)
+    string edssStateStr = edssState == 0 ? "OS↓" : edssState == 1 ? "OS↑" :
+                          edssState == 2 ? "MID↑" : edssState == 3 ? "MID↓" :
+                          edssState == 4 ? "OB↑" : "OB↓"
+    table.cell(debugTable, 1, 13, edssStateStr,
+               text_color=edssRising ? color.lime : color.red,
+               text_size=size.small)
 
 //#endregion

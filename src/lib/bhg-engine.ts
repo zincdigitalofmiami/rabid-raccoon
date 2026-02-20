@@ -254,7 +254,7 @@ export function detectGo(
  *
  * Entry: hook close price
  * SL: beyond the next fib level (0.618 stop for 0.5 touch, 0.786 stop for 0.618 touch)
- * TP1: 1.272 fib extension
+ * TP1: 1.236 fib extension
  * TP2: 1.618 fib extension
  *
  * If an aligned measured move exists, prefer its target for TP1.
@@ -293,14 +293,14 @@ export function computeTargets(
     if (stopLoss <= entry) stopLoss = roundToTick(entry + minDistance)
   }
 
-  // TP1 from 1.272 extension, TP2 from 1.618 extension
-  const ext1272 = findFibLevelPrice(fibResult, 1.272)
+  // TP1 from 1.236 extension, TP2 from 1.618 extension
+  const ext1236 = findFibLevelPrice(fibResult, 1.236)
   const ext1618 = findFibLevelPrice(fibResult, 1.618)
 
   let tp1 = 0
   let tp2 = 0
   if (setup.direction === 'BULLISH') {
-    const tp1Candidates = [ext1272, fibResult.anchorHigh + range * 0.272]
+    const tp1Candidates = [ext1236, fibResult.anchorHigh + range * 0.236]
       .filter((v): v is number => v != null && Number.isFinite(v) && v > entry)
     const tp1Base = tp1Candidates.length > 0 ? Math.min(...tp1Candidates) : entry + minDistance
     tp1 = roundToTick(tp1Base)
@@ -311,7 +311,7 @@ export function computeTargets(
     tp2 = roundToTick(tp2Base)
     if (tp2 <= tp1) tp2 = roundToTick(tp1 + minDistance)
   } else {
-    const tp1Candidates = [ext1272, fibResult.anchorLow - range * 0.272]
+    const tp1Candidates = [ext1236, fibResult.anchorLow - range * 0.236]
       .filter((v): v is number => v != null && Number.isFinite(v) && v < entry)
     const tp1Base = tp1Candidates.length > 0 ? Math.max(...tp1Candidates) : entry - minDistance
     tp1 = roundToTick(tp1Base)

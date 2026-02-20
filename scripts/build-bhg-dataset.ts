@@ -14,7 +14,7 @@
  *   +  All 85 existing features (technicals + FRED macro)
  *
  * Labels:
- *   tp1_before_sl_1h  — TP1 (1.272) hit before SL within 1h (4 bars)
+ *   tp1_before_sl_1h  — TP1 (1.236) hit before SL within 1h (4 bars)
  *   tp1_before_sl_4h  — TP1 hit before SL within 4h (16 bars)
  *   tp2_before_sl_8h  — TP2 (1.618) hit before SL within 8h (32 bars)
  *
@@ -27,11 +27,11 @@
 import { prisma } from '../src/lib/prisma'
 import { loadDotEnvFiles, parseArg } from './ingest-utils'
 import { detectSwings } from '../src/lib/swing-detection'
-import { calculateFibonacci } from '../src/lib/fibonacci'
+import { calculateFibonacciMultiPeriod } from '../src/lib/fibonacci'
 import { detectMeasuredMoves } from '../src/lib/measured-move'
 import { advanceBhgSetups, BhgSetup } from '../src/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '../src/lib/risk-engine'
-import type { CandleData, FibResult } from '../src/lib/types'
+import type { CandleData, FibResult, MeasuredMove } from '../src/lib/types'
 import { toNum } from '../src/lib/decimal'
 import type { Decimal } from '@prisma/client/runtime/client'
 import { dateKeyUtc, laggedWindowKeys, shiftUtcDays } from './feature-availability'
@@ -89,17 +89,121 @@ function ema(arr: number[], period: number): number | null {
   return val
 }
 
-function rsi(closes: number[], period: number): number | null {
-  if (closes.length < period + 1) return null
-  let gains = 0, losses = 0
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1]
-    if (diff > 0) gains += diff
-    else losses -= diff
+// ── Ehlers DBLsmooth Stochastic (EDSS) ──────────────────────────────────────
+// Replaces: rsi() + stochastic()
+// DSP-based: roofing filter isolates tradeable cycles, super smoother halves lag
+// Params match Pine: length=14, roofUpper=48, roofLower=10, signalLen=3
+// Returns { value, signal, slope, state, bullCurl, bearCurl, isOB, isOS }
+
+const EDSS_PI = Math.PI
+
+function edssSuperSmoother(price: number[], lower: number): number[] {
+  const a1 = Math.exp(-EDSS_PI * Math.sqrt(2) / lower)
+  const coeff2 = 2 * a1 * Math.cos(Math.sqrt(2) * EDSS_PI / lower)
+  const coeff3 = -Math.pow(a1, 2)
+  const coeff1 = 1 - coeff2 - coeff3
+  const out: number[] = new Array(price.length).fill(0)
+  for (let i = 0; i < price.length; i++) {
+    const p0 = price[i]
+    const p1 = i >= 1 ? price[i - 1] : p0
+    const f1 = i >= 1 ? out[i - 1] : 0
+    const f2 = i >= 2 ? out[i - 2] : 0
+    out[i] = coeff1 * (p0 + p1) / 2 + coeff2 * f1 + coeff3 * f2
   }
-  if (losses === 0) return 100
-  const rs = gains / losses
-  return 100 - 100 / (1 + rs)
+  return out
+}
+
+function edssRoofingFilter(price: number[], upper: number, lower: number): number[] {
+  const alpha1 = (Math.cos(Math.sqrt(2) * EDSS_PI / upper) + Math.sin(Math.sqrt(2) * EDSS_PI / upper) - 1)
+                / Math.cos(Math.sqrt(2) * EDSS_PI / upper)
+  const hp: number[] = new Array(price.length).fill(0)
+  for (let i = 0; i < price.length; i++) {
+    const p0 = price[i]
+    const p1 = i >= 1 ? price[i - 1] : p0
+    const p2 = i >= 2 ? price[i - 2] : p0
+    const h1 = i >= 1 ? hp[i - 1] : 0
+    const h2 = i >= 2 ? hp[i - 2] : 0
+    hp[i] = Math.pow(1 - alpha1 / 2, 2) * (p0 - 2 * p1 + p2) + 2 * (1 - alpha1) * h1 - Math.pow(1 - alpha1, 2) * h2
+  }
+  return edssSuperSmoother(hp, lower)
+}
+
+export interface EdssResult {
+  value: number | null      // edssStoch (0–1)
+  signal: number | null     // edssSignal SMA-3 of value
+  slope: number | null      // value[i] - value[i-1]
+  state: number | null      // 0=OS↓ 1=OS↑ 2=MID↑ 3=MID↓ 4=OB↑ 5=OB↓
+  bullCurl: boolean         // crossed up from oversold
+  bearCurl: boolean         // crossed down from overbought
+  isOB: boolean
+  isOS: boolean
+}
+
+function computeEDSS(
+  candles: { high: number; low: number; close: number }[],
+  length = 14,
+  roofUpper = 48,
+  roofLower = 10,
+  signalLen = 3,
+  ob = 0.8,
+  os = 0.2,
+): EdssResult[] {
+  const warmup = roofUpper + length  // bars before output is reliable
+  const closes = candles.map(c => c.close)
+  const filt = edssRoofingFilter(closes, roofUpper, roofLower)
+
+  // Stochastic on roofing-filtered signal
+  const rawStoch: number[] = new Array(candles.length).fill(0)
+  for (let i = 0; i < candles.length; i++) {
+    const start = Math.max(0, i - length + 1)
+    const slice = filt.slice(start, i + 1)
+    const hi = Math.max(...slice)
+    const lo = Math.min(...slice)
+    // FIX: If range is negligible (pure trend — no cycle), output 0.5 (neutral)
+    // A near-zero range means the filter sees no cycle, not a directional signal
+    rawStoch[i] = (hi - lo) > 1e-10 ? (filt[i] - lo) / (hi - lo) : 0.5
+  }
+
+  // Double-smooth the stoch output
+  const stochRaw = edssSuperSmoother(rawStoch, roofLower)
+
+  // FIX: Clamp to [0,1] — super smoother is a resonant filter, overshoots ~4%
+  const stoch = stochRaw.map(v => Math.max(0, Math.min(1, v)))
+
+  // Signal line: SMA-3 of stoch
+  const signal: (number | null)[] = new Array(candles.length).fill(null)
+  for (let i = signalLen - 1; i < candles.length; i++) {
+    signal[i] = stoch.slice(i - signalLen + 1, i + 1).reduce((a, b) => a + b, 0) / signalLen
+  }
+
+  const NULL_RESULT: EdssResult = { value: null, signal: null, slope: null, state: null, bullCurl: false, bearCurl: false, isOB: false, isOS: false }
+
+  const results: EdssResult[] = []
+  for (let i = 0; i < candles.length; i++) {
+    // FIX: Null-mask warmup bars — filter needs roofUpper+length bars to settle
+    if (i < warmup) { results.push(NULL_RESULT); continue }
+    const v = stoch[i]
+    const sig = signal[i]
+    const vPrev = stoch[i - 1]
+    const sigPrev = signal[i - 1]
+    const slope = v - vPrev
+    const isOB = v > ob
+    const isOS = v < os
+    const rising = slope > 0
+    const crossedUp = vPrev <= (sigPrev ?? 0) && v > (sig ?? 0)
+    const crossedDown = vPrev >= (sigPrev ?? 0) && v < (sig ?? 0)
+    results.push({
+      value: v,
+      signal: sig,
+      slope,
+      state: isOS ? (rising ? 1 : 0) : isOB ? (rising ? 4 : 5) : (rising ? 2 : 3),
+      bullCurl: crossedUp && vPrev < os,
+      bearCurl: crossedDown && vPrev > ob,
+      isOB,
+      isOS,
+    })
+  }
+  return results
 }
 
 function atr(candles: CandleData[], period: number): number | null {
@@ -126,13 +230,62 @@ function bollingerPos(closes: number[], period: number): number | null {
   return (closes[closes.length - 1] - (mean - 2 * std)) / (4 * std)
 }
 
-function stochastic(candles: CandleData[], period: number): number | null {
-  if (candles.length < period) return null
-  const slice = candles.slice(-period)
-  const hi = Math.max(...slice.map(c => c.high))
-  const lo = Math.min(...slice.map(c => c.low))
-  if (hi === lo) return 50
-  return ((candles[candles.length - 1].close - lo) / (hi - lo)) * 100
+// stochastic() removed — replaced by computeEDSS()
+
+// ── CM Ultimate MACD (ChrisMoody CM_MacD_Ult_MTF) ────────────────────────────
+// Port of Pine v2 study by ChrisMoody (updated 4-10-2014)
+// fast=12, slow=26, signal=9 (SMA of MACD line, matching Pine's sma())
+// Histogram 4-color state:
+//   0 = aqua   — hist rising  AND hist > 0  (histA_IsUp)
+//   1 = blue   — hist falling AND hist > 0  (histA_IsDown)
+//   2 = red    — hist falling AND hist <= 0 (histB_IsDown)
+//   3 = maroon — hist rising  AND hist <= 0 (histB_IsUp)
+
+interface CmMacdResult {
+  line: number       // fastEMA - slowEMA
+  signal: number     // SMA-9 of line
+  hist: number       // line - signal
+  histPrev: number   // hist[1] — for rising/falling state
+  histColor: number  // 0=aqua 1=blue 2=red 3=maroon
+}
+
+function computeCmMacd(
+  closes: number[],
+  fastLength = 12,
+  slowLength = 26,
+  signalLength = 9,
+): CmMacdResult | null {
+  if (closes.length < slowLength + signalLength) return null
+
+  // Build full MACD line array (ema fast - ema slow at each bar)
+  const macdArr: number[] = []
+  for (let i = 0; i < closes.length; i++) {
+    const slice = closes.slice(0, i + 1)
+    const fast = ema(slice, fastLength)
+    const slow = ema(slice, slowLength)
+    if (fast != null && slow != null) macdArr.push(fast - slow)
+  }
+  if (macdArr.length < signalLength) return null
+
+  // Signal = SMA of MACD line (matching Pine's sma(macd, signalLength))
+  const signalVal = macdArr.slice(-signalLength).reduce((a, b) => a + b, 0) / signalLength
+
+  const line = macdArr[macdArr.length - 1]
+  const hist = line - signalVal
+  const histPrev = macdArr.length >= 2
+    ? macdArr[macdArr.length - 2] - (macdArr.slice(-signalLength - 1, -1).reduce((a, b) => a + b, 0) / signalLength)
+    : hist
+
+  // 4-color state matching Pine logic exactly
+  const histRising = hist > histPrev
+  let histColor: number
+  if (hist > 0) {
+    histColor = histRising ? 0 : 1  // aqua : blue
+  } else {
+    histColor = !histRising ? 2 : 3 // red  : maroon
+  }
+
+  return { line, signal: signalVal, hist, histPrev, histColor }
 }
 
 // ─── Feature Extraction ──────────────────────────────────────────────────────
@@ -188,12 +341,17 @@ interface GoEventFeatures {
   close: number
   ret_1h: number | null
   ret_4h: number | null
-  rsi_14: number | null
-  rsi_2: number | null
+  edss_value: number | null
+  edss_signal: number | null
+  edss_slope: number | null
+  edss_state: number | null
+  edss_bull_curl: number
+  edss_bear_curl: number
+  edss_is_ob: number
+  edss_is_os: number
   atr_14: number | null
   atr_7: number | null
   bb_pos_20: number | null
-  stoch_14: number | null
   ma_8: number | null
   ma_24: number | null
   dist_ma_8: number | null
@@ -201,9 +359,20 @@ interface GoEventFeatures {
   range_pct: number | null
   body_ratio: number | null
   vol_ratio: number | null
-  macd_line: number | null
-  macd_hist: number | null
+  // CM Ultimate MACD (CM_MacD_Ult_MTF port — ChrisMoody)
+  macd_line: number | null        // fast EMA - slow EMA
+  macd_signal: number | null      // SMA-9 of macd_line
+  macd_hist: number | null        // macd_line - macd_signal
+  macd_hist_color: number | null  // 0=aqua(up>0) 1=blue(dn>0) 2=red(dn<0) 3=maroon(up<0)
+  macd_above_signal: number       // 1 if macd_line >= signal (lime), 0 if below (red)
+  macd_hist_rising: number        // 1 if hist > hist[1]
   fib_position: number | null
+
+  // Measured Move alignment
+  has_aligned_mm: number          // 1 if an active MM matches setup direction
+  mm_quality: number | null       // quality score 0–100 of best aligned MM
+  mm_retrace_ratio: number | null // retracement ratio of best aligned MM (0–1)
+  mm_bars_to_d: number | null     // bars from C to projected D (move length proxy)
 
   // Risk metrics
   stop_distance_pts: number
@@ -227,7 +396,8 @@ function computeGoFeatures(
   candles: CandleData[],
   allCandles: CandleData[],  // Full history for look-forward
   fibResult: FibResult,
-  goBarGlobalIndex: number
+  goBarGlobalIndex: number,
+  measuredMoves: MeasuredMove[],
 ): GoEventFeatures | null {
   if (setup.phase !== 'GO_FIRED' || !setup.entry || !setup.stopLoss || !setup.tp1 || !setup.tp2) {
     return null
@@ -352,17 +522,20 @@ function computeGoFeatures(
     ? (closes[closes.length - 1] - closes[closes.length - 16]) / closes[closes.length - 16]
     : null
 
-  const rsi14 = rsi(closes, 14)
-  const rsi2 = rsi(closes, 2)
+  const edssAll = computeEDSS(candleWindow)
+  const edss = edssAll[edssAll.length - 1]
   const bb20 = bollingerPos(closes, 20)
-  const stoch14 = stochastic(candleWindow, 14)
   const ma8 = sma(closes, 8)
   const ma24 = sma(closes, 24)
   const price = closes[closes.length - 1]
 
-  const ema12 = ema(closes, 12)
-  const ema26 = ema(closes, 26)
-  const macd_line = ema12 && ema26 ? ema12 - ema26 : null
+  // ── CM Ultimate MACD (ChrisMoody CM_MacD_Ult_MTF) ─────────────────────────
+  // Full implementation: fast=12, slow=26, signal=9 (SMA of MACD line)
+  // Histogram = macd_line - signal, with 4-color state matching Pine logic
+  const cmMacd = computeCmMacd(closes, 12, 26, 9)
+  const macd_line   = cmMacd?.line   ?? null
+  const macd_signal = cmMacd?.signal ?? null
+  const macd_hist   = cmMacd?.hist   ?? null
 
   const currentRange = goCandle.high - goCandle.low
   const currentBody = Math.abs(goCandle.close - goCandle.open)
@@ -377,6 +550,23 @@ function computeGoFeatures(
 
   // ── Risk ───────────────────────────────────────────────────────────────
   const risk = computeRisk(setup.entry, setup.stopLoss, setup.tp1, MES_DEFAULTS)
+
+  // ── Measured Move alignment ─────────────────────────────────────────────
+  // Find the best active MM that aligns with the setup direction
+  const alignedMMs = measuredMoves.filter(
+    mm => mm.status === 'ACTIVE' && mm.direction === setup.direction
+  )
+  const bestMM = alignedMMs.reduce<MeasuredMove | null>((best, mm) => {
+    if (!best || mm.quality > best.quality) return mm
+    return best
+  }, null)
+
+  const has_aligned_mm = bestMM ? 1 : 0
+  const mm_quality = bestMM?.quality ?? null
+  const mm_retrace_ratio = bestMM?.retracementRatio ?? null
+  const mm_bars_to_d = bestMM
+    ? Math.abs(bestMM.pointC.barIndex - bestMM.pointB.barIndex)
+    : null
 
   // ── Labels (look forward from GO bar in allCandles) ────────────────────
   const tp1_before_sl_1h = lookForwardLabel(
@@ -431,12 +621,17 @@ function computeGoFeatures(
     close: price,
     ret_1h,
     ret_4h,
-    rsi_14: rsi14,
-    rsi_2: rsi2,
+    edss_value: edss?.value ?? null,
+    edss_signal: edss?.signal ?? null,
+    edss_slope: edss?.slope ?? null,
+    edss_state: edss?.state ?? null,
+    edss_bull_curl: edss?.bullCurl ? 1 : 0,
+    edss_bear_curl: edss?.bearCurl ? 1 : 0,
+    edss_is_ob: edss?.isOB ? 1 : 0,
+    edss_is_os: edss?.isOS ? 1 : 0,
     atr_14: atrVal,
     atr_7: atr7 ?? null,
     bb_pos_20: bb20,
-    stoch_14: stoch14,
     ma_8: ma8,
     ma_24: ma24,
     dist_ma_8: ma8 ? (price - ma8) / price : null,
@@ -445,8 +640,17 @@ function computeGoFeatures(
     body_ratio: currentRange > 0 ? currentBody / currentRange : null,
     vol_ratio,
     macd_line,
-    macd_hist: null,  // Would need signal line history
+    macd_signal,
+    macd_hist,
+    macd_hist_color: cmMacd?.histColor ?? null,
+    macd_above_signal: cmMacd ? (cmMacd.line >= cmMacd.signal ? 1 : 0) : 0,
+    macd_hist_rising: cmMacd ? (cmMacd.hist > cmMacd.histPrev ? 1 : 0) : 0,
     fib_position,
+
+    has_aligned_mm,
+    mm_quality,
+    mm_retrace_ratio,
+    mm_bars_to_d,
 
     stop_distance_pts: risk.stopDistance,
     stop_ticks: risk.stopTicks,
@@ -662,7 +866,7 @@ async function main() {
     }
 
     const swings = detectSwings(window, 5, 5, 20)
-    const fibResult = calculateFibonacci(swings.highs, swings.lows)
+    const fibResult = calculateFibonacciMultiPeriod(window)
     if (!fibResult) continue
 
     const measuredMoves = detectMeasuredMoves(swings.highs, swings.lows, window[window.length - 1].close)
@@ -681,7 +885,7 @@ async function main() {
       const goBarGlobal = start + (setup.goBarIndex ?? 0)
 
       const features = computeGoFeatures(
-        setup, window, allCandles, fibResult, goBarGlobal
+        setup, window, allCandles, fibResult, goBarGlobal, measuredMoves
       )
 
       if (features) {

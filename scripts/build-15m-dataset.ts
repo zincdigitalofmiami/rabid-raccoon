@@ -151,25 +151,54 @@ function pctChange(current: number, previous: number): number | null {
   return (current - previous) / Math.abs(previous)
 }
 
-function computeRSI(closes: number[], period: number): (number | null)[] {
-  const rsi: (number | null)[] = new Array(closes.length).fill(null)
-  if (closes.length < period + 1) return rsi
-  let avgGain = 0, avgLoss = 0
-  for (let i = 1; i <= period; i++) {
-    const change = closes[i] - closes[i - 1]
-    if (change > 0) avgGain += change; else avgLoss += Math.abs(change)
+// computeRSI removed — replaced by computeEDSS (Ehlers DSP-based)
+
+const EDSS_PI_15M = Math.PI
+
+function edssSuperSmoother15m(price: number[], lower: number): number[] {
+  const a1 = Math.exp(-EDSS_PI_15M * Math.sqrt(2) / lower)
+  const coeff2 = 2 * a1 * Math.cos(Math.sqrt(2) * EDSS_PI_15M / lower)
+  const coeff3 = -Math.pow(a1, 2)
+  const coeff1 = 1 - coeff2 - coeff3
+  const out: number[] = new Array(price.length).fill(0)
+  for (let i = 0; i < price.length; i++) {
+    const p1 = i >= 1 ? price[i - 1] : price[i]
+    const f1 = i >= 1 ? out[i - 1] : 0
+    const f2 = i >= 2 ? out[i - 2] : 0
+    out[i] = coeff1 * (price[i] + p1) / 2 + coeff2 * f1 + coeff3 * f2
   }
-  avgGain /= period; avgLoss /= period
-  rsi[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss)
-  for (let i = period + 1; i < closes.length; i++) {
-    const change = closes[i] - closes[i - 1]
-    const gain = change > 0 ? change : 0
-    const loss = change < 0 ? Math.abs(change) : 0
-    avgGain = (avgGain * (period - 1) + gain) / period
-    avgLoss = (avgLoss * (period - 1) + loss) / period
-    rsi[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss)
+  return out
+}
+
+function edssRoofingFilter15m(price: number[], upper: number, lower: number): number[] {
+  const alpha1 = (Math.cos(Math.sqrt(2) * EDSS_PI_15M / upper) + Math.sin(Math.sqrt(2) * EDSS_PI_15M / upper) - 1)
+                / Math.cos(Math.sqrt(2) * EDSS_PI_15M / upper)
+  const hp: number[] = new Array(price.length).fill(0)
+  for (let i = 0; i < price.length; i++) {
+    const p1 = i >= 1 ? price[i - 1] : price[i]
+    const p2 = i >= 2 ? price[i - 2] : price[i]
+    const h1 = i >= 1 ? hp[i - 1] : 0
+    const h2 = i >= 2 ? hp[i - 2] : 0
+    hp[i] = Math.pow(1 - alpha1 / 2, 2) * (price[i] - 2 * p1 + p2) + 2 * (1 - alpha1) * h1 - Math.pow(1 - alpha1, 2) * h2
   }
-  return rsi
+  return edssSuperSmoother15m(hp, lower)
+}
+
+function computeEDSS15m(closes: number[], length = 14, roofUpper = 48, roofLower = 10): (number | null)[] {
+  const warmup = roofUpper + length
+  const filt = edssRoofingFilter15m(closes, roofUpper, roofLower)
+  const rawStoch: number[] = new Array(closes.length).fill(0)
+  for (let i = 0; i < closes.length; i++) {
+    const start = Math.max(0, i - length + 1)
+    const slice = filt.slice(start, i + 1)
+    const hi = Math.max(...slice), lo = Math.min(...slice)
+    // FIX: near-zero range = no cycle detected → neutral 0.5, not 0
+    rawStoch[i] = (hi - lo) > 1e-10 ? (filt[i] - lo) / (hi - lo) : 0.5
+  }
+  // FIX: clamp to [0,1] — super smoother overshoots ~4%
+  const stoch = edssSuperSmoother15m(rawStoch, roofLower).map(v => Math.max(0, Math.min(1, v)))
+  // FIX: null-mask warmup bars
+  return stoch.map((v, i) => i < warmup ? null : v)
 }
 
 function rollingMean(values: number[], window: number): (number | null)[] {
@@ -331,8 +360,7 @@ async function run(): Promise<void> {
   const closes = candles.map((c) => c.close)
   const volumes = candles.map((c) => Number(c.volume ?? 0))
 
-  const rsi14 = computeRSI(closes, 14)
-  const rsi2 = computeRSI(closes, 2)
+  const edss14 = computeEDSS15m(closes, 14)
   // 15m-scaled MAs: 32 bars=8h, 96 bars=24h, 480 bars=5 trading days
   const ma32 = rollingMean(closes, 32)
   const ma96 = rollingMean(closes, 96)
@@ -357,7 +385,7 @@ async function run(): Promise<void> {
     // 15m bars back as returns (1=15m, 4=1h, 16=4h, 96=24h)
     'mes_ret_1bar', 'mes_ret_4bar', 'mes_ret_16bar', 'mes_ret_96bar',
     'mes_range', 'mes_body_ratio',
-    'mes_rsi14', 'mes_rsi2',
+    'mes_edss',
     'mes_ma32', 'mes_ma96', 'mes_ma480',
     'mes_dist_ma32', 'mes_dist_ma96', 'mes_dist_ma480',
     'mes_std32', 'mes_std96', 'mes_std480',
@@ -498,7 +526,7 @@ async function run(): Promise<void> {
       utcDate === monthEnd ? 1 : 0,
       ret1bar, ret4bar, ret16bar, ret96bar,
       range, bodyRatio,
-      rsi14[i], rsi2[i],
+      edss14[i],
       ma32[i], ma96[i], ma480[i],
       distMa32, distMa96, distMa480,
       std32[i], std96[i], std480[i],

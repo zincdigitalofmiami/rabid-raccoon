@@ -1,0 +1,127 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// SQUEEZE MOMENTUM — RR Indicator Module
+// ═══════════════════════════════════════════════════════════════════════════════
+// Drop this into rabid-raccoon.pine
+// Provides: squeeze state + momentum for BHG GO confirmation + dataset features
+//
+// PLACEMENT: After EHLERS DBLsmooth StochRSI region, before MEASURED MOVE DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
+//#region === SQUEEZE MOMENTUM — RR Indicator ===
+
+// --- Inputs ---
+sqzBBLength      = input.int(20, "SQZ BB Length", minval=1, group="Squeeze Momentum")
+sqzBBMult        = input.float(2.0, "SQZ BB MultFactor", minval=0.1, step=0.1, group="Squeeze Momentum")
+sqzKCLength      = input.int(20, "SQZ KC Length", minval=1, group="Squeeze Momentum")
+sqzKCMult        = input.float(1.5, "SQZ KC MultFactor", minval=0.1, step=0.1, group="Squeeze Momentum")
+sqzUseTR         = input.bool(true, "SQZ Use TrueRange (KC)", group="Squeeze Momentum")
+
+// --- Bollinger Bands ---
+float sqzBasis   = ta.sma(close, sqzBBLength)
+float sqzDev     = sqzBBMult * ta.stdev(close, sqzBBLength)
+float sqzUpperBB = sqzBasis + sqzDev
+float sqzLowerBB = sqzBasis - sqzDev
+
+// --- Keltner Channels ---
+float sqzMA      = ta.sma(close, sqzKCLength)
+float sqzRange   = sqzUseTR ? ta.tr : (high - low)
+float sqzRangeMA = ta.sma(sqzRange, sqzKCLength)
+float sqzUpperKC = sqzMA + sqzRangeMA * sqzKCMult
+float sqzLowerKC = sqzMA - sqzRangeMA * sqzKCMult
+
+// --- Squeeze Detection ---
+bool  sqzOn      = (sqzLowerBB > sqzLowerKC) and (sqzUpperBB < sqzUpperKC)
+bool  sqzOff     = (sqzLowerBB < sqzLowerKC) and (sqzUpperBB > sqzUpperKC)
+bool  sqzNone    = not sqzOn and not sqzOff
+
+// --- Momentum Value ---
+float sqzMidline = math.avg(math.avg(ta.highest(high, sqzKCLength), ta.lowest(low, sqzKCLength)), ta.sma(close, sqzKCLength))
+float sqzVal     = ta.linreg(close - sqzMidline, sqzKCLength, 0)
+
+// --- Derived Signals ---
+bool  sqzMomPositive     = sqzVal > 0
+bool  sqzMomNegative     = sqzVal < 0
+bool  sqzMomAccelUp      = sqzVal > 0 and sqzVal > nz(sqzVal[1])   // Lime bars
+bool  sqzMomDecelUp      = sqzVal > 0 and sqzVal <= nz(sqzVal[1])  // Green bars
+bool  sqzMomAccelDown    = sqzVal < 0 and sqzVal < nz(sqzVal[1])   // Red bars
+bool  sqzMomDecelDown    = sqzVal < 0 and sqzVal >= nz(sqzVal[1])  // Maroon bars
+bool  sqzMomCrossUp      = ta.crossover(sqzVal, 0.0)               // Momentum flips positive
+bool  sqzMomCrossDown    = ta.crossunder(sqzVal, 0.0)              // Momentum flips negative
+float sqzMomSlope        = sqzVal - nz(sqzVal[1])
+
+// Squeeze just fired (was on, now off) — the breakout moment
+bool  sqzFired           = sqzOff and sqzOn[1]
+
+// --- State Classification (for dataset feature) ---
+// 0 = squeeze ON, momentum negative accelerating
+// 1 = squeeze ON, momentum negative decelerating
+// 2 = squeeze ON, momentum positive decelerating
+// 3 = squeeze ON, momentum positive accelerating
+// 4 = squeeze OFF, momentum negative accelerating
+// 5 = squeeze OFF, momentum negative decelerating
+// 6 = squeeze OFF, momentum positive decelerating
+// 7 = squeeze OFF, momentum positive accelerating  <-- best long setup
+int sqzState = sqzOn ?
+               (sqzMomAccelDown ? 0 : sqzMomDecelDown ? 1 : sqzMomDecelUp ? 2 : 3) :
+               (sqzMomAccelDown ? 4 : sqzMomDecelDown ? 5 : sqzMomDecelUp ? 6 : 7)
+
+//#endregion
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DATASET FEATURE REFERENCE
+// ═══════════════════════════════════════════════════════════════════════════════
+// For build-bhg-dataset.ts, extract these at GO time:
+//
+//   sqz_on           : bool   — sqzOn (BB inside KC, volatility coiling)
+//   sqz_off          : bool   — sqzOff (BB outside KC, momentum released)
+//   sqz_fired        : bool   — sqzFired (squeeze just broke, transition bar)
+//   sqz_val          : float  — sqzVal (momentum value, + = bullish, - = bearish)
+//   sqz_mom_slope    : float  — sqzMomSlope (acceleration of momentum)
+//   sqz_state        : int    — sqzState (0-7 categorical, see above)
+//   sqz_mom_cross_up : bool   — sqzMomCrossUp (momentum flipped positive)
+//   sqz_mom_cross_dn : bool   — sqzMomCrossDown (momentum flipped negative)
+//
+// HIGH-VALUE COMBOS:
+//   sqzFired + sqzMomAccelUp   = squeeze breakout with bullish acceleration
+//   sqzFired + sqzMomAccelDown = squeeze breakout with bearish acceleration
+//   sqzOn + edssIsOS           = coiling + oversold = spring loading for long
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BHG GO INTEGRATION EXAMPLE
+// ═══════════════════════════════════════════════════════════════════════════════
+// Combine with EDSS for two-layer momentum confirmation:
+//
+//   bool momentumConfirmsBull = edssRising and not edssIsOB     // EDSS curling up
+//                               and sqzMomPositive              // SQZ momentum positive
+//                               and not sqzOn                   // Not still coiling
+//
+//   bool momentumConfirmsBear = edssFalling and not edssIsOS
+//                               and sqzMomNegative
+//                               and not sqzOn
+//
+// SQUEEZE FIRE + BHG GO = highest conviction:
+//   If sqzFired is true on the same bar as BHG GO, the volatility compression
+//   is releasing in your direction. This is the "spring loaded catapult" setup.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OPTIONAL: OVERLAY DASHBOARD CELLS
+// ═══════════════════════════════════════════════════════════════════════════════
+// Add to debugTable in VISUALIZATION & PLOTTING:
+//
+//   table.cell(debugTable, 0, 14, "SQZ State", text_color=color.gray, text_size=size.small)
+//   string sqzStr = sqzOn ? "SQUEEZE" : sqzOff ? "FIRED" : "---"
+//   table.cell(debugTable, 1, 14, sqzStr,
+//              text_color=sqzOn ? color.yellow : sqzOff ? color.lime : color.gray,
+//              text_size=size.small)
+//   table.cell(debugTable, 0, 15, "SQZ Mom", text_color=color.gray, text_size=size.small)
+//   table.cell(debugTable, 1, 15, str.tostring(sqzVal, "#.##"),
+//              text_color=sqzMomAccelUp ? color.lime : sqzMomDecelUp ? color.green :
+//                         sqzMomAccelDown ? color.red : color.maroon,
+//              text_size=size.small)
+// ═══════════════════════════════════════════════════════════════════════════════

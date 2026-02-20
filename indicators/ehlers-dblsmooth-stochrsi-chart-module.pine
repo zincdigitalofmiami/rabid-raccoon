@@ -1,0 +1,98 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Ehlers DBLsmooth StochRSI — Chart Module
+// ═══════════════════════════════════════════════════════════════════════════════
+// Original concept: John Ehlers — "Cybernetic Analysis for Stocks and Futures"
+// Pine v3 implementation: LazyBear
+// Pine v6 conversion + enhancements: Kirk / ZINC Digital for Rabid Raccoon
+//
+// WHY THIS EXISTS:
+// Standard Stoch RSI = stochastic(RSI(price)) — stacks two lagging indicators.
+// Ehlers approach = stochastic(roofing_filter(price)) — uses DSP to isolate
+// the tradeable cycle FIRST, then measures position within that cycle.
+//
+// Roofing filter = highpass (removes trend > upper band) + super smoother
+// (removes noise < lower band). What remains is the swing-frequency signal.
+//
+// Super smoother = two-pole Butterworth — same noise reduction as EMA/SMA
+// but with approximately HALF the lag. Mathematically proven, not marketing.
+//
+// On 15m chart: isolates 2.5hr–12hr intraday swings
+// On 1H  chart: isolates 10hr–48hr cycles
+// On 4H  chart: isolates 2–8 day swing cycles
+// ═══════════════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("Ehlers DBLsmooth StochRSI — Chart Module", shorttitle="🦝 EDSS", overlay=false)
+
+// ── Inputs ──────────────────────────────────────────────────────────────────
+src              = input.source(close, title="Source")
+length           = input.int(14, title="Stoch Length", minval=2)
+lengthMA         = input.int(3, title="Signal MA Length", minval=1)
+overBought       = input.float(0.8, title="Overbought", minval=0.0, maxval=1.0, step=0.05)
+overSold         = input.float(0.2, title="Oversold", minval=0.0, maxval=1.0, step=0.05)
+roofingBandUpper = input.int(48, title="Roofing Band Upper", minval=2, tooltip="Highpass cutoff — removes cycles longer than this (bars). Default 48.")
+roofingBandLower = input.int(10, title="Roofing Band Lower", minval=2, tooltip="Smoother cutoff — removes cycles shorter than this (bars). Default 10.")
+applyDoubleSmoothing = input.bool(true, title="Apply Double Smoothing", tooltip="Applies roofing filter before stochastic. OFF = standard stochastic on raw price with Ehlers smoothing only.")
+
+// ── Constants ───────────────────────────────────────────────────────────────
+float PI = 3.14159265359
+
+// ── Ehlers Super Smoother Filter ────────────────────────────────────────────
+// Two-pole Butterworth — half the lag of equivalent EMA/SMA
+EhlersSuperSmootherFilter(float price, int lower) =>
+    float a1     = math.exp(-PI * math.sqrt(2.0) / lower)
+    float coeff2 = 2.0 * a1 * math.cos(math.sqrt(2.0) * PI / lower)
+    float coeff3 = -math.pow(a1, 2)
+    float coeff1 = 1.0 - coeff2 - coeff3
+    var float filt = 0.0
+    filt := coeff1 * (price + nz(price[1])) / 2.0 + coeff2 * nz(filt[1]) + coeff3 * nz(filt[2])
+    filt
+
+// ── Ehlers Roofing Filter ──────────────────────────────────────────────────
+// Highpass strips trend (cycles > upper), super smoother strips noise (cycles < lower)
+EhlersRoofingFilter(float price, bool smoothed, int upper, int lower) =>
+    float alpha1 = (math.cos(math.sqrt(2.0) * PI / upper) + math.sin(math.sqrt(2.0) * PI / upper) - 1.0) / math.cos(math.sqrt(2.0) * PI / upper)
+    var float highpass = 0.0
+    highpass := math.pow(1.0 - alpha1 / 2.0, 2) * (price - 2.0 * nz(price[1]) + nz(price[2])) +
+                2.0 * (1.0 - alpha1) * nz(highpass[1]) - math.pow(1.0 - alpha1, 2) * nz(highpass[2])
+    smoothed ? EhlersSuperSmootherFilter(highpass, lower) : highpass
+
+// ── Ehlers Stochastic ──────────────────────────────────────────────────────
+// Stochastic on roofing-filtered signal, not raw price
+EhlersStochastic(float price, int len, bool applySmoothing, int upper, int lower) =>
+    float filt     = EhlersRoofingFilter(price, applySmoothing, upper, lower)
+    float highestP = ta.highest(filt, len)
+    float lowestP  = ta.lowest(filt, len)
+    (highestP - lowestP) != 0 ? (filt - lowestP) / (highestP - lowestP) : 0.0
+
+// ── Compute ────────────────────────────────────────────────────────────────
+float rawStoch = EhlersStochastic(src, length, applyDoubleSmoothing, roofingBandUpper, roofingBandLower)
+float stoch    = EhlersSuperSmootherFilter(rawStoch, roofingBandLower)
+float signal   = ta.sma(stoch, lengthMA)
+
+// ── Derived Signals ────────────────────────────────────────────────────────
+bool bullCross   = ta.crossover(stoch, signal)
+bool bearCross   = ta.crossunder(stoch, signal)
+bool isOverbought = stoch > overBought
+bool isOversold   = stoch < overSold
+bool bullCurl    = bullCross and stoch[1] < overSold   // Cross up from oversold zone
+bool bearCurl    = bearCross and stoch[1] > overBought  // Cross down from overbought zone
+
+// Slope: positive = curling up, negative = curling down
+float stochSlope = stoch - stoch[1]
+
+// ── Visuals ────────────────────────────────────────────────────────────────
+hline(overBought, "Overbought", color=color.new(color.gray, 50), linestyle=hline.style_dashed)
+hline(overSold, "Oversold", color=color.new(color.gray, 50), linestyle=hline.style_dashed)
+hline((overBought + overSold) / 2.0, "Midline", color=color.new(color.gray, 70), linestyle=hline.style_dotted)
+
+// Stoch line — color shifts based on zone
+color stochColor = stoch > overBought ? color.new(color.red, 0) : stoch < overSold ? color.new(color.green, 0) : color.new(color.blue, 0)
+plot(stoch, "Stoch", color=stochColor, linewidth=2)
+plot(signal, "Signal", color=color.new(color.orange, 20), linewidth=1)
+
+// OB/OS zone shading
+bgcolor(isOverbought ? color.new(color.red, 92) : isOversold ? color.new(color.green, 92) : na)
+
+// Cross markers — only at extremes (the high-value signals)
+plotshape(bullCurl, "Bull Curl", shape.triangleup, location.bottom, color.new(color.lime, 0), size=size.tiny)
+plotshape(bearCurl, "Bear Curl", shape.triangledown, location.top, color.new(color.red, 0), size=size.tiny)

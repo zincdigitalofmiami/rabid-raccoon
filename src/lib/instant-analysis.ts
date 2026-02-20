@@ -12,7 +12,7 @@
 import OpenAI from 'openai'
 import { CandleData, FibLevel, SwingPoint, MeasuredMove } from './types'
 import { detectSwings } from './swing-detection'
-import { calculateFibonacci } from './fibonacci'
+import { calculateFibonacciMultiPeriod } from './fibonacci'
 import { detectMeasuredMoves } from './measured-move'
 
 interface AnalysisAiResponse {
@@ -110,23 +110,55 @@ function ema(data: number[], period: number): number | null {
   return v
 }
 
-function rsi(closes: number[], period = 14): number | null {
-  if (closes.length < period + 1) return null
-  let gains = 0, losses = 0
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1]
-    if (d > 0) gains += d; else losses -= d
+// rsi() + stochastic() removed — replaced by edss()
+// Ehlers DSP-based: roofing filter isolates tradeable cycles, super smoother halves lag
+
+const EDSS_PI_IA = Math.PI
+
+function edssSuperSmootherIA(price: number[], lower: number): number[] {
+  const a1 = Math.exp(-EDSS_PI_IA * Math.sqrt(2) / lower)
+  const c2 = 2 * a1 * Math.cos(Math.sqrt(2) * EDSS_PI_IA / lower)
+  const c3 = -Math.pow(a1, 2)
+  const c1 = 1 - c2 - c3
+  const out: number[] = new Array(price.length).fill(0)
+  for (let i = 0; i < price.length; i++) {
+    const p1 = i >= 1 ? price[i - 1] : price[i]
+    out[i] = c1 * (price[i] + p1) / 2 + c2 * (i >= 1 ? out[i - 1] : 0) + c3 * (i >= 2 ? out[i - 2] : 0)
   }
-  if (losses === 0) return 100
-  return 100 - 100 / (1 + (gains / period) / (losses / period))
+  return out
 }
 
-function stochastic(candles: CandleData[], k = 14): number | null {
-  if (candles.length < k) return null
-  const r = candles.slice(-k)
-  const hi = Math.max(...r.map(c => c.high))
-  const lo = Math.min(...r.map(c => c.low))
-  return hi === lo ? 50 : ((r[r.length - 1].close - lo) / (hi - lo)) * 100
+function edssRoofingFilterIA(price: number[], upper: number, lower: number): number[] {
+  const a = (Math.cos(Math.sqrt(2) * EDSS_PI_IA / upper) + Math.sin(Math.sqrt(2) * EDSS_PI_IA / upper) - 1)
+           / Math.cos(Math.sqrt(2) * EDSS_PI_IA / upper)
+  const hp: number[] = new Array(price.length).fill(0)
+  for (let i = 0; i < price.length; i++) {
+    const p1 = i >= 1 ? price[i - 1] : price[i]
+    const p2 = i >= 2 ? price[i - 2] : price[i]
+    hp[i] = Math.pow(1 - a / 2, 2) * (price[i] - 2 * p1 + p2)
+          + 2 * (1 - a) * (i >= 1 ? hp[i - 1] : 0)
+          - Math.pow(1 - a, 2) * (i >= 2 ? hp[i - 2] : 0)
+  }
+  return edssSuperSmootherIA(hp, lower)
+}
+
+// Returns EDSS value (0–1) for the last bar, or null if insufficient data
+function edss(candles: CandleData[], length = 14, roofUpper = 48, roofLower = 10): number | null {
+  const warmup = roofUpper + length
+  if (candles.length < warmup) return null
+  const closes = candles.map(c => c.close)
+  const filt = edssRoofingFilterIA(closes, roofUpper, roofLower)
+  const rawStoch: number[] = new Array(closes.length).fill(0)
+  for (let i = 0; i < closes.length; i++) {
+    const start = Math.max(0, i - length + 1)
+    const slice = filt.slice(start, i + 1)
+    const hi = Math.max(...slice), lo = Math.min(...slice)
+    // FIX: near-zero range = no cycle → neutral 0.5
+    rawStoch[i] = (hi - lo) > 1e-10 ? (filt[i] - lo) / (hi - lo) : 0.5
+  }
+  // FIX: clamp [0,1] — super smoother overshoots ~4%
+  const stoch = edssSuperSmootherIA(rawStoch, roofLower).map(v => Math.max(0, Math.min(1, v)))
+  return stoch[stoch.length - 1]
 }
 
 function williamsR(candles: CandleData[], period = 14): number | null {
@@ -229,20 +261,14 @@ export function computeSignals(candles: CandleData[]): SignalSummary {
   }
 
   // --- Oscillators ---
-  // RSI (3 signals)
-  for (const p of [7, 14, 21]) {
-    const v = rsi(closes, p)
+  // EDSS — Ehlers DBLsmooth Stochastic (replaces RSI + standard Stochastic)
+  // 3 signals: short (length=8), standard (length=14), slow (length=21)
+  for (const len of [8, 14, 21]) {
+    const v = edss(candles, len)
     if (v != null) {
-      const label = v > 70 ? 'overbought' : v < 30 ? 'oversold' : v > 50 ? 'bullish' : 'bearish'
-      check(`RSI(${p}) = ${v.toFixed(1)} [${label}]`, v > 70 ? false : v < 30 ? true : v > 50)
-    } else neutral++
-  }
-  // Stochastic (3 signals)
-  for (const p of [9, 14, 21]) {
-    const v = stochastic(candles, p)
-    if (v != null) {
-      const label = v > 80 ? 'overbought' : v < 20 ? 'oversold' : v > 50 ? 'bullish' : 'bearish'
-      check(`Stoch(${p}) = ${v.toFixed(1)} [${label}]`, v > 80 ? false : v < 20 ? true : v > 50)
+      const pct = (v * 100).toFixed(1)
+      const label = v > 0.8 ? 'overbought' : v < 0.2 ? 'oversold' : v > 0.5 ? 'bullish' : 'bearish'
+      check(`EDSS(${len}) = ${pct} [${label}]`, v > 0.8 ? false : v < 0.2 ? true : v > 0.5)
     } else neutral++
   }
   // Williams %R (2 signals)
@@ -277,21 +303,31 @@ export function computeSignals(candles: CandleData[]): SignalSummary {
   }
 
   // --- Trend ---
-  // MACD (2 signals)
-  const e12 = ema(closes, 12), e26 = ema(closes, 26)
-  if (e12 && e26) {
-    const macdLine = e12 - e26
-    check(`MACD line = ${macdLine.toFixed(2)} [${macdLine > 0 ? 'above' : 'below'} zero]`, macdLine > 0)
-    // MACD vs signal
-    const macdArr = closes.map((_, i) => {
-      const e12v = ema(closes.slice(0, i + 1), 12)
-      const e26v = ema(closes.slice(0, i + 1), 26)
-      return e12v && e26v ? e12v - e26v : 0
-    })
-    const sig = ema(macdArr, 9)
-    if (sig != null) check(`MACD ${macdLine > sig ? '>' : '<'} signal`, macdLine > sig)
-    else neutral++
-  } else { neutral += 2 }
+  // CM Ultimate MACD (ChrisMoody CM_MacD_Ult_MTF) — 3 signals
+  // fast=12, slow=26, signal=SMA-9. Histogram 4-color state.
+  if (closes.length >= 26 + 9) {
+    const macdArr: number[] = []
+    for (let i = 0; i < closes.length; i++) {
+      const f = ema(closes.slice(0, i + 1), 12)
+      const s = ema(closes.slice(0, i + 1), 26)
+      if (f != null && s != null) macdArr.push(f - s)
+    }
+    if (macdArr.length >= 9) {
+      const macdLine = macdArr[macdArr.length - 1]
+      const sigVal = macdArr.slice(-9).reduce((a, b) => a + b, 0) / 9
+      const hist = macdLine - sigVal
+      const histPrev = macdArr.length >= 2
+        ? macdArr[macdArr.length - 2] - (macdArr.slice(-10, -1).reduce((a, b) => a + b, 0) / 9)
+        : hist
+      const histRising = hist > histPrev
+      // Signal 1: MACD line vs zero
+      check(`CM-MACD line ${macdLine > 0 ? 'above' : 'below'} zero (${macdLine.toFixed(2)})`, macdLine > 0)
+      // Signal 2: MACD line vs signal line (color: lime=above, red=below)
+      check(`CM-MACD ${macdLine >= sigVal ? '>' : '<'} signal (${sigVal.toFixed(2)})`, macdLine >= sigVal)
+      // Signal 3: histogram direction (aqua/maroon=rising, blue/red=falling)
+      check(`CM-MACD hist ${histRising ? 'rising' : 'falling'} (${hist.toFixed(2)})`, histRising)
+    } else { neutral += 3 }
+  } else { neutral += 3 }
 
   // ATR expansion (1 signal)
   const a7 = atr(candles, 7), a14 = atr(candles, 14)
@@ -304,9 +340,9 @@ export function computeSignals(candles: CandleData[]): SignalSummary {
   else neutral++
 
   // --- Structure ---
-  // Fibonacci (2 signals)
+  // Fibonacci (2 signals) — multi-period confluence anchor (8,13,21,34,55)
   const { highs, lows } = detectSwings(candles, 5, 5, 20)
-  const fib = calculateFibonacci(highs, lows)
+  const fib = calculateFibonacciMultiPeriod(candles)
   if (fib) {
     check(`Fib structure [${fib.isBullish ? 'bullish' : 'bearish'}] (${fib.anchorLow.toFixed(2)} → ${fib.anchorHigh.toFixed(2)})`, fib.isBullish)
     const range = fib.anchorHigh - fib.anchorLow
@@ -1001,7 +1037,7 @@ function buildAnalysisCore(
 
   if (mesData && mesData.candles15m.length > 5) {
     const { highs: chHighs, lows: chLows } = detectSwings(mesData.candles15m, 5, 5, 20)
-    const chFib = calculateFibonacci(chHighs, chLows)
+    const chFib = calculateFibonacciMultiPeriod(mesData.candles15m)
     chartData = {
       candles: mesData.candles15m,
       fibLevels: chFib?.levels || [],

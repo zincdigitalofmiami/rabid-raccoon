@@ -137,7 +137,7 @@ const FRED_LAG_BY_COLUMN = new Map(
 
 // ─── CROSS-ASSET SYMBOLS — regime-aligned intermarket features ────────────
 // These are loaded from mkt_futures_1h (hourly, multi-symbol table).
-// 6 technicals per symbol × 8 symbols = 48 columns + 6 derived = 54 total.
+// 6 technicals per symbol × 6 symbols = 36 columns + 5 derived = 41 total.
 
 interface CrossAssetSymbol {
   code: string       // DB symbolCode
@@ -146,13 +146,11 @@ interface CrossAssetSymbol {
 
 const CROSS_ASSET_SYMBOLS: CrossAssetSymbol[] = [
   { code: 'NQ',  prefix: 'nq'  },  // tech beta / duration
-  { code: 'SOX', prefix: 'sox' },  // semiconductor leadership
   { code: 'ZN',  prefix: 'zn'  },  // 10Y rate impulse
   { code: 'CL',  prefix: 'cl'  },  // energy / AI power narrative
   { code: '6E',  prefix: 'e6'  },  // EUR/USD — USD liquidity (prefix avoids leading digit)
   { code: '6J',  prefix: 'j6'  },  // JPY/USD — carry unwind stress
   { code: 'NG',  prefix: 'ng'  },  // natural gas — AI data center power
-  { code: 'SR3', prefix: 'sr3' },  // 3-month SOFR — front-end policy shock
 ]
 
 // ─── TYPES ────────────────────────────────────────────────────────────────
@@ -184,12 +182,6 @@ interface EventSignalRow {
   actual: number
 }
 
-interface BhgOutcomeRow {
-  goTimeMs: number
-  direction: 'BULLISH' | 'BEARISH'
-  outcomeR: number
-}
-
 // ─── HELPERS ──────────────────────────────────────────────────────────────
 
 function pctChange(current: number, previous: number): number | null {
@@ -197,23 +189,54 @@ function pctChange(current: number, previous: number): number | null {
   return (current - previous) / Math.abs(previous)
 }
 
-function computeRSI(closes: number[], period: number): (number | null)[] {
-  const rsi: (number | null)[] = new Array(closes.length).fill(null)
-  if (closes.length < period + 1) return rsi
-  let avgGain = 0, avgLoss = 0
-  for (let i = 1; i <= period; i++) {
-    const change = closes[i] - closes[i - 1]
-    if (change > 0) avgGain += change; else avgLoss += Math.abs(change)
+// computeRSI removed — replaced by computeEDSS (Ehlers DSP-based)
+
+const EDSS_PI_LEAN = Math.PI
+
+function edssSuperSmootherLean(price: number[], lower: number): number[] {
+  const a1 = Math.exp(-EDSS_PI_LEAN * Math.sqrt(2) / lower)
+  const coeff2 = 2 * a1 * Math.cos(Math.sqrt(2) * EDSS_PI_LEAN / lower)
+  const coeff3 = -Math.pow(a1, 2)
+  const coeff1 = 1 - coeff2 - coeff3
+  const out: number[] = new Array(price.length).fill(0)
+  for (let i = 0; i < price.length; i++) {
+    const p1 = i >= 1 ? price[i - 1] : price[i]
+    const f1 = i >= 1 ? out[i - 1] : 0
+    const f2 = i >= 2 ? out[i - 2] : 0
+    out[i] = coeff1 * (price[i] + p1) / 2 + coeff2 * f1 + coeff3 * f2
   }
-  avgGain /= period; avgLoss /= period
-  rsi[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss)
-  for (let i = period + 1; i < closes.length; i++) {
-    const change = closes[i] - closes[i - 1]
-    avgGain = (avgGain * (period - 1) + (change > 0 ? change : 0)) / period
-    avgLoss = (avgLoss * (period - 1) + (change < 0 ? Math.abs(change) : 0)) / period
-    rsi[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss)
+  return out
+}
+
+function edssRoofingFilterLean(price: number[], upper: number, lower: number): number[] {
+  const alpha1 = (Math.cos(Math.sqrt(2) * EDSS_PI_LEAN / upper) + Math.sin(Math.sqrt(2) * EDSS_PI_LEAN / upper) - 1)
+                / Math.cos(Math.sqrt(2) * EDSS_PI_LEAN / upper)
+  const hp: number[] = new Array(price.length).fill(0)
+  for (let i = 0; i < price.length; i++) {
+    const p1 = i >= 1 ? price[i - 1] : price[i]
+    const p2 = i >= 2 ? price[i - 2] : price[i]
+    const h1 = i >= 1 ? hp[i - 1] : 0
+    const h2 = i >= 2 ? hp[i - 2] : 0
+    hp[i] = Math.pow(1 - alpha1 / 2, 2) * (price[i] - 2 * p1 + p2) + 2 * (1 - alpha1) * h1 - Math.pow(1 - alpha1, 2) * h2
   }
-  return rsi
+  return edssSuperSmootherLean(hp, lower)
+}
+
+function computeEDSSLean(closes: number[], length = 14, roofUpper = 48, roofLower = 10): (number | null)[] {
+  const warmup = roofUpper + length
+  const filt = edssRoofingFilterLean(closes, roofUpper, roofLower)
+  const rawStoch: number[] = new Array(closes.length).fill(0)
+  for (let i = 0; i < closes.length; i++) {
+    const start = Math.max(0, i - length + 1)
+    const slice = filt.slice(start, i + 1)
+    const hi = Math.max(...slice), lo = Math.min(...slice)
+    // FIX: near-zero range = no cycle detected → neutral 0.5, not 0
+    rawStoch[i] = (hi - lo) > 1e-10 ? (filt[i] - lo) / (hi - lo) : 0.5
+  }
+  // FIX: clamp to [0,1] — super smoother overshoots ~4%
+  const stoch = edssSuperSmootherLean(rawStoch, roofLower).map(v => Math.max(0, Math.min(1, v)))
+  // FIX: null-mask warmup bars
+  return stoch.map((v, i) => i < warmup ? null : v)
 }
 
 function rollingMean(values: number[], window: number): (number | null)[] {
@@ -234,6 +257,301 @@ function rollingStd(values: number[], window: number): (number | null)[] {
     let sumSq = 0
     for (let j = i - window + 1; j <= i; j++) sumSq += (values[j] - mean) ** 2
     result[i] = Math.sqrt(sumSq / window)
+  }
+  return result
+}
+
+// ─── SQUEEZE PRO ──────────────────────────────────────────────────────────
+// John Carter's Squeeze Pro: BB vs KC at 3 levels detects volatility compression.
+// Momentum oscillator: linreg(close - midline, length, 0) shows expansion direction.
+//
+// Squeeze states: 0=none, 1=wide(orange), 2=normal(red), 3=narrow(yellow), 4=fired(green)
+
+function computeSMA(values: number[], window: number): (number | null)[] {
+  const result: (number | null)[] = new Array(values.length).fill(null)
+  let sum = 0
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i]
+    if (i >= window) sum -= values[i - window]
+    if (i >= window - 1) result[i] = sum / window
+  }
+  return result
+}
+
+function rollingHighest(values: number[], window: number): (number | null)[] {
+  const result: (number | null)[] = new Array(values.length).fill(null)
+  for (let i = window - 1; i < values.length; i++) {
+    let max = -Infinity
+    for (let j = i - window + 1; j <= i; j++) { if (values[j] > max) max = values[j] }
+    result[i] = max
+  }
+  return result
+}
+
+function rollingLowest(values: number[], window: number): (number | null)[] {
+  const result: (number | null)[] = new Array(values.length).fill(null)
+  for (let i = window - 1; i < values.length; i++) {
+    let min = Infinity
+    for (let j = i - window + 1; j <= i; j++) { if (values[j] < min) min = values[j] }
+    result[i] = min
+  }
+  return result
+}
+
+function linreg(values: (number | null)[], window: number): (number | null)[] {
+  // Linear regression value (offset=0, i.e. endpoint) over rolling window
+  const result: (number | null)[] = new Array(values.length).fill(null)
+  for (let i = window - 1; i < values.length; i++) {
+    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, n = 0
+    for (let j = 0; j < window; j++) {
+      const v = values[i - window + 1 + j]
+      if (v == null) continue
+      sumX += j; sumY += v; sumXY += j * v; sumX2 += j * j; n++
+    }
+    if (n < window * 0.5) continue
+    const denom = n * sumX2 - sumX * sumX
+    if (Math.abs(denom) < 1e-15) continue
+    const slope = (n * sumXY - sumX * sumY) / denom
+    const intercept = (sumY - slope * sumX) / n
+    result[i] = intercept + slope * (window - 1) // value at endpoint
+  }
+  return result
+}
+
+interface SqueezeProResult {
+  mom: (number | null)[]      // momentum oscillator
+  state: (number | null)[]    // 0=none, 1=wide, 2=normal, 3=narrow, 4=fired
+}
+
+function computeSqueezePro(
+  closes: number[], highs: number[], lows: number[], length = 20
+): SqueezeProResult {
+  const n = closes.length
+  const ma = computeSMA(closes, length)
+
+  // True Range
+  const tr: number[] = new Array(n).fill(0)
+  for (let i = 0; i < n; i++) {
+    const prevClose = i > 0 ? closes[i - 1] : closes[i]
+    tr[i] = Math.max(highs[i] - lows[i], Math.abs(highs[i] - prevClose), Math.abs(lows[i] - prevClose))
+  }
+
+  // Bollinger Band deviation (population stdev)
+  const devBB: (number | null)[] = new Array(n).fill(null)
+  for (let i = length - 1; i < n; i++) {
+    const m = ma[i]!
+    let sumSq = 0
+    for (let j = i - length + 1; j <= i; j++) sumSq += (closes[j] - m) ** 2
+    devBB[i] = Math.sqrt(sumSq / length)
+  }
+
+  // Keltner deviation = SMA(TR, length)
+  const devKC = computeSMA(tr, length)
+
+  // Squeeze state
+  const state: (number | null)[] = new Array(n).fill(null)
+  for (let i = length - 1; i < n; i++) {
+    const m = ma[i]; const bb = devBB[i]; const kc = devKC[i]
+    if (m == null || bb == null || kc == null) continue
+
+    const upBB = m + bb * 2, lowBB = m - bb * 2
+    const upKCWide = m + kc * 2, lowKCWide = m - kc * 2
+    const upKCNorm = m + kc * 1.5, lowKCNorm = m - kc * 1.5
+    const upKCNarrow = m + kc, lowKCNarrow = m - kc
+
+    const sqzNarrow = lowBB >= lowKCNarrow && upBB <= upKCNarrow
+    const sqzNormal = lowBB >= lowKCNorm && upBB <= upKCNorm
+    const sqzWide = lowBB >= lowKCWide && upBB <= upKCWide
+    const fired = lowBB < lowKCWide && upBB > upKCWide
+
+    if (sqzNarrow) state[i] = 3        // max compression (yellow)
+    else if (sqzNormal) state[i] = 2   // normal compression (red)
+    else if (sqzWide) state[i] = 1     // light compression (orange)
+    else if (fired) state[i] = 4       // fired / expansion (green)
+    else state[i] = 0                  // no squeeze (blue)
+  }
+
+  // Momentum: linreg(close - avg(avg(highest(high,L), lowest(low,L)), sma(close,L)), L, 0)
+  const hh = rollingHighest(highs, length)
+  const ll = rollingLowest(lows, length)
+  const midline: (number | null)[] = new Array(n).fill(null)
+  for (let i = length - 1; i < n; i++) {
+    const h = hh[i]; const l = ll[i]; const m = ma[i]
+    if (h != null && l != null && m != null) {
+      midline[i] = ((h + l) / 2 + m) / 2
+    }
+  }
+  const delta: (number | null)[] = new Array(n).fill(null)
+  for (let i = 0; i < n; i++) {
+    if (midline[i] != null) delta[i] = closes[i] - midline[i]!
+  }
+  const mom = linreg(delta, length)
+
+  return { mom, state }
+}
+
+// ─── CM WILLIAMS VIX FIX ────────────────────────────────────────────────────
+// Synthetic VIX from price structure: ((highest(close,22) - low) / highest(close,22)) * 100
+// Fear spike when WVF >= upperBand or WVF >= rangeHigh
+
+interface WvfResult {
+  wvf: (number | null)[]         // raw Williams Vix Fix value
+  signal: (number | null)[]      // 1 = fear spike (above bands), 0 = normal
+  percentile: (number | null)[]  // wvf / rangeHigh — 0-1 scale of fear intensity
+}
+
+function computeWilliamsVixFix(
+  closes: number[], lows: number[],
+  pd = 22, bbl = 20, mult = 2.0, lb = 50, ph = 0.85
+): WvfResult {
+  const n = closes.length
+  const hc = rollingHighest(closes, pd)
+
+  // Raw WVF
+  const wvf: (number | null)[] = new Array(n).fill(null)
+  for (let i = pd - 1; i < n; i++) {
+    if (hc[i] != null && hc[i]! > 0) {
+      wvf[i] = ((hc[i]! - lows[i]) / hc[i]!) * 100
+    }
+  }
+
+  // BB on WVF
+  const wvfNums: number[] = wvf.map(v => v ?? 0)
+  const wvfMa = computeSMA(wvfNums, bbl)
+  const wvfStd: (number | null)[] = new Array(n).fill(null)
+  for (let i = bbl - 1; i < n; i++) {
+    if (wvfMa[i] == null) continue
+    let sumSq = 0
+    for (let j = i - bbl + 1; j <= i; j++) sumSq += (wvfNums[j] - wvfMa[i]!) ** 2
+    wvfStd[i] = Math.sqrt(sumSq / bbl)
+  }
+
+  // Range percentile
+  const wvfHighest = rollingHighest(wvfNums, lb)
+
+  const signal: (number | null)[] = new Array(n).fill(null)
+  const percentile: (number | null)[] = new Array(n).fill(null)
+
+  for (let i = Math.max(pd, bbl, lb) - 1; i < n; i++) {
+    if (wvf[i] == null) continue
+    const upperBand = wvfMa[i] != null && wvfStd[i] != null ? wvfMa[i]! + mult * wvfStd[i]! : null
+    const rangeHigh = wvfHighest[i] != null ? wvfHighest[i]! * ph : null
+
+    const isSignal = (upperBand != null && wvf[i]! >= upperBand) ||
+                     (rangeHigh != null && wvf[i]! >= rangeHigh)
+    signal[i] = isSignal ? 1 : 0
+
+    if (rangeHigh != null && rangeHigh > 0) {
+      percentile[i] = Math.min(wvf[i]! / rangeHigh, 2.0) // cap at 2x
+    }
+  }
+
+  return { wvf, signal, percentile }
+}
+
+// ─── CM ULTIMATE MACD (vectorized) ──────────────────────────────────────────
+// Port of ChrisMoody CM_MacD_Ult_MTF — vectorized for full array
+// fast=12, slow=26, signal=9 (SMA of MACD line)
+// Histogram 4-color: 0=aqua(rise+pos), 1=blue(fall+pos), 2=red(fall+neg), 3=maroon(rise+neg)
+
+interface CmMacdArrayResult {
+  line: (number | null)[]
+  signal: (number | null)[]
+  hist: (number | null)[]
+  histColor: (number | null)[]
+  aboveSignal: (number | null)[]
+  histRising: (number | null)[]
+}
+
+function computeCmMacdVectorized(
+  closes: number[],
+  fastLength = 12,
+  slowLength = 26,
+  signalLength = 9,
+): CmMacdArrayResult {
+  const n = closes.length
+  const warmup = slowLength + signalLength - 1
+  const line: (number | null)[] = new Array(n).fill(null)
+  const sig: (number | null)[] = new Array(n).fill(null)
+  const hist: (number | null)[] = new Array(n).fill(null)
+  const histColor: (number | null)[] = new Array(n).fill(null)
+  const aboveSignal: (number | null)[] = new Array(n).fill(null)
+  const histRising: (number | null)[] = new Array(n).fill(null)
+
+  // EMA arrays
+  const fastEma: number[] = new Array(n).fill(0)
+  const slowEma: number[] = new Array(n).fill(0)
+  const fastMult = 2 / (fastLength + 1)
+  const slowMult = 2 / (slowLength + 1)
+
+  fastEma[0] = closes[0]
+  slowEma[0] = closes[0]
+  for (let i = 1; i < n; i++) {
+    fastEma[i] = (closes[i] - fastEma[i - 1]) * fastMult + fastEma[i - 1]
+    slowEma[i] = (closes[i] - slowEma[i - 1]) * slowMult + slowEma[i - 1]
+  }
+
+  // MACD line = fast - slow
+  const macdLine: number[] = new Array(n).fill(0)
+  for (let i = 0; i < n; i++) macdLine[i] = fastEma[i] - slowEma[i]
+
+  // Signal = SMA of MACD line
+  const signalArr: number[] = new Array(n).fill(0)
+  let sigSum = 0
+  for (let i = 0; i < n; i++) {
+    sigSum += macdLine[i]
+    if (i >= signalLength) sigSum -= macdLine[i - signalLength]
+    if (i >= signalLength - 1) signalArr[i] = sigSum / signalLength
+  }
+
+  // Populate output arrays
+  for (let i = warmup; i < n; i++) {
+    const l = macdLine[i]
+    const s = signalArr[i]
+    const h = l - s
+    const hPrev = i > warmup ? macdLine[i - 1] - signalArr[i - 1] : h
+
+    line[i] = l
+    sig[i] = s
+    hist[i] = h
+    aboveSignal[i] = l >= s ? 1 : 0
+    histRising[i] = h > hPrev ? 1 : 0
+
+    const rising = h > hPrev
+    if (h > 0) histColor[i] = rising ? 0 : 1      // aqua : blue
+    else histColor[i] = !rising ? 2 : 3            // red : maroon
+  }
+
+  return { line, signal: sig, hist, histColor, aboveSignal, histRising }
+}
+
+// ─── ROLLING PEARSON CORRELATION (vectorized) ───────────────────────────────
+
+function rollingPearsonCorr(
+  xs: (number | null)[],
+  ys: (number | null)[],
+  window: number,
+  minPairs = 10,
+): (number | null)[] {
+  const n = xs.length
+  const result: (number | null)[] = new Array(n).fill(null)
+  for (let i = window - 1; i < n; i++) {
+    const xVals: number[] = []
+    const yVals: number[] = []
+    for (let j = i - window + 1; j <= i; j++) {
+      if (xs[j] != null && ys[j] != null) { xVals.push(xs[j]!); yVals.push(ys[j]!) }
+    }
+    if (xVals.length < minPairs) continue
+    const meanX = xVals.reduce((a, b) => a + b, 0) / xVals.length
+    const meanY = yVals.reduce((a, b) => a + b, 0) / yVals.length
+    let cov = 0, varX = 0, varY = 0
+    for (let k = 0; k < xVals.length; k++) {
+      cov += (xVals[k] - meanX) * (yVals[k] - meanY)
+      varX += (xVals[k] - meanX) ** 2
+      varY += (yVals[k] - meanY) ** 2
+    }
+    const denom = Math.sqrt(varX * varY)
+    result[i] = denom > 0 ? cov / denom : null
   }
   return result
 }
@@ -406,18 +724,6 @@ function countInTimeRange(sortedTimes: readonly number[], startInclusive: number
   return Math.max(0, endIdx - startIdx)
 }
 
-function rollingWinRate(points: readonly BhgOutcomeRow[]): number | null {
-  if (points.length === 0) return null
-  const wins = points.filter((point) => point.outcomeR > 0).length
-  return wins / points.length
-}
-
-function rollingAvgOutcome(points: readonly BhgOutcomeRow[]): number | null {
-  if (points.length === 0) return null
-  const sum = points.reduce((acc, point) => acc + point.outcomeR, 0)
-  return sum / points.length
-}
-
 // ─── MAIN ─────────────────────────────────────────────────────────────────
 
 async function run(): Promise<void> {
@@ -520,15 +826,17 @@ async function run(): Promise<void> {
     crossAssetAligned.set(sym.code, alignCrossAssetBars(candles.map(c => c.eventTime), closeMap))
   }
 
-  // Also align volumes for vol_ratio
+  // Align volumes — NO forward-fill (stale volume is misleading)
   const crossAssetVolAligned = new Map<string, (number | null)[]>()
   for (const sym of CROSS_ASSET_SYMBOLS) {
     const barMap = crossAssetBars.get(sym.code)!
-    const volMap = new Map<string, number>()
-    for (const [key, bar] of barMap) {
-      if (bar.volume != null) volMap.set(key, Number(bar.volume))
+    const volResult: (number | null)[] = new Array(candles.length).fill(null)
+    for (let j = 0; j < candles.length; j++) {
+      const key = candles[j].eventTime.toISOString()
+      const bar = barMap.get(key)
+      if (bar && bar.volume != null) volResult[j] = Number(bar.volume)
     }
-    crossAssetVolAligned.set(sym.code, alignCrossAssetBars(candles.map(c => c.eventTime), volMap))
+    crossAssetVolAligned.set(sym.code, volResult)
   }
 
   console.log(`[lean-dataset] Cross-asset bars aligned to MES timeline`)
@@ -630,64 +938,88 @@ async function run(): Promise<void> {
   }
   console.log(`  Calendar events: ${calendarEvents.length} rows, ${calendarLookup.size} unique dates`)
 
-  // ── 4. Load news_signals for 7d layer/category features ──
-  console.log('[lean-dataset] Loading news_signals for trailing regime counts...')
-  const newsSignals = await prisma.newsSignal.findMany({
-    where: { pubDate: { gte: new Date(start.getTime() - 45 * MS_PER_DAY) } },
-    select: { pubDate: true, layer: true, category: true },
-    orderBy: { pubDate: 'asc' },
+  // ── 4. Load news from historical tables for 7d rolling features ──
+  // Uses econ_calendar (2020+), econ_news_1d (2020+), policy_news_1d (2024+)
+  // instead of news_signals (which only has last few days from Google News RSS)
+  console.log('[lean-dataset] Loading econ_calendar + econ_news_1d + policy_news_1d for trailing counts...')
+
+  const newsLookbackMs = 45 * MS_PER_DAY
+  const newsStartDate = new Date(start.getTime() - newsLookbackMs)
+
+  // econ_calendar: structured events with eventType + impactRating
+  const calendarNewsRows = await prisma.econCalendar.findMany({
+    where: { eventDate: { gte: newsStartDate } },
+    select: { eventDate: true, eventType: true, impactRating: true },
+    orderBy: { eventDate: 'asc' },
   })
 
-  const tariffCountsByDate = new Map<string, number>()
-  const selloffCountsByDate = new Map<string, number>()
-  const rallyCountsByDate = new Map<string, number>()
+  // econ_news_1d: economic news articles (FRED blog, BEA, EIA)
+  const econNewsRows = await prisma.econNews1d.findMany({
+    where: { eventDate: { gte: newsStartDate } },
+    select: { eventDate: true },
+    orderBy: { eventDate: 'asc' },
+  })
 
-  for (const signal of newsSignals) {
-    const dateKey = dateKeyUtc(signal.pubDate)
-    const layer = signal.layer.toLowerCase()
-    const category = signal.category.toLowerCase()
+  // policy_news_1d: regulatory/policy news (Fed, SEC, ECB, CFTC, White House)
+  const policyNewsRows = await prisma.policyNews1d.findMany({
+    where: { eventDate: { gte: newsStartDate } },
+    select: { eventDate: true },
+    orderBy: { eventDate: 'asc' },
+  })
 
-    if (layer.includes('tariff') || category.includes('tariff')) incrementCount(tariffCountsByDate, dateKey)
-    if (layer.includes('selloff') || category.includes('selloff')) incrementCount(selloffCountsByDate, dateKey)
-    if (layer.includes('rally') || category.includes('rally')) incrementCount(rallyCountsByDate, dateKey)
+  // Build date-count maps from real historical tables
+  const calEventsTotalByDate = new Map<string, number>()
+  const calEventsHighByDate = new Map<string, number>()
+  const calRateEventsByDate = new Map<string, number>()
+  const calInflationEventsByDate = new Map<string, number>()
+  const calEmploymentEventsByDate = new Map<string, number>()
+
+  for (const row of calendarNewsRows) {
+    const dateKey = dateKeyUtc(row.eventDate)
+    const eventType = (row.eventType ?? '').toLowerCase()
+    const impact = (row.impactRating ?? '').toLowerCase()
+
+    incrementCount(calEventsTotalByDate, dateKey)
+    if (impact === 'high') incrementCount(calEventsHighByDate, dateKey)
+    if (eventType === 'rates' || eventType === 'rate_decision') incrementCount(calRateEventsByDate, dateKey)
+    if (eventType === 'inflation') incrementCount(calInflationEventsByDate, dateKey)
+    if (eventType === 'employment') incrementCount(calEmploymentEventsByDate, dateKey)
   }
-  console.log(`  News signals: ${newsSignals.length} rows`)
 
-  // ── 5. Load BHG outcomes for rolling setup-quality features ──
-  console.log('[lean-dataset] Loading bhg_setups for rolling performance features...')
+  const econNewsVolumeByDate = new Map<string, number>()
+  for (const row of econNewsRows) {
+    incrementCount(econNewsVolumeByDate, dateKeyUtc(row.eventDate))
+  }
+
+  const policyNewsVolumeByDate = new Map<string, number>()
+  for (const row of policyNewsRows) {
+    incrementCount(policyNewsVolumeByDate, dateKeyUtc(row.eventDate))
+  }
+
+  // Combined total
+  const newsTotalVolumeByDate = new Map<string, number>()
+  for (const [k, v] of econNewsVolumeByDate) newsTotalVolumeByDate.set(k, (newsTotalVolumeByDate.get(k) ?? 0) + v)
+  for (const [k, v] of policyNewsVolumeByDate) newsTotalVolumeByDate.set(k, (newsTotalVolumeByDate.get(k) ?? 0) + v)
+
+  console.log(`  Calendar events: ${calendarNewsRows.length} rows (${calEventsTotalByDate.size} dates, ${calEventsHighByDate.size} with high-impact)`)
+  console.log(`  Econ news:       ${econNewsRows.length} rows (${econNewsVolumeByDate.size} dates)`)
+  console.log(`  Policy news:     ${policyNewsRows.length} rows (${policyNewsVolumeByDate.size} dates)`)
+  console.log(`  Combined news:   ${newsTotalVolumeByDate.size} unique dates`)
+
+  // ── 5. Load BHG setup timestamps for rolling setup-count features ──
+  console.log('[lean-dataset] Loading bhg_setups for rolling setup-count features...')
   const bhgRows = await prisma.bhgSetup.findMany({
     where: { goTime: { gte: new Date(start.getTime() - 400 * MS_PER_DAY) } },
-    select: {
-      goTime: true,
-      direction: true,
-      tp1Hit: true,
-      tp2Hit: true,
-      slHit: true,
-    },
+    select: { goTime: true },
     orderBy: { goTime: 'asc' },
   })
 
   const bhgAllGoTimesMs: number[] = []
-  const bhgResolvedRows: BhgOutcomeRow[] = []
   for (const row of bhgRows) {
     if (!row.goTime) continue
-    const goTimeMs = row.goTime.getTime()
-    bhgAllGoTimesMs.push(goTimeMs)
-
-    let outcomeR: number | null = null
-    if (row.tp2Hit === true) outcomeR = 2
-    else if (row.tp1Hit === true) outcomeR = 1
-    else if (row.slHit === true) outcomeR = -1
-
-    if (outcomeR != null) {
-      bhgResolvedRows.push({
-        goTimeMs,
-        direction: row.direction,
-        outcomeR,
-      })
-    }
+    bhgAllGoTimesMs.push(row.goTime.getTime())
   }
-  console.log(`  BHG setups: ${bhgRows.length} total, ${bhgResolvedRows.length} with resolved outcomes`)
+  console.log(`  BHG setups: ${bhgRows.length} total`)
 
   // ── 6. Build FRED arrays for velocity/momentum/percentile features ──
   console.log('[lean-dataset] Building FRED arrays for derived features...')
@@ -702,10 +1034,21 @@ async function run(): Promise<void> {
   const vixArr = buildArr('fred_vix')
   const y10yArr = buildArr('fred_y10y')
   const y2yArr = buildArr('fred_y2y')
+  const y30yArr = buildArr('fred_y30y')
   const dxyArr = buildArr('fred_dxy')
   const hyOasArr = buildArr('fred_hy_oas')
+  const igOasArr = buildArr('fred_ig_oas')
+  const eurusdArr = buildArr('fred_eurusd')
+  const jpyusdArr = buildArr('fred_jpyusd')
+  const wtiArr = buildArr('fred_wti')
+  const copperArr = buildArr('fred_copper')
+  const fedAssetsArr = buildArr('fred_fed_assets')
+  const rrpArr = buildArr('fred_rrp')
+  const claimsArr = buildArr('fred_claims')
+  const tips10yArr = buildArr('fred_tips10y')
+  const sofrArr = buildArr('fred_sofr')
 
-  console.log('[lean-dataset] Built 5 FRED arrays for velocity/percentile features')
+  console.log('[lean-dataset] Built 16 FRED arrays for velocity/stationary features')
 
   // ── 7. Precompute MES technical indicators ──
   console.log('[lean-dataset] Computing technical indicators...')
@@ -713,8 +1056,7 @@ async function run(): Promise<void> {
   const closes = candles.map((c) => c.close)
   const volumes = candles.map((c) => Number(c.volume ?? 0))
 
-  const rsi14 = computeRSI(closes, 14)
-  const rsi2 = computeRSI(closes, 2)
+  const edss14 = computeEDSSLean(closes)
   const ma8 = rollingMean(closes, 8)
   const ma24 = rollingMean(closes, 24)
   const ma120 = rollingMean(closes, 120)
@@ -725,13 +1067,22 @@ async function run(): Promise<void> {
   const { min: lo120, max: hi120 } = rollingMinMax(closes, 120)
   const volMa24 = rollingMean(volumes, 24)
 
+  // ── 7a. Squeeze Pro + Williams Vix Fix ──
+  console.log('[lean-dataset] Computing Squeeze Pro & Williams Vix Fix...')
+  const highs = candles.map(c => c.high)
+  const lows = candles.map(c => c.low)
+  const sqz = computeSqueezePro(closes, highs, lows, 20)
+  const wvf = computeWilliamsVixFix(closes, lows)
+  console.log(`  Squeeze Pro: ${sqz.mom.filter(v => v != null).length} bars with momentum`)
+  console.log(`  WVF: ${wvf.wvf.filter(v => v != null).length} bars, ${wvf.signal.filter(v => v === 1).length} fear spikes`)
+
   // ── 7b. Precompute cross-asset technical indicators ──
   // For each symbol: ret_1h, ret_4h, ret_24h, rsi14, dist_ma24, vol_ratio
   interface CrossAssetTechnicals {
     ret1h: (number | null)[]
     ret4h: (number | null)[]
     ret24h: (number | null)[]
-    rsi14: (number | null)[]
+    edss14: (number | null)[]
     distMa24: (number | null)[]
     volRatio: (number | null)[]
   }
@@ -749,9 +1100,17 @@ async function run(): Promise<void> {
       else filledCloses.push(lastClose)
     }
 
-    const symRsi14 = computeRSI(filledCloses, 14)
+    const symRsi14 = computeEDSSLean(filledCloses)
     const symMa24 = rollingMean(filledCloses, 24)
-    const symVolMa24 = rollingMean(symVols.map(v => v ?? 0), 24)
+    // Null-aware volume MA: only average non-null bars, require at least 12/24
+    const symVolMa24: (number | null)[] = new Array(symVols.length).fill(null)
+    for (let j = 23; j < symVols.length; j++) {
+      let sum = 0, cnt = 0
+      for (let k = j - 23; k <= j; k++) {
+        if (symVols[k] != null) { sum += symVols[k]!; cnt++ }
+      }
+      symVolMa24[j] = cnt >= 12 ? sum / cnt : null
+    }
 
     const ret1h: (number | null)[] = []
     const ret4h: (number | null)[] = []
@@ -774,8 +1133,8 @@ async function run(): Promise<void> {
       distMa24.push(cur != null && ma != null && ma !== 0 ? (cur - ma) / ma : null)
       volRatio.push(vol != null && volMa != null && volMa > 0 ? vol / volMa : null)
 
-      // Mask RSI/distMa if underlying close was null (no bar)
-      if (symCloses[i] == null) {
+      // Mask EDSS if underlying close was null (no bar) or previous was null (gap recovery)
+      if (symCloses[i] == null || (i >= 1 && symCloses[i - 1] == null)) {
         symRsi14[i] = null
       }
     }
@@ -784,7 +1143,7 @@ async function run(): Promise<void> {
       ret1h,
       ret4h,
       ret24h,
-      rsi14: symRsi14,
+      edss14: symRsi14,
       distMa24,
       volRatio,
     })
@@ -792,72 +1151,162 @@ async function run(): Promise<void> {
 
   console.log(`[lean-dataset] Cross-asset technicals computed for ${CROSS_ASSET_SYMBOLS.length} symbols`)
 
+  // ── 7c. CM Ultimate MACD ──
+  console.log('[lean-dataset] Computing CM Ultimate MACD...')
+  const macd = computeCmMacdVectorized(closes, 12, 26, 9)
+  console.log(`  MACD: ${macd.line.filter(v => v != null).length} bars with values`)
+
+  // ── 7d. Cross-asset rolling correlations ──
+  console.log('[lean-dataset] Computing cross-asset rolling correlations...')
+  // MES 1h returns for correlation computation
+  const mesRet1hArr: (number | null)[] = candles.map((c, i) =>
+    i >= 1 && candles[i - 1].close !== 0
+      ? (c.close - candles[i - 1].close) / Math.abs(candles[i - 1].close)
+      : null
+  )
+  const CORR_WINDOW = 21
+  const mesNqCorr = rollingPearsonCorr(mesRet1hArr, crossAssetTech.get('NQ')!.ret1h, CORR_WINDOW)
+  const mesClCorr = rollingPearsonCorr(mesRet1hArr, crossAssetTech.get('CL')!.ret1h, CORR_WINDOW)
+  const mesE6Corr = rollingPearsonCorr(mesRet1hArr, crossAssetTech.get('6E')!.ret1h, CORR_WINDOW)
+  const mesZnCorr = rollingPearsonCorr(mesRet1hArr, crossAssetTech.get('ZN')!.ret1h, CORR_WINDOW)
+  console.log(`  Correlations: MES-NQ ${mesNqCorr.filter(v => v != null).length}, MES-CL ${mesClCorr.filter(v => v != null).length}, MES-6E ${mesE6Corr.filter(v => v != null).length}, MES-ZN ${mesZnCorr.filter(v => v != null).length}`)
+
+  // ── 7e. Vol acceleration features ──
+  console.log('[lean-dataset] Computing vol acceleration features...')
+  // vol_of_vol: rolling std of std24 over 24 bars (NaN-aware, no zero-fill)
+  // rollingStd requires number[], so filter nulls within window manually
+  const volOfVol: (number | null)[] = new Array(candles.length).fill(null)
+  for (let i = 47; i < candles.length; i++) {  // need 24 bars of std24, std24 needs 24 bars warmup
+    const vals: number[] = []
+    for (let j = i - 23; j <= i; j++) {
+      if (std24[j] != null) vals.push(std24[j]!)
+    }
+    if (vals.length < 12) continue  // need at least half the window
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length
+    const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length
+    volOfVol[i] = Math.sqrt(variance)
+  }
+  console.log(`  Vol-of-vol: ${volOfVol.filter(v => v != null).length} bars`)
+
   // ── 8. Assemble feature matrix ──
   console.log('[lean-dataset] Assembling lean feature matrix...')
 
   // Forward target horizons depend on timeframe
   const targetHorizons = timeframe === '15m'
     ? { '15m': 1, '1h': 4, '4h': 16 }
-    : { '1h': 1, '4h': 4, '8h': 8, '24h': 24, '1w': 168 }
+    : { '1h': 1, '4h': 4 }
   const targetCols = Object.keys(targetHorizons).map(h => `target_ret_${h}`)
+  // Directional classification targets (1=up, 0=down/flat)
+  const targetDirCols = Object.keys(targetHorizons).map(h => `target_dir_${h}`)
+  // Vol-normalized return targets (ret / rolling_std24)
+  const targetNormCols = Object.keys(targetHorizons).map(h => `target_ret_norm_${h}`)
 
   const header: string[] = [
     'item_id', 'timestamp', 'target',
     ...targetCols,
+    ...targetDirCols,
+    ...targetNormCols,
     // Time features (5)
     'hour_utc', 'day_of_week', 'is_us_session', 'is_asia_session', 'is_europe_session',
-    // MES technicals (22)
+    // MES technicals (19) — NO raw price levels (ma8/24/120 removed, dist_ma stays)
     'mes_ret_1h', 'mes_ret_4h', 'mes_ret_8h', 'mes_ret_24h',
     'mes_range', 'mes_body_ratio',
-    'mes_rsi14', 'mes_rsi2',
-    'mes_ma8', 'mes_ma24', 'mes_ma120',
+    'mes_edss',
     'mes_dist_ma8', 'mes_dist_ma24', 'mes_dist_ma120',
     'mes_std8', 'mes_std24', 'mes_std120',
     'mes_dist_hi24', 'mes_dist_lo24', 'mes_dist_hi120', 'mes_dist_lo120',
     'mes_vol_ratio',
-    // Lean FRED raw (19)
-    ...FRED_FEATURES.map((f) => f.column),
-    // Derived — macro context (4)
+    // Squeeze Pro (5) — volatility compression → expansion
+    'sqz_mom',             // momentum oscillator (linreg of price - midline)
+    'sqz_mom_rising',      // 1 if momentum increasing, 0 if decreasing
+    'sqz_mom_positive',    // 1 if momentum > 0
+    'sqz_state',           // 0=none, 1=wide, 2=normal, 3=narrow, 4=fired
+    'sqz_bars_in_squeeze', // consecutive bars in any squeeze state (1/2/3)
+    // Williams Vix Fix (3) — synthetic VIX from price structure
+    'wvf_value',           // raw WVF (higher = more fear)
+    'wvf_signal',          // 1 = fear spike (above BB or percentile), 0 = normal
+    'wvf_percentile',      // wvf / rangeHigh — fear intensity (0-2 scale)
+    // CM Ultimate MACD (6) — ChrisMoody momentum
+    'macd_line',           // fast EMA - slow EMA
+    'macd_signal',         // SMA-9 of MACD line
+    'macd_hist',           // line - signal (histogram)
+    'macd_hist_color',     // 0=aqua 1=blue 2=red 3=maroon
+    'macd_above_signal',   // 1 if line >= signal
+    'macd_hist_rising',    // 1 if histogram increasing
+    // Vol acceleration (3) — volatility regime features
+    'vol_accel',           // std8 / std8[t-8] — vol acceleration (>1 = increasing)
+    'vol_regime',          // std24 / std120 — short vs long-term vol
+    'vol_of_vol',          // rolling std of std24 — volatility of volatility
+    // FRED stationary (NO raw levels — all changes, diffs, ratios, z-scores)
+    // Macro context — cross-sectional spreads (4)
     'yield_curve_slope', 'credit_spread_diff', 'real_rate_10y', 'fed_liquidity',
-    // Derived — velocity/regime (6)
-    'fed_midpoint', 'vix_percentile_20d', 'vix_1d_change',
+    // Macro context — levels that are mean-reverting / bounded (2)
+    'fed_midpoint',        // fed funds target midpoint (bounded by policy)
+    'fred_vix',            // VIX is mean-reverting by construction
+    // Macro velocity — 1d changes (8)
+    'vix_1d_change',       // VIX point change
+    'y2y_1d_change',       // 2Y yield change
+    'y10y_1d_change',      // 10Y yield change
+    'y30y_1d_change',      // 30Y yield change
+    'sofr_1d_change',      // SOFR rate change
+    'ig_oas_1d_change',    // IG credit spread change
+    'hy_oas_1d_change',    // HY credit spread change
+    'tips10y_1d_change',   // TIPS 10Y change
+    // Macro velocity — 5d momentum (6)
     'dgs10_velocity_5d', 'dollar_momentum_5d', 'hy_spread_momentum_5d',
+    'eurusd_momentum_5d', 'jpyusd_momentum_5d', 'wti_momentum_5d',
+    // Macro regime — percentiles (2)
+    'vix_percentile_20d',
+    'claims_percentile_20d',
+    // Macro flow — changes (3)
+    'fed_assets_change_1w', // weekly fed balance sheet change (billions)
+    'rrp_change_1d',        // daily reverse repo change
+    'claims_change_1w',     // weekly jobless claims change
     // Calendar + event timing (6)
     'is_fomc_day', 'is_high_impact_day', 'is_cpi_day', 'is_nfp_day',
     'events_this_week_count', 'hours_to_next_high_impact',
     // Release signal proxies (7) — z-scored release deltas from econ_calendar actuals
     'nfp_release_z', 'cpi_release_z', 'retail_sales_release_z', 'ppi_release_z',
     'gdp_release_z', 'claims_release_z', 'econ_surprise_index',
-    // News layer regime (4)
-    'tariff_count_7d', 'selloff_count_7d', 'rally_count_7d', 'net_sentiment_7d',
-    // BHG rolling quality feedback (9)
-    'bhg_win_rate_last20', 'bhg_win_rate_last50', 'bhg_avg_outcome_r_last20',
-    'bhg_consecutive_wins', 'bhg_consecutive_losses',
+    // News/event regime (8) — from econ_calendar + econ_news_1d + policy_news_1d
+    'cal_events_total_7d',      // total scheduled econ events
+    'cal_events_high_7d',       // high-impact events only
+    'cal_rate_events_7d',       // rates + rate_decision events
+    'cal_inflation_events_7d',  // inflation events
+    'cal_employment_events_7d', // employment events
+    'econ_news_volume_7d',      // econ news articles (FRED blog, BEA, EIA)
+    'policy_news_volume_7d',    // policy/regulatory news (Fed, SEC, ECB, CFTC)
+    'news_total_volume_7d',     // combined econ + policy news
+    // BHG rolling setup counts (2)
     'bhg_setups_count_7d', 'bhg_setups_count_30d',
-    'bhg_bull_win_rate_20', 'bhg_bear_win_rate_20',
-    // Cross-asset technicals (8 symbols × 6 = 48)
+    // Cross-asset technicals (6 symbols × 6 = 36)
     ...CROSS_ASSET_SYMBOLS.flatMap(sym => [
       `${sym.prefix}_ret_1h`,
       `${sym.prefix}_ret_4h`,
       `${sym.prefix}_ret_24h`,
-      `${sym.prefix}_rsi14`,
+      `${sym.prefix}_edss`,
       `${sym.prefix}_dist_ma24`,
       `${sym.prefix}_vol_ratio`,
     ]),
-    // Derived regime features (6)
-    'sox_minus_nq',        // semis vs tech spread
+    // Derived regime features (5)
     'nq_minus_mes',        // tech premium vs broad market
     'yield_proxy',         // -ret(ZN) — rate impulse direction
     'usd_shock',           // -ret(6E) — dollar liquidity
     'carry_stress',        // abs(ret(6J)) — carry unwind magnitude
     'mes_zn_corr_21d',     // rolling 21-day MES vs ZN correlation
+    // Cross-asset correlations + concordance (6)
+    'mes_nq_corr_21d',    // MES vs NQ rolling correlation
+    'mes_cl_corr_21d',    // MES vs CL rolling correlation
+    'mes_e6_corr_21d',    // MES vs 6E rolling correlation
+    'concordance_1h',     // count of cross-asset symbols with same-sign ret as MES (0-8)
+    'equity_bond_diverge', // 1 if NQ and ZN move same direction (unusual)
+    'corr_regime_count',  // count of positive correlations (breadth)
   ]
 
   console.log(`[lean-dataset] Header: ${header.length} columns`)
 
   const rows: string[][] = []
   let nextHighImpactIdx = 0
-  let bhgResolvedCursor = 0
   const eventSignalWeights = EVENT_SIGNAL_CONFIGS.map((config) => config.weight)
 
   for (let i = 0; i < candles.length; i++) {
@@ -869,7 +1318,13 @@ async function run(): Promise<void> {
     const targets: (number | null)[] = Object.values(targetHorizons).map(offset =>
       i + offset < candles.length ? pctChange(candles[i + offset].close, close) : null
     )
-
+    // Directional targets: 1 if return > 0, else 0
+    const targetDirs: (number | null)[] = targets.map(t => t != null ? (t > 0 ? 1 : 0) : null)
+    // Vol-normalized targets: return / rolling_std24 (removes heteroskedasticity)
+    const vol24 = std24[i]
+    const targetNorms: (number | null)[] = targets.map(t =>
+      t != null && vol24 != null && vol24 > 0 ? t / vol24 : null
+    )
     // Time features
     const hourUtc = ts.getUTCHours()
     const dayOfWeek = ts.getUTCDay()
@@ -892,6 +1347,42 @@ async function run(): Promise<void> {
     const distHi120 = hi120[i] != null ? (close - hi120[i]!) / hi120[i]! : null
     const distLo120 = lo120[i] != null ? (close - lo120[i]!) / lo120[i]! : null
     const volRatio = volMa24[i] != null && volMa24[i]! > 0 ? volumes[i] / volMa24[i]! : null
+
+    // Squeeze Pro features
+    const sqzMom = sqz.mom[i]
+    const sqzMomPrev = i > 0 ? sqz.mom[i - 1] : null
+    const sqzMomRising = sqzMom != null && sqzMomPrev != null ? (sqzMom > sqzMomPrev ? 1 : 0) : null
+    const sqzMomPositive = sqzMom != null ? (sqzMom > 0 ? 1 : 0) : null
+    const sqzState = sqz.state[i]
+    // Count consecutive bars in squeeze (state 1, 2, or 3)
+    let sqzBarsInSqueeze = 0
+    if (sqzState != null && sqzState >= 1 && sqzState <= 3) {
+      sqzBarsInSqueeze = 1
+      for (let j = i - 1; j >= 0; j--) {
+        const s = sqz.state[j]
+        if (s != null && s >= 1 && s <= 3) sqzBarsInSqueeze++
+        else break
+      }
+    }
+
+    // Williams Vix Fix features
+    const wvfValue = wvf.wvf[i]
+    const wvfSignal = wvf.signal[i]
+    const wvfPercentile = wvf.percentile[i]
+
+    // CM Ultimate MACD features
+    const macdLine = macd.line[i]
+    const macdSignalVal = macd.signal[i]
+    const macdHist = macd.hist[i]
+    const macdHistColor = macd.histColor[i]
+    const macdAboveSignal = macd.aboveSignal[i]
+    const macdHistRising = macd.histRising[i]
+
+    // Vol acceleration features
+    const std8Prev = i >= 8 ? std8[i - 8] : null
+    const volAccel = std8[i] != null && std8Prev != null && std8Prev > 0 ? std8[i]! / std8Prev : null
+    const volRegime = std24[i] != null && std120[i] != null && std120[i]! > 0 ? std24[i]! / std120[i]! : null
+    const volOfVolVal = volOfVol[i]
 
     // FRED as-of lookups (point-in-time with conservative lag)
     const laggedTargetKeyCache = new Map<number, string>()
@@ -928,14 +1419,32 @@ async function run(): Promise<void> {
     const realRate10y = y10y != null && tips10y != null ? y10y - tips10y : null
     const fedLiquidity = fedAssets != null && rrp != null ? fedAssets - rrp * 1000 : null
 
-    // Derived — velocity/regime features (from FRED arrays)
+    // Derived — velocity/regime features (from FRED arrays) — ALL stationary
     const fedMidpoint = fedTargetLower != null && fedTargetUpper != null
       ? (fedTargetLower + fedTargetUpper) / 2 : null
-    const vixPercentile20d = rollingPercentile(vixArr, i, 20 * barsPerDay)
+    // 1d changes (point deltas for rates/spreads)
     const vix1dChange = deltaBack(vixArr, i, barsPerDay)
+    const y2y1dChange = deltaBack(y2yArr, i, barsPerDay)
+    const y10y1dChange = deltaBack(y10yArr, i, barsPerDay)
+    const y30y1dChange = deltaBack(y30yArr, i, barsPerDay)
+    const sofr1dChange = deltaBack(sofrArr, i, barsPerDay)
+    const igOas1dChange = deltaBack(igOasArr, i, barsPerDay)
+    const hyOas1dChange = deltaBack(hyOasArr, i, barsPerDay)
+    const tips10y1dChange = deltaBack(tips10yArr, i, barsPerDay)
+    // 5d momentum (pct changes for prices, point deltas for rates)
     const dgs10Velocity5d = deltaBack(y10yArr, i, velocityLookback)
     const dollarMomentum5d = pctDeltaBack(dxyArr, i, velocityLookback)
     const hySpreadMomentum5d = deltaBack(hyOasArr, i, velocityLookback)
+    const eurusdMomentum5d = pctDeltaBack(eurusdArr, i, velocityLookback)
+    const jpyusdMomentum5d = pctDeltaBack(jpyusdArr, i, velocityLookback)
+    const wtiMomentum5d = pctDeltaBack(wtiArr, i, velocityLookback)
+    // Percentiles (regime context)
+    const vixPercentile20d = rollingPercentile(vixArr, i, 20 * barsPerDay)
+    const claimsPercentile20d = rollingPercentile(claimsArr, i, 20 * barsPerDay)
+    // Flow changes (weekly/daily magnitude changes)
+    const fedAssetsChange1w = deltaBack(fedAssetsArr, i, 7 * barsPerDay)
+    const rrpChange1d = deltaBack(rrpArr, i, barsPerDay)
+    const claimsChange1w = deltaBack(claimsArr, i, 7 * barsPerDay)
 
     // Calendar + event timing
     const todayKey = dateKeyUtc(ts)
@@ -979,53 +1488,27 @@ async function run(): Promise<void> {
     ] = releaseSignalValues
     const econSurpriseIndex = weightedAverage(releaseSignalValues, eventSignalWeights)
 
-    // News layer regime
-    const tariffCount7d = trailingCountLagged(ts, tariffCountsByDate, 7, 1)
-    const selloffCount7d = trailingCountLagged(ts, selloffCountsByDate, 7, 1)
-    const rallyCount7d = trailingCountLagged(ts, rallyCountsByDate, 7, 1)
-    const sentimentTotal = rallyCount7d + selloffCount7d
-    const netSentiment7d = sentimentTotal > 0 ? (rallyCount7d - selloffCount7d) / sentimentTotal : null
+    // News/event regime — from real historical tables (econ_calendar + econ_news_1d + policy_news_1d)
+    const calEventsTotal7d = trailingCountLagged(ts, calEventsTotalByDate, 7, 1)
+    const calEventsHigh7d = trailingCountLagged(ts, calEventsHighByDate, 7, 1)
+    const calRateEvents7d = trailingCountLagged(ts, calRateEventsByDate, 7, 1)
+    const calInflationEvents7d = trailingCountLagged(ts, calInflationEventsByDate, 7, 1)
+    const calEmploymentEvents7d = trailingCountLagged(ts, calEmploymentEventsByDate, 7, 1)
+    const econNewsVolume7d = trailingCountLagged(ts, econNewsVolumeByDate, 7, 1)
+    const policyNewsVolume7d = trailingCountLagged(ts, policyNewsVolumeByDate, 7, 1)
+    const newsTotalVolume7d = trailingCountLagged(ts, newsTotalVolumeByDate, 7, 1)
 
-    // BHG rolling quality feedback (strictly historical + 24h resolution lag)
-    while (
-      bhgResolvedCursor < bhgResolvedRows.length &&
-      bhgResolvedRows[bhgResolvedCursor].goTimeMs <= tsMs - BHG_RESOLUTION_LAG_MS
-    ) {
-      bhgResolvedCursor += 1
-    }
-    const last20Start = Math.max(0, bhgResolvedCursor - 20)
-    const last50Start = Math.max(0, bhgResolvedCursor - 50)
-    const last20 = bhgResolvedRows.slice(last20Start, bhgResolvedCursor)
-    const last50 = bhgResolvedRows.slice(last50Start, bhgResolvedCursor)
-    const last20Bull = last20.filter((row) => row.direction === 'BULLISH')
-    const last20Bear = last20.filter((row) => row.direction === 'BEARISH')
-
-    const bhgWinRateLast20 = rollingWinRate(last20)
-    const bhgWinRateLast50 = rollingWinRate(last50)
-    const bhgAvgOutcomeRLast20 = rollingAvgOutcome(last20)
-    const bhgBullWinRate20 = rollingWinRate(last20Bull)
-    const bhgBearWinRate20 = rollingWinRate(last20Bear)
-
-    let bhgConsecutiveWins: number | null = null
-    let bhgConsecutiveLosses: number | null = null
-    if (bhgResolvedCursor > 0) {
-      let winStreak = 0
-      for (let j = bhgResolvedCursor - 1; j >= 0; j--) {
-        if (bhgResolvedRows[j].outcomeR > 0) winStreak += 1
-        else break
-      }
-      bhgConsecutiveWins = winStreak
-
-      let lossStreak = 0
-      for (let j = bhgResolvedCursor - 1; j >= 0; j--) {
-        if (bhgResolvedRows[j].outcomeR < 0) lossStreak += 1
-        else break
-      }
-      bhgConsecutiveLosses = lossStreak
-    }
-
-    const bhgSetupsCount7d = countInTimeRange(bhgAllGoTimesMs, tsMs - 7 * MS_PER_DAY, tsMs)
-    const bhgSetupsCount30d = countInTimeRange(bhgAllGoTimesMs, tsMs - 30 * MS_PER_DAY, tsMs)
+    // BHG rolling setup counts (strictly historical + 24h resolution lag)
+    const bhgSetupsCount7d = countInTimeRange(
+      bhgAllGoTimesMs,
+      tsMs - 7 * MS_PER_DAY,
+      tsMs - BHG_RESOLUTION_LAG_MS
+    )
+    const bhgSetupsCount30d = countInTimeRange(
+      bhgAllGoTimesMs,
+      tsMs - 30 * MS_PER_DAY,
+      tsMs - BHG_RESOLUTION_LAG_MS
+    )
 
     // ── ASSEMBLE ROW ──
     // CRITICAL: order MUST match header exactly
@@ -1034,56 +1517,64 @@ async function run(): Promise<void> {
       ts.toISOString(),                                // timestamp
       close,                                           // target
       ...targets,                                      // forward return targets
+      ...targetDirs,                                   // directional targets (1=up, 0=down)
+      ...targetNorms,                                  // vol-normalized return targets
       // Time features (5)
       hourUtc, dayOfWeek, isUsSession, isAsiaSession, isEuropeSession,
-      // MES technicals (22)
+      // MES technicals (19) — no raw price levels
       ret1h, ret4h, ret8h, ret24h,
       range, bodyRatio,
-      rsi14[i], rsi2[i],
-      ma8[i], ma24[i], ma120[i],
+      edss14[i],
       distMa8, distMa24, distMa120,
       std8[i], std24[i], std120[i],
       distHi24, distLo24, distHi120, distLo120,
       volRatio,
-      // FRED raw (19)
-      ...fredValues,
-      // Derived — macro context (4)
+      // Squeeze Pro (5)
+      sqzMom, sqzMomRising, sqzMomPositive, sqzState, sqzBarsInSqueeze,
+      // Williams Vix Fix (3)
+      wvfValue, wvfSignal, wvfPercentile,
+      // CM Ultimate MACD (6)
+      macdLine, macdSignalVal, macdHist, macdHistColor, macdAboveSignal, macdHistRising,
+      // Vol acceleration (3)
+      volAccel, volRegime, volOfVolVal,
+      // FRED stationary — macro context (4)
       yieldCurveSlope, creditSpreadDiff, realRate10y, fedLiquidity,
-      // Derived — velocity/regime (6)
-      fedMidpoint, vixPercentile20d, vix1dChange,
+      // FRED stationary — bounded levels (2)
+      fedMidpoint, vix,
+      // FRED stationary — 1d changes (8)
+      vix1dChange, y2y1dChange, y10y1dChange, y30y1dChange,
+      sofr1dChange, igOas1dChange, hyOas1dChange, tips10y1dChange,
+      // FRED stationary — 5d momentum (6)
       dgs10Velocity5d, dollarMomentum5d, hySpreadMomentum5d,
+      eurusdMomentum5d, jpyusdMomentum5d, wtiMomentum5d,
+      // FRED stationary — regime percentiles (2)
+      vixPercentile20d, claimsPercentile20d,
+      // FRED stationary — flow changes (3)
+      fedAssetsChange1w, rrpChange1d, claimsChange1w,
       // Calendar + event timing (6)
       isFomcDay, isHighImpactDay, isCpiDay, isNfpDay,
       eventsThisWeekCount, hoursToNextHighImpact,
       // Release signal proxies (7)
       nfpReleaseZ, cpiReleaseZ, retailSalesReleaseZ, ppiReleaseZ,
       gdpReleaseZ, claimsReleaseZ, econSurpriseIndex,
-      // News layer regime (4)
-      tariffCount7d, selloffCount7d, rallyCount7d, netSentiment7d,
-      // BHG rolling quality feedback (9)
-      bhgWinRateLast20, bhgWinRateLast50, bhgAvgOutcomeRLast20,
-      bhgConsecutiveWins, bhgConsecutiveLosses,
+      // News/event regime (8)
+      calEventsTotal7d, calEventsHigh7d, calRateEvents7d, calInflationEvents7d, calEmploymentEvents7d,
+      econNewsVolume7d, policyNewsVolume7d, newsTotalVolume7d,
+      // BHG rolling setup counts (2)
       bhgSetupsCount7d, bhgSetupsCount30d,
-      bhgBullWinRate20, bhgBearWinRate20,
-      // Cross-asset technicals (8 symbols × 6 = 48)
+      // Cross-asset technicals (6 symbols × 6 = 36)
       ...CROSS_ASSET_SYMBOLS.flatMap(sym => {
         const tech = crossAssetTech.get(sym.code)!
         return [
           tech.ret1h[i],
           tech.ret4h[i],
           tech.ret24h[i],
-          tech.rsi14[i],
+          tech.edss14[i],
           tech.distMa24[i],
           tech.volRatio[i],
         ]
       }),
-      // Derived regime features (6)
-      (() => {
-        // sox_minus_nq: SOX ret_1h − NQ ret_1h
-        const sox = crossAssetTech.get('SOX')!.ret1h[i]
-        const nq = crossAssetTech.get('NQ')!.ret1h[i]
-        return sox != null && nq != null ? sox - nq : null
-      })(),
+      // Derived regime features (5)
       (() => {
         // nq_minus_mes: NQ ret_1h − MES ret_1h
         const nq = crossAssetTech.get('NQ')!.ret1h[i]
@@ -1107,29 +1598,38 @@ async function run(): Promise<void> {
         const j6Ret = crossAssetTech.get('6J')!.ret1h[i]
         return j6Ret != null ? Math.abs(j6Ret) : null
       })(),
+      mesZnCorr[i],  // mes_zn_corr_21d (pre-computed)
+      // Cross-asset correlations + concordance (6)
+      mesNqCorr[i],
+      mesClCorr[i],
+      mesE6Corr[i],
+      // concordance_1h: count of cross-asset symbols with same-sign ret as MES
       (() => {
-        // mes_zn_corr_21d: rolling 21-bar correlation between MES and ZN returns
-        if (i < 21) return null
-        const mesRets: number[] = []
-        const znRets: number[] = []
-        for (let j = i - 20; j <= i; j++) {
-          const mRet = j >= 1 && candles[j - 1].close !== 0
-            ? (candles[j].close - candles[j - 1].close) / Math.abs(candles[j - 1].close)
-            : null
-          const zRet = crossAssetTech.get('ZN')!.ret1h[j]
-          if (mRet != null && zRet != null) { mesRets.push(mRet); znRets.push(zRet) }
+        const mesR = mesRet1hArr[i]
+        if (mesR == null || mesR === 0) return null
+        const mesSign = mesR > 0 ? 1 : -1
+        let count = 0
+        for (const sym of CROSS_ASSET_SYMBOLS) {
+          const r = crossAssetTech.get(sym.code)!.ret1h[i]
+          if (r != null && r !== 0) {
+            if ((r > 0 ? 1 : -1) === mesSign) count++
+          }
         }
-        if (mesRets.length < 10) return null
-        const meanM = mesRets.reduce((a, b) => a + b, 0) / mesRets.length
-        const meanZ = znRets.reduce((a, b) => a + b, 0) / znRets.length
-        let cov = 0, varM = 0, varZ = 0
-        for (let k = 0; k < mesRets.length; k++) {
-          cov += (mesRets[k] - meanM) * (znRets[k] - meanZ)
-          varM += (mesRets[k] - meanM) ** 2
-          varZ += (znRets[k] - meanZ) ** 2
-        }
-        const denom = Math.sqrt(varM * varZ)
-        return denom > 0 ? cov / denom : null
+        return count
+      })(),
+      // equity_bond_diverge: 1 if NQ and ZN move same direction (unusual)
+      (() => {
+        const nqR = crossAssetTech.get('NQ')!.ret1h[i]
+        const znR = crossAssetTech.get('ZN')!.ret1h[i]
+        if (nqR == null || znR == null || nqR === 0 || znR === 0) return null
+        return (nqR > 0) === (znR > 0) ? 1 : 0
+      })(),
+      // corr_regime_count: count of positive correlations (breadth)
+      (() => {
+        const corrs = [mesNqCorr[i], mesClCorr[i], mesE6Corr[i], mesZnCorr[i]]
+        const valid = corrs.filter(c => c != null) as number[]
+        if (valid.length < 2) return null
+        return valid.filter(c => c > 0).length
       })(),
     ]
 
@@ -1159,30 +1659,30 @@ async function run(): Promise<void> {
     nonNullCounts[header[col]] = rows.filter((r) => r[col] !== '').length
   }
 
-  const fredCoverage = FRED_FEATURES.map((f) => {
-    const count = nonNullCounts[f.column] ?? 0
-    const pct = ((count / rows.length) * 100).toFixed(1)
-    return `  ${f.column.padEnd(24)} ${String(count).padStart(7)} / ${rows.length} (${pct}%)`
-  })
-
   console.log(`\n[lean-dataset] ✅ Written ${rows.length} rows × ${header.length} features to ${outFile}`)
   console.log(`[lean-dataset] Date range: ${rows[0][1]} → ${rows[rows.length - 1][1]}`)
-  console.log(`\n[lean-dataset] FRED feature coverage:`)
-  console.log(fredCoverage.join('\n'))
 
   const derivedCols = [
     'yield_curve_slope', 'credit_spread_diff', 'real_rate_10y', 'fed_liquidity',
-    'fed_midpoint', 'vix_percentile_20d', 'vix_1d_change',
+    'fed_midpoint', 'fred_vix',
+    'vix_1d_change', 'y2y_1d_change', 'y10y_1d_change', 'y30y_1d_change',
+    'sofr_1d_change', 'ig_oas_1d_change', 'hy_oas_1d_change', 'tips10y_1d_change',
     'dgs10_velocity_5d', 'dollar_momentum_5d', 'hy_spread_momentum_5d',
+    'eurusd_momentum_5d', 'jpyusd_momentum_5d', 'wti_momentum_5d',
+    'vix_percentile_20d', 'claims_percentile_20d',
+    'fed_assets_change_1w', 'rrp_change_1d', 'claims_change_1w',
     'is_fomc_day', 'is_high_impact_day', 'is_cpi_day', 'is_nfp_day',
     'events_this_week_count', 'hours_to_next_high_impact',
     'nfp_release_z', 'cpi_release_z', 'retail_sales_release_z', 'ppi_release_z',
     'gdp_release_z', 'claims_release_z', 'econ_surprise_index',
-    'tariff_count_7d', 'selloff_count_7d', 'rally_count_7d', 'net_sentiment_7d',
-    'bhg_win_rate_last20', 'bhg_win_rate_last50', 'bhg_avg_outcome_r_last20',
-    'bhg_consecutive_wins', 'bhg_consecutive_losses',
+    'cal_events_total_7d', 'cal_events_high_7d', 'cal_rate_events_7d',
+    'cal_inflation_events_7d', 'cal_employment_events_7d',
+    'econ_news_volume_7d', 'policy_news_volume_7d', 'news_total_volume_7d',
     'bhg_setups_count_7d', 'bhg_setups_count_30d',
-    'bhg_bull_win_rate_20', 'bhg_bear_win_rate_20',
+    'macd_line', 'macd_signal', 'macd_hist', 'macd_hist_color', 'macd_above_signal', 'macd_hist_rising',
+    'vol_accel', 'vol_regime', 'vol_of_vol',
+    'mes_zn_corr_21d', 'mes_nq_corr_21d', 'mes_cl_corr_21d', 'mes_e6_corr_21d',
+    'concordance_1h', 'equity_bond_diverge', 'corr_regime_count',
   ]
   console.log(`\n[lean-dataset] Derived feature coverage:`)
   for (const col of derivedCols) {

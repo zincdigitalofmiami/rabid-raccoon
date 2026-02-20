@@ -16,8 +16,7 @@ import { ForecastTargetsPrimitive } from '@/lib/charts/ForecastTargetsPrimitive'
 import { BhgMarkersPrimitive } from '@/lib/charts/BhgMarkersPrimitive'
 import { mapMeasuredMoveAndCoreToTargets } from '@/lib/charts/blendTargets'
 import { ensureFutureWhitespace } from '@/lib/charts/ensureFutureWhitespace'
-import { detectSwings } from '@/lib/swing-detection'
-import { calculateFibonacci } from '@/lib/fibonacci'
+import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import TV from '@/lib/colors'
 
 type MesPoint = {
@@ -334,10 +333,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
     const lastTime = points[points.length - 1].time
     const futureEnd = lastTime + BAR_INTERVAL_SEC * 8
 
-    // Run fib calculation on candle data for snap-blend alignment
+    // Run fib calculation on candle data for snap-blend alignment (multi-period confluence)
     const candles = points.map(toCandle)
-    const swings = detectSwings(candles)
-    const fib = calculateFibonacci(swings.highs, swings.lows)
+    const fib = calculateFibonacciMultiPeriod(candles)
 
     const targets = mapMeasuredMoveAndCoreToTargets(
       activeMove,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchCandlesForSymbol } from '@/lib/fetch-candles'
 import { detectSwings } from '@/lib/swing-detection'
-import { calculateFibonacci } from '@/lib/fibonacci'
+import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import { SYMBOLS } from '@/lib/symbols'
 import { MarketDataResponse } from '@/lib/types'
 
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     const { highs, lows } = detectSwings(candles)
     const allSwings = [...highs, ...lows].sort((a, b) => a.barIndex - b.barIndex)
 
-    const fibLevels = calculateFibonacci(highs, lows)
+    const fibLevels = calculateFibonacciMultiPeriod(candles)
 
     let latestPrice: number | null = null
     let percentChange: number | null = null

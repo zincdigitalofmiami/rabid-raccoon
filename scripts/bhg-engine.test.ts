@@ -7,7 +7,7 @@ function makeFibResult(isBullish: boolean): FibResult {
   const anchorHigh = 7000
   const anchorLow = 6900
   const range = anchorHigh - anchorLow
-  const ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618]
+  const ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.236, 1.618]
 
   return {
     levels: ratios.map((ratio) => ({

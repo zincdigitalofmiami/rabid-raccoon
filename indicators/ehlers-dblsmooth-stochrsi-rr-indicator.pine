@@ -1,0 +1,138 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// EHLERS DBLsmooth StochRSI — RR Indicator Module
+// ═══════════════════════════════════════════════════════════════════════════════
+// Drop this into rabid-raccoon.pine
+// Provides: computed values for BHG GO confirmation + dataset feature extraction
+//
+// PLACEMENT: After //#endregion of CORE UTILITIES, before MEASURED MOVE DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
+//#region === EHLERS DBLsmooth StochRSI — RR Indicator ===
+
+// --- Inputs (add to Feature Toggles or new "Ehlers Stochastic" group) ---
+edssLength           = input.int(14, "EDSS Stoch Length", minval=2, group="Ehlers Stochastic")
+edssSignalLength     = input.int(3, "EDSS Signal MA Length", minval=1, group="Ehlers Stochastic")
+edssRoofUpper        = input.int(48, "EDSS Roofing Upper", minval=2, group="Ehlers Stochastic")
+edssRoofLower        = input.int(10, "EDSS Roofing Lower", minval=2, group="Ehlers Stochastic")
+edssOB               = input.float(0.8, "EDSS Overbought", minval=0.0, maxval=1.0, step=0.05, group="Ehlers Stochastic")
+edssOS               = input.float(0.2, "EDSS Oversold", minval=0.0, maxval=1.0, step=0.05, group="Ehlers Stochastic")
+
+// --- Constants ---
+float EDSS_PI = 3.14159265359
+
+// --- Ehlers Super Smoother Filter ---
+// Two-pole Butterworth: half the lag of equivalent EMA/SMA
+_edssSuperSmoother(float price, int lower) =>
+    float a1     = math.exp(-EDSS_PI * math.sqrt(2.0) / lower)
+    float coeff2 = 2.0 * a1 * math.cos(math.sqrt(2.0) * EDSS_PI / lower)
+    float coeff3 = -math.pow(a1, 2)
+    float coeff1 = 1.0 - coeff2 - coeff3
+    var float filt = 0.0
+    filt := coeff1 * (price + nz(price[1])) / 2.0 + coeff2 * nz(filt[1]) + coeff3 * nz(filt[2])
+    filt
+
+// --- Ehlers Roofing Filter ---
+// Highpass strips trend (cycles > upper), super smoother strips noise (cycles < lower)
+_edssRoofingFilter(float price, int upper, int lower) =>
+    float alpha1 = (math.cos(math.sqrt(2.0) * EDSS_PI / upper) + math.sin(math.sqrt(2.0) * EDSS_PI / upper) - 1.0) / math.cos(math.sqrt(2.0) * EDSS_PI / upper)
+    var float highpass = 0.0
+    highpass := math.pow(1.0 - alpha1 / 2.0, 2) * (price - 2.0 * nz(price[1]) + nz(price[2])) +
+                2.0 * (1.0 - alpha1) * nz(highpass[1]) - math.pow(1.0 - alpha1, 2) * nz(highpass[2])
+    _edssSuperSmoother(highpass, lower)
+
+// --- Ehlers Stochastic Core ---
+_edssStochastic(float price, int len, int upper, int lower) =>
+    float filt     = _edssRoofingFilter(price, upper, lower)
+    float highestP = ta.highest(filt, len)
+    float lowestP  = ta.lowest(filt, len)
+    (highestP - lowestP) != 0 ? (filt - lowestP) / (highestP - lowestP) : 0.0
+
+// --- Computed Values ---
+float edssRaw    = _edssStochastic(close, edssLength, edssRoofUpper, edssRoofLower)
+float edssStoch  = _edssSuperSmoother(edssRaw, edssRoofLower)
+float edssSignal = ta.sma(edssStoch, edssSignalLength)
+
+// --- Derived Signals (use these in BHG GO confirmation) ---
+bool  edssBullCross   = ta.crossover(edssStoch, edssSignal)
+bool  edssBearCross   = ta.crossunder(edssStoch, edssSignal)
+bool  edssIsOB        = edssStoch > edssOB
+bool  edssIsOS        = edssStoch < edssOS
+bool  edssBullCurl    = edssBullCross and edssStoch[1] < edssOS   // Cross up FROM oversold
+bool  edssBearCurl    = edssBearCross and edssStoch[1] > edssOB   // Cross down FROM overbought
+float edssSlope       = edssStoch - edssStoch[1]                   // Positive = curling up
+bool  edssRising      = edssSlope > 0
+bool  edssFalling     = edssSlope < 0
+
+// --- State Classification (for dataset feature) ---
+// 0 = oversold falling, 1 = oversold rising (curl starting)
+// 2 = mid rising, 3 = mid falling
+// 4 = overbought rising, 5 = overbought falling (curl starting)
+int edssState = edssIsOS ? (edssRising ? 1 : 0) :
+                edssIsOB ? (edssRising ? 4 : 5) :
+                (edssRising ? 2 : 3)
+
+//#endregion
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DATASET FEATURE REFERENCE
+// ═══════════════════════════════════════════════════════════════════════════════
+// For build-bhg-dataset.ts, extract these at GO time:
+//
+//   edss_value      : float  — edssStoch (0.0 to 1.0)
+//   edss_signal     : float  — edssSignal (0.0 to 1.0)
+//   edss_slope      : float  — edssSlope (rate of change, positive = curling up)
+//   edss_state      : int    — edssState (0-5 categorical, see above)
+//   edss_bull_curl  : bool   — edssBullCurl (cross up from oversold)
+//   edss_bear_curl  : bool   — edssBearCurl (cross down from overbought)
+//   edss_is_ob      : bool   — edssIsOB
+//   edss_is_os      : bool   — edssIsOS
+//
+// REPLACES: stoch_14 in current dataset
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BHG GO INTEGRATION EXAMPLE
+// ═══════════════════════════════════════════════════════════════════════════════
+// In the Break-Hook-Go GO section, add as confirmation filter:
+//
+//   // Before existing goSignal logic:
+//   bool edssConfirmsBull = edssRising and not edssIsOB    // Curling up, not topped out
+//   bool edssConfirmsBear = edssFalling and not edssIsOS   // Curling down, not bottomed
+//
+//   // Modify GO signal:
+//   if bhgBreakBull
+//       goSignal := close > bhgBreakLevel and close > open and close > high[1]
+//                   and bodySize > avgBody * 0.8
+//                   and edssConfirmsBull  // <-- ADD THIS
+//   else
+//       goSignal := close < bhgBreakLevel and close < open and close < low[1]
+//                   and bodySize > avgBody * 0.8
+//                   and edssConfirmsBear  // <-- ADD THIS
+//
+// This prevents GO from firing when momentum oscillator is exhausted
+// (overbought for longs, oversold for shorts) — the exact scenario
+// where BHG setups fail most often.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OPTIONAL: OVERLAY DASHBOARD CELL
+// ═══════════════════════════════════════════════════════════════════════════════
+// If you want the EDSS value visible on the main chart debug table,
+// add these rows to the debugTable section in VISUALIZATION & PLOTTING:
+//
+//   table.cell(debugTable, 0, 12, "EDSS Value", text_color=color.gray, text_size=size.small)
+//   table.cell(debugTable, 1, 12, str.tostring(edssStoch, "#.###"),
+//              text_color=edssIsOB ? color.red : edssIsOS ? color.green : color.blue,
+//              text_size=size.small)
+//   table.cell(debugTable, 0, 13, "EDSS State", text_color=color.gray, text_size=size.small)
+//   string edssStateStr = edssState == 0 ? "OS↓" : edssState == 1 ? "OS↑" :
+//                          edssState == 2 ? "MID↑" : edssState == 3 ? "MID↓" :
+//                          edssState == 4 ? "OB↑" : "OB↓"
+//   table.cell(debugTable, 1, 13, edssStateStr,
+//              text_color=edssRising ? color.lime : color.red,
+//              text_size=size.small)
+// ═══════════════════════════════════════════════════════════════════════════════

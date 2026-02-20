@@ -190,7 +190,7 @@ export function buildFredArray(
 export function alignCrossAssetBars(
   mesTimestamps: Date[],
   bars: Map<string, number>,  // isoString → close price
-  maxGapHours: number = 4
+  maxGapHours: number = 2     // reduced from 4 to avoid cross-session fill
 ): (number | null)[] {
   const result: (number | null)[] = new Array(mesTimestamps.length).fill(null)
   let lastValue: number | null = null

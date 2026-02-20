@@ -1,6 +1,19 @@
 # CLAUDE.md — Rabid Raccoon
 
-This is an MES futures trading platform built with Next.js, Prisma, Inngest, and Databento.
+This is an MES futures trading intelligence platform built with Next.js, Prisma, Inngest, Databento, and AutoGluon.
+
+## Current Project State (Feb 20, 2026)
+
+See `docs/PROJECT-ROADMAP.md` for the full architecture, goals, and implementation phases.
+
+**Active work:**
+- ML directional model: Phase 1 classification training (binary up/down, walk-forward validation, ~128 features, 36K rows)
+- Next up: Evaluate Phase 1 OOF results → feature importance → Phase 2 production training
+- After model: Statistical backtesting engine (indicator signals, pressure map, event reactions — all with sample sizes)
+- Then: Command Center dashboard (single-page, everything backed by backtested stats)
+- Then: Rabid Raccoon TradingView indicator (Pine Script, pressure map overlay + signal flags)
+
+**Key principle:** Every number shown to Kirk has a verifiable sample size (n=X). No black boxes.
 
 ## Architecture
 

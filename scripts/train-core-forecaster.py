@@ -4,42 +4,75 @@ train-core-forecaster.py
 MES Core Return Forecaster — AutoGluon 1.5 TabularPredictor
 Optimized for 1h/4h day-trading horizons with walk-forward validation.
 
-Dataset: mes_lean_1h.csv (~144 columns, ~36K rows from 2020+)
-  - 22 MES technicals (EDSS, MAs, returns, vol)
-  - 48 cross-asset technicals (8 symbols x 6 features)
-  - 19 FRED macro, 10 derived regime features
-  - 6 event/calendar, 7 release signals, 4 news sentiment
-  - 9 BHG quality feedback, 5 time features, 6 cross-asset composites
+Timeframes:
+  1h (default): mes_lean_1h.csv (~144 columns, ~36K rows from 2020+)
+    - 22 MES technicals (EDSS, MAs, returns, vol)
+    - 48 cross-asset technicals (8 symbols x 6 features)
+    - 19 FRED macro, 10 derived regime features
+    - 6 event/calendar, 7 release signals, 4 news sentiment
+    - 9 BHG quality feedback, 5 time features, 6 cross-asset composites
+    - Horizons: 1h (purge=1), 4h (purge=4)
+
+  15m: mes_15m_complete.csv (~46K rows from 2020+)
+    - Same feature groups as lean_1h but at 15m granularity
+    - Direction targets auto-computed from ret columns at load time
+    - Horizons: 15m (purge=1), 1h (purge=4), 4h (purge=16)
 
 Models: GBM (LightGBM), CAT (CatBoost), XGB (XGBoost), XT (ExtraTrees)
-  - Stacked ensemble via auto_stack (weighted blend of all 4)
   - KNN, FASTAI, RF, NN_TORCH excluded
+  - dynamic_stacking=False (prevents DyStack inside outer walk-forward)
+
+Three modes:
+  classify (default): Directional prediction (up/down), eval=roc_auc
+  regress:            Raw return prediction, eval=MAE
+  volnorm:            Vol-normalized return prediction, eval=R2
+
+Two-phase training (sequential, num_cpus=1, no time limit by default):
+  Phase 1 (fast validation): explicit hyperparams (GBM+CAT+XGB+XT), 2 folds, no time limit, no bagging/stacking
+  Phase 2 (production):      explicit hyperparams (GBM+CAT+XGB+XT), 3 folds, no time limit, 3-fold bagging + 1 stack
+  Use --time-limit=N to override with a per-fold time budget (seconds)
 
 Walk-forward scheme:
-  - 5 expanding-window folds
+  - Expanding-window folds with purge + embargo
   - Purge gap = target horizon bars (prevents label leakage)
   - Embargo = 2x purge (prevents autocorrelation bleed)
   - Produces OOF predictions for every training row
 
+Metrics:
+  classify: AUC, Accuracy, High-Confidence Accuracy (p>0.55/p<0.45), IC
+  regress/volnorm: MAE, RMSE, R2, Spearman IC
+
 Outputs:
-  - models/core_forecaster/{horizon}/fold_N/  (AutoGluon artifacts per fold)
-  - datasets/autogluon/core_oof_1h.csv        (OOF predictions + actuals)
-  - models/reports/core_forecaster/...         (metrics, charts, tear sheets)
+  1h:  models/core_forecaster/{horizon}/fold_N/      AutoGluon artifacts per fold
+       datasets/autogluon/core_oof_1h.csv            OOF predictions + actuals
+  15m: models/core_forecaster_15m/{horizon}/fold_N/
+       datasets/autogluon/core_oof_15m.csv
+  Both: models/logs/training_YYYYMMDD_HHMMSS.log     Full stdout log
 
 Usage:
-  python scripts/train-core-forecaster.py
-  python scripts/train-core-forecaster.py --time-limit=1200 --skip-reports
-  python scripts/train-core-forecaster.py --horizons=1h --presets=medium_quality
+  python scripts/train-core-forecaster.py                          # Phase 1, 1h (default)
+  python scripts/train-core-forecaster.py --timeframe=15m          # Phase 1, 15m
+  python scripts/train-core-forecaster.py --phase=2                # Phase 2 production
+  python scripts/train-core-forecaster.py --clean                  # Delete old folds before training
+  python scripts/train-core-forecaster.py --horizons=1h            # Single horizon
+  python scripts/train-core-forecaster.py --time-limit=1200        # Override time limit
 
-Training time estimate (default settings):
-  2400s x 5 folds x 2 horizons = ~6.7 hours on Apple Silicon
+Training time estimates (sequential, num_cpus=1, no time limit):
+  Phase 1 (1h):  ~1-2 hours on Apple Silicon (2 folds x 2 horizons)
+  Phase 1 (15m): ~2-3 hours on Apple Silicon (2 folds x 3 horizons)
+  Phase 2 (1h):  ~4-8 hours on Apple Silicon (3 folds x 2 horizons, bagged)
+  Phase 2 (15m): ~6-12 hours on Apple Silicon (3 folds x 3 horizons, bagged)
 """
 
 import sys
+import json
 import warnings
+import shutil
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from datetime import datetime
+from scipy.stats import spearmanr
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -47,48 +80,125 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODEL_DIR = PROJECT_ROOT / "models" / "core_forecaster"
 
 # Parse CLI args
 import argparse
 parser = argparse.ArgumentParser(description="MES Core Return Forecaster")
-parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (e.g. 1h,4h)")
-parser.add_argument("--presets", default="best_quality", help="AutoGluon presets")
-parser.add_argument("--time-limit", type=int, default=2400, help="Seconds per fold (default: 2400 = 40 min)")
+parser.add_argument("--timeframe", default="1h", choices=["1h", "15m"],
+                    help="Timeframe: 1h (default) uses mes_lean_1h.csv with 1h/4h horizons. "
+                         "15m uses mes_15m_complete.csv with 15m/1h/4h horizons.")
+parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (e.g. 1h,4h or 15m,1h)")
+parser.add_argument("--mode", default="classify", choices=["classify", "regress", "volnorm"],
+                    help="classify: directional (up/down) with roc_auc. "
+                         "regress: raw return with MAE. "
+                         "volnorm: vol-normalized return with R2.")
+parser.add_argument("--presets", default=None, help="AutoGluon presets (overrides --phase default)")
+parser.add_argument("--phase", type=int, default=1, choices=[1, 2],
+                    help="Phase 1: fast validation (high_quality_v150, 3 folds, 600s, no stacking). "
+                         "Phase 2: production (best_quality_v150, 5 folds, 2400s, light bagging)")
+parser.add_argument("--time-limit", type=int, default=None, help="Seconds per fold (overrides --phase default)")
 parser.add_argument("--report-root", default="models/reports", help="Directory for reports")
 parser.add_argument("--skip-reports", action="store_true", help="Skip report generation")
-parser.add_argument("--min-coverage", type=float, default=0.05, help="Min non-null fraction to keep a feature (default: 0.05 = 5%%)")
+parser.add_argument("--min-coverage", type=float, default=0.50,
+                    help="Min non-null fraction to keep a feature (default: 0.50 = 50%%)")
+parser.add_argument("--clean", action="store_true",
+                    help="Delete existing model fold directories before training (prevents stale-fold confusion)")
 args = parser.parse_args()
 
-# ─── Dataset: mes_lean_1h.csv (the ONLY dataset) ─────────────────────────────
+# ─── Timeframe-based paths and horizon configs ────────────────────────────────
 
-DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
-OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_1h.csv"
+TIMEFRAME = args.timeframe
 
-# Day-trading horizons only: 1h (scalp signal) and 4h (runner signal)
-HORIZONS = {
-    "1h": {"target": "target_ret_1h", "purge_bars": 1,  "embargo_bars": 2},
-    "4h": {"target": "target_ret_4h", "purge_bars": 4,  "embargo_bars": 8},
-}
+if TIMEFRAME == "1h":
+    DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
+    MODEL_DIR = PROJECT_ROOT / "models" / "core_forecaster"
+    OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_1h.csv"
+    # Pre-computed binary targets in the lean dataset
+    HORIZONS_CLASSIFY = {
+        "1h": {"target": "target_dir_1h", "purge_bars": 1,  "embargo_bars": 2},
+        "4h": {"target": "target_dir_4h", "purge_bars": 4,  "embargo_bars": 8},
+    }
+    HORIZONS_REGRESS = {
+        "1h": {"target": "target_ret_1h", "purge_bars": 1,  "embargo_bars": 2},
+        "4h": {"target": "target_ret_4h", "purge_bars": 4,  "embargo_bars": 8},
+    }
+    HORIZONS_VOLNORM = {
+        "1h": {"target": "target_ret_norm_1h", "purge_bars": 1,  "embargo_bars": 2},
+        "4h": {"target": "target_ret_norm_4h", "purge_bars": 4,  "embargo_bars": 8},
+    }
+    # All target columns in this dataset — never used as features
+    DROP_COLS = {
+        "item_id", "timestamp", "target",
+        "target_ret_1h", "target_ret_4h",
+        "target_dir_1h", "target_dir_4h",
+        "target_ret_norm_1h", "target_ret_norm_4h",
+    }
+    COMPUTE_DIR_TARGETS = False  # pre-computed in dataset
 
-# Identity + all forward target columns — NEVER used as features
-DROP_COLS = {
-    "item_id", "timestamp", "target",
-    "target_ret_1h", "target_ret_4h", "target_ret_8h",
-    "target_ret_24h", "target_ret_1w",
-}
+else:  # 15m
+    DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_15m_complete.csv"
+    MODEL_DIR = PROJECT_ROOT / "models" / "core_forecaster_15m"
+    OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_15m.csv"
+    # The 15m dataset only has regression targets; direction targets computed at load time
+    HORIZONS_CLASSIFY = {
+        "15m": {"target": "target_dir_15m", "purge_bars": 1,  "embargo_bars": 2},
+        "1h":  {"target": "target_dir_1h",  "purge_bars": 4,  "embargo_bars": 8},
+        "4h":  {"target": "target_dir_4h",  "purge_bars": 16, "embargo_bars": 32},
+    }
+    HORIZONS_REGRESS = {
+        "15m": {"target": "target_ret_15m", "purge_bars": 1,  "embargo_bars": 2},
+        "1h":  {"target": "target_ret_1h",  "purge_bars": 4,  "embargo_bars": 8},
+        "4h":  {"target": "target_ret_4h",  "purge_bars": 16, "embargo_bars": 32},
+    }
+    HORIZONS_VOLNORM = HORIZONS_REGRESS  # no vol-normalized targets in 15m dataset
+    # All target/identity columns in the 15m dataset — never used as features
+    DROP_COLS = {
+        "item_id", "timestamp", "target",
+        "target_ret_15m", "target_ret_1h", "target_ret_4h",
+        "target_dir_15m", "target_dir_1h", "target_dir_4h",
+    }
+    COMPUTE_DIR_TARGETS = True  # must derive from target_ret_* at load time
+
+# Select horizons based on mode
+MODE = args.mode
+if MODE == "classify":
+    HORIZONS = dict(HORIZONS_CLASSIFY)
+    PROBLEM_TYPE = "binary"
+    EVAL_METRIC = "roc_auc"
+elif MODE == "volnorm":
+    HORIZONS = dict(HORIZONS_VOLNORM)
+    PROBLEM_TYPE = "regression"
+    EVAL_METRIC = "r2"
+else:
+    HORIZONS = dict(HORIZONS_REGRESS)
+    PROBLEM_TYPE = "regression"
+    EVAL_METRIC = "mean_absolute_error"
 
 # Filter horizons if specified via CLI
 if args.horizons:
     requested = set(args.horizons.split(","))
     HORIZONS = {k: v for k, v in HORIZONS.items() if k in requested}
     if not HORIZONS:
-        print(f"ERROR: No valid horizons in '{args.horizons}'. Available: 1h, 4h")
+        print(f"ERROR: No valid horizons in '{args.horizons}'. Available: {list(HORIZONS_CLASSIFY.keys())}")
         sys.exit(1)
 
-N_FOLDS = 5
-TIME_LIMIT_PER_FOLD = args.time_limit
-PRESETS = args.presets
+# Phase-based defaults:
+#   Phase 1: fast validation — confirm no leakage, features work, beats baseline
+#   Phase 2: production candidate — full ensemble with light bagging
+PHASE_DEFAULTS = {
+    1: {"presets": "high_quality_v150", "time_limit": None, "n_folds": 2,
+        "num_bag_folds": 0, "num_stack_levels": 0, "dynamic_stacking": False},
+    2: {"presets": "best_quality_v150", "time_limit": None, "n_folds": 3,
+        "num_bag_folds": 3, "num_stack_levels": 1, "dynamic_stacking": False},
+}
+phase_cfg = PHASE_DEFAULTS[args.phase]
+
+N_FOLDS = phase_cfg["n_folds"]
+TIME_LIMIT_PER_FOLD = args.time_limit if args.time_limit is not None else phase_cfg["time_limit"]
+NUM_BAG_FOLDS = phase_cfg["num_bag_folds"]
+NUM_STACK_LEVELS = phase_cfg["num_stack_levels"]
+DYNAMIC_STACKING = phase_cfg["dynamic_stacking"]
+
 REPORT_ROOT = Path(args.report_root)
 if not REPORT_ROOT.is_absolute():
     REPORT_ROOT = PROJECT_ROOT / REPORT_ROOT
@@ -99,6 +209,31 @@ if not REPORT_ROOT.is_absolute():
 # RF:       redundant with ExtraTrees, slower training
 # NN_TORCH: tends to overfit on weak financial signal with tabular data
 EXCLUDED_MODELS = ["KNN", "FASTAI", "RF", "NN_TORCH"]
+
+# ─── Explicit hyperparameters ────────────────────────────────────────────────
+# CRITICAL: Do NOT use presets= in the fit call. The high_quality_v150 preset
+# overrides this dict with its own zeroshot config that only spawns LightGBM +
+# CatBoost (~50 GBM configs + 1 CAT). XGBoost and ExtraTrees never run.
+# Instead, pass hyperparameters= directly to ensure all 4 model types train.
+HYPERPARAMETERS = {
+    "GBM": [
+        {"num_boost_round": 5000, "learning_rate": 0.02,
+         "num_leaves": 31, "feature_fraction": 0.7,
+         "min_data_in_leaf": 20, "extra_trees": False},
+        {"num_boost_round": 5000, "learning_rate": 0.01,
+         "num_leaves": 63, "feature_fraction": 0.5,
+         "min_data_in_leaf": 50, "extra_trees": True},
+    ],
+    "CAT": [
+        {"iterations": 5000, "learning_rate": 0.03, "depth": 6},
+        {"iterations": 5000, "learning_rate": 0.01, "depth": 8},
+    ],
+    "XGB": [
+        {"n_estimators": 5000, "learning_rate": 0.02,
+         "max_depth": 6, "colsample_bytree": 0.7},
+    ],
+    "XT": [{}],
+}
 
 
 # ─── Walk-Forward Splitter ────────────────────────────────────────────────────
@@ -134,9 +269,39 @@ def walk_forward_splits(n: int, n_folds: int, purge: int, embargo: int):
     return splits
 
 
+# ─── Log tee: mirror stdout to a timestamped log file ─────────────────────────
+
+class _Tee:
+    """Mirror writes to stdout and a log file simultaneously."""
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+            s.flush()
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+    def isatty(self):
+        return False
+
+
 # ─── Main Training Loop ──────────────────────────────────────────────────────
 
 def main():
+    # ─── Setup log file tee ───────────────────────────────────────────────────
+    log_dir = PROJECT_ROOT / "models" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = log_dir / f"training_{TIMEFRAME}_{ts}.log"
+    log_file = open(log_path, "w", buffering=1)
+    sys.stdout = _Tee(sys.__stdout__, log_file)
+    sys.stderr = _Tee(sys.__stderr__, log_file)
+    print(f"Log: {log_path}")
+
     try:
         from autogluon.tabular import TabularPredictor
     except ImportError:
@@ -154,55 +319,174 @@ def main():
             print("Continuing without reports. Install: pip install -r requirements-finance.txt")
             generate_regression_report = None
 
+    # ─── Clean stale fold directories ─────────────────────────────────────────
+    if args.clean:
+        for horizon_name in HORIZONS:
+            for fold_i in range(N_FOLDS):
+                fold_dir = MODEL_DIR / horizon_name / f"fold_{fold_i}"
+                if fold_dir.exists():
+                    shutil.rmtree(fold_dir)
+                    print(f"  [clean] Removed {fold_dir.relative_to(PROJECT_ROOT)}")
+        print()
+
     # ─── Load & validate dataset ──────────────────────────────────────────────
 
     if not DATASET_PATH.exists():
         print(f"ERROR: Dataset not found at {DATASET_PATH}")
-        print("Run: npx tsx scripts/build-lean-dataset.ts")
+        if TIMEFRAME == "1h":
+            print("Run: npx tsx scripts/build-lean-dataset.ts")
+        else:
+            print("Run: npx tsx scripts/build-15m-dataset.ts")
         sys.exit(1)
 
-    print(f"Loading dataset: {DATASET_PATH}")
+    print(f"Loading dataset: {DATASET_PATH.name}  (timeframe={TIMEFRAME})")
     df = pd.read_csv(DATASET_PATH)
     print(f"  Rows: {len(df):,}  Columns: {len(df.columns)}")
+
+    # ─── Compute direction targets for 15m dataset ────────────────────────────
+    # The 15m dataset only has target_ret_* columns. Derive binary direction
+    # targets at load time so classify mode works: 1=up (ret>0), 0=down/flat.
+    if COMPUTE_DIR_TARGETS:
+        for suffix, ret_col in [("15m", "target_ret_15m"), ("1h", "target_ret_1h"), ("4h", "target_ret_4h")]:
+            dir_col = f"target_dir_{suffix}"
+            if ret_col in df.columns and dir_col not in df.columns:
+                df[dir_col] = (df[ret_col] > 0).astype(float)
+                # Propagate NaN from the source return column
+                df.loc[df[ret_col].isna(), dir_col] = np.nan
+                print(f"  Computed {dir_col} from {ret_col}  ({df[dir_col].notna().sum():,} non-null)")
 
     # Sort by timestamp (critical for walk-forward integrity)
     df = df.sort_values("timestamp").reset_index(drop=True)
 
-    # Drop rows with NaN targets
-    target_cols = [h["target"] for h in HORIZONS.values()]
-    initial_len = len(df)
-    df = df.dropna(subset=target_cols)
-    dropped = initial_len - len(df)
-    if dropped > 0:
-        print(f"  Dropped {dropped} rows with NaN targets -> {len(df):,} remaining")
+    # NOTE: Do NOT dropna on ALL target cols globally — each horizon drops its own
+    # NaN targets inside the training loop. Global dropna loses rows that are valid
+    # for one horizon but NaN for another (e.g., last 4 rows have target_dir_1h but
+    # not target_dir_4h). This was the original bug.
 
-    # Feature columns = everything except identity + targets
-    feature_cols = [c for c in df.columns if c not in DROP_COLS]
+    # Drop redundant highly-correlated features (>0.99 correlation)
+    # Identified by correlation analysis:
+    #   yield_proxy ≈ zn_ret_1h (r=1.000) — drop yield_proxy (keep the raw)
+    #   usd_shock ≈ e6_ret_1h (r=1.000) — drop usd_shock (keep the raw)
+    #   econ_surprise_index ≈ claims_release_z (r=0.995) — drop econ_surprise_index
+    #   bhg_setups_count_30d ≈ bhg_setups_count_7d (r=0.994) — drop 30d
+    #   news_total_volume_7d ≈ policy_news_volume_7d (r=0.966) — drop news_total
+    REDUNDANT_FEATURES = {
+        "yield_proxy", "usd_shock", "econ_surprise_index",
+        "bhg_setups_count_30d", "news_total_volume_7d",
+    }
+
+    # Feature columns = everything except identity + targets + redundant
+    feature_cols = [c for c in df.columns if c not in DROP_COLS and c not in REDUNDANT_FEATURES]
+    if REDUNDANT_FEATURES & set(df.columns):
+        dropped_feats = REDUNDANT_FEATURES & set(df.columns)
+        print(f"\n  Dropped {len(dropped_feats)} redundant features (>0.99 corr): {sorted(dropped_feats)}")
+
+    # CRITICAL: no target column may ever appear as a feature
+    leaked = [c for c in feature_cols if c.startswith("target_")]
+    assert not leaked, f"TARGET LEAK: these target columns are in feature_cols: {leaked}"
+
+    # ─── OOF mode validation ──────────────────────────────────────────────────
+    # Warn if an existing OOF file appears to be from a different mode.
+    if OOF_OUTPUT.exists():
+        try:
+            old_oof = pd.read_csv(OOF_OUTPUT, nrows=100)
+            for h in HORIZONS:
+                col = f"actual_{h}"
+                if col in old_oof.columns:
+                    vals = old_oof[col].dropna()
+                    if len(vals) > 0:
+                        is_binary = vals.isin([0.0, 1.0]).all()
+                        if MODE == "classify" and not is_binary:
+                            print(f"  WARNING: Existing OOF actual_{h} has non-binary values (regression mode?) "
+                                  f"— will be overwritten by this classify-mode run.")
+                        elif MODE != "classify" and is_binary:
+                            print(f"  WARNING: Existing OOF actual_{h} looks binary — "
+                                  f"was it from a classify run? Current mode: {MODE}")
+        except Exception:
+            pass  # Can't read old OOF — no problem, will be overwritten
 
     # ─── Auto-drop near-empty features ────────────────────────────────────────
     # Features with <MIN_COVERAGE non-null values are noise for tree models.
-    # BHG features (0.2% coverage) and net_sentiment (0.1%) get dropped here.
-
     min_coverage = args.min_coverage
     sparse_cols = []
+    borderline_cols = []
     for col in feature_cols:
         coverage = df[col].notna().mean()
         if coverage < min_coverage:
             sparse_cols.append((col, coverage))
+        elif coverage < min_coverage + 0.20:
+            borderline_cols.append((col, coverage))
 
     if sparse_cols:
         print(f"\n  Dropping {len(sparse_cols)} sparse features (<{min_coverage:.0%} non-null):")
         for col, cov in sparse_cols:
-            print(f"    {col:<32} {cov:.1%}")
+            print(f"    {col:<40} {cov:.1%}")
         feature_cols = [c for c in feature_cols if c not in {s[0] for s in sparse_cols}]
 
-    print(f"\n  Features: {len(feature_cols)}")
-    print(f"  Horizons: {list(HORIZONS.keys())}")
-    print(f"  Presets: {PRESETS}  |  Time/fold: {TIME_LIMIT_PER_FOLD}s  |  Folds: {N_FOLDS}")
-    print(f"  Excluded models: {EXCLUDED_MODELS}")
+    if borderline_cols:
+        print(f"\n  Borderline features ({min_coverage:.0%}–{min_coverage+0.20:.0%} coverage) — kept:")
+        for col, cov in borderline_cols:
+            print(f"    {col:<40} {cov:.1%}")
 
-    total_time_est = TIME_LIMIT_PER_FOLD * N_FOLDS * len(HORIZONS)
-    print(f"  Est. total training time: {total_time_est / 3600:.1f} hours")
+    # ─── Pre-fit sanity checks: inf, NaN, extreme magnitudes ────────────────
+    numeric_cols = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
+    inf_counts = {}
+    huge_counts = {}
+    MAGNITUDE_THRESHOLD = 1e12
+    for col in numeric_cols:
+        n_inf = (~np.isfinite(df[col].fillna(0))).sum()
+        if n_inf > 0:
+            inf_counts[col] = int(n_inf)
+        n_huge = (df[col].abs() > MAGNITUDE_THRESHOLD).sum()
+        if n_huge > 0:
+            huge_counts[col] = int(n_huge)
+
+    if inf_counts:
+        print(f"\n  WARNING: {len(inf_counts)} features contain inf values — replacing with NaN:")
+        for col, cnt in sorted(inf_counts.items(), key=lambda x: -x[1])[:10]:
+            print(f"    {col:<40} {cnt:>6} inf values")
+        df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], np.nan)
+
+    if huge_counts:
+        print(f"\n  WARNING: {len(huge_counts)} features have values > {MAGNITUDE_THRESHOLD:.0e}:")
+        for col, cnt in sorted(huge_counts.items(), key=lambda x: -x[1])[:10]:
+            max_val = df[col].abs().max()
+            print(f"    {col:<40} {cnt:>6} rows (max={max_val:.2e})")
+
+    if not inf_counts and not huge_counts:
+        print(f"\n  Pre-fit checks: CLEAN (no inf, no extreme magnitudes)")
+
+    # ─── Winsorize outliers ─────────────────────────────────────────────────
+    # Clip features to [1st, 99th] percentile per column to tame extreme values
+    winsorized_count = 0
+    for col in numeric_cols:
+        if col in feature_cols:
+            p01, p99 = df[col].quantile(0.01), df[col].quantile(0.99)
+            if p01 == p99:
+                continue  # constant column, skip
+            clipped = df[col].clip(lower=p01, upper=p99)
+            n_clipped = (df[col] != clipped).sum()
+            if n_clipped > 0:
+                df[col] = clipped
+                winsorized_count += 1
+    print(f"\n  Winsorized {winsorized_count} features to [1st, 99th] percentile")
+
+    print(f"\n  Features: {len(feature_cols)}")
+    print(f"  Mode: {MODE}  |  Problem: {PROBLEM_TYPE}  |  Metric: {EVAL_METRIC}")
+    print(f"  Timeframe: {TIMEFRAME}  |  Horizons: {list(HORIZONS.keys())}")
+    tl_label = f"{TIME_LIMIT_PER_FOLD}s" if TIME_LIMIT_PER_FOLD is not None else "unlimited"
+    hp_summary = ", ".join(f"{k}({len(v)})" for k, v in HYPERPARAMETERS.items())
+    print(f"  Phase: {args.phase}  |  Hyperparameters: {hp_summary}  |  Time/fold: {tl_label}  |  Folds: {N_FOLDS}")
+    print(f"  Bagging: {NUM_BAG_FOLDS} folds  |  Stacking: {NUM_STACK_LEVELS} levels  |  DyStack: {DYNAMIC_STACKING}")
+    print(f"  Sequential: num_cpus=1 (single-threaded, one model at a time)")
+    print(f"  Memory ratio: 1.3 (ag.max_memory_usage_ratio)")
+    print(f"  Clean mode: {'YES — old fold dirs deleted' if args.clean else 'NO'}")
+
+    if TIME_LIMIT_PER_FOLD is not None:
+        total_time_est = TIME_LIMIT_PER_FOLD * N_FOLDS * len(HORIZONS)
+        print(f"  Est. total training time: {total_time_est / 3600:.1f} hours")
+    else:
+        print(f"  Est. total training time: unlimited (each model trains to completion)")
     print(f"  Reports: {'DISABLED' if args.skip_reports else REPORT_ROOT}")
 
     # Initialize OOF predictions dataframe
@@ -246,38 +530,40 @@ def main():
             predictor = TabularPredictor(
                 label=target_col,
                 path=str(fold_dir),
-                problem_type="regression",
-                eval_metric="mean_absolute_error",
+                problem_type=PROBLEM_TYPE,
+                eval_metric=EVAL_METRIC,
                 verbosity=2,
             )
 
-            # ─── THE OPTIMIZED FIT CALL ───────────────────────────────────
+            # ─── FIT CALL (phase-configured) ──────────────────────────────
             #
-            # Models kept: GBM, CAT, XGB, XT → stacked ensemble
-            # Models killed: KNN, FASTAI, RF, NN_TORCH
+            # Phase 1: no bagging/stacking — raw model leaderboard, fast sanity check
+            # Phase 2: light bagging (3-fold) + 1 stack level, dynamic_stacking OFF
             #
-            # Key tuning:
-            #   num_bag_folds=3      (sufficient with 36K rows; saves ~40% vs 5)
-            #   num_stack_levels=1   (single stack — more = overfitting risk)
-            #   early_stopping=30    (tight for weak financial signal)
-            #   num_gpus=0           (CPU-only for Apple Silicon reliability)
-            #   sequential_local     (memory-safe on unified memory)
+            # dynamic_stacking=False prevents AutoGluon's DyStack sub-fits inside
+            # our outer walk-forward folds (avoids double-ensembling on noise).
             #
-            predictor.fit(
+            fit_kwargs = dict(
                 train_data=train_data,
-                time_limit=TIME_LIMIT_PER_FOLD,
-                presets=PRESETS,
+                hyperparameters=HYPERPARAMETERS,
+                num_cpus=1,
                 num_gpus=0,
-                excluded_model_types=EXCLUDED_MODELS,
-                num_bag_folds=3,
-                num_stack_levels=1,
-                ag_args_ensemble={
-                    "fold_fitting_strategy": "sequential_local",
-                },
+                num_bag_folds=NUM_BAG_FOLDS,
+                num_stack_levels=NUM_STACK_LEVELS,
+                dynamic_stacking=DYNAMIC_STACKING,
                 ag_args_fit={
+                    "num_cpus": 1,
                     "num_early_stopping_rounds": 30,
+                    "ag.max_memory_usage_ratio": 1.3,
                 },
             )
+            if TIME_LIMIT_PER_FOLD is not None:
+                fit_kwargs["time_limit"] = TIME_LIMIT_PER_FOLD
+            if NUM_BAG_FOLDS > 0:
+                fit_kwargs["ag_args_ensemble"] = {
+                    "fold_fitting_strategy": "sequential_local",
+                }
+            predictor.fit(**fit_kwargs)
 
             # Fold leaderboard
             leaderboard = predictor.leaderboard(val_data, silent=True)
@@ -285,23 +571,90 @@ def main():
             print(leaderboard.head(10).to_string())
 
             # OOF predictions for this fold
-            preds = predictor.predict(val_data[feature_cols])
-            preds_np = preds.to_numpy() if hasattr(preds, "to_numpy") else np.asarray(preds)
+            if MODE == "classify":
+                # Use probability of class 1 (up) for ranking and thresholding
+                # CRITICAL: extract P(class=1) by explicit label, never by position
+                preds_proba = predictor.predict_proba(val_data[feature_cols])
+                class_labels = predictor.class_labels  # ordered list of classes
+                pos_label = 1  # target encoding: 1=up, 0=down
+
+                if fold_i == 0:
+                    print(f"    [prob-check] class_labels={class_labels}")
+                    print(f"    [prob-check] preds_proba.columns={list(preds_proba.columns)}")
+                    print(f"    [prob-check] preds_proba.iloc[0]={preds_proba.iloc[0].to_dict()}")
+
+                if pos_label in preds_proba.columns:
+                    preds_np = preds_proba[pos_label].to_numpy()
+                elif str(pos_label) in preds_proba.columns:
+                    preds_np = preds_proba[str(pos_label)].to_numpy()
+                else:
+                    # Last resort: find pos_label index in class_labels
+                    pos_idx = list(class_labels).index(pos_label)
+                    preds_np = preds_proba.iloc[:, pos_idx].to_numpy()
+                    print(f"    [prob-check] WARNING: used positional index {pos_idx} for class {pos_label}")
+
+                # Guardrails: verify probabilities are valid
+                assert preds_np.min() >= 0.0 and preds_np.max() <= 1.0, \
+                    f"Probabilities out of [0,1]: min={preds_np.min():.4f}, max={preds_np.max():.4f}"
+                base_rate = val_data[target_col].mean()
+                pred_mean = preds_np.mean()
+                if fold_i == 0:
+                    print(f"    [prob-check] base_rate={base_rate:.4f}, pred_mean={pred_mean:.4f}")
+                    if abs(pred_mean - (1 - base_rate)) < abs(pred_mean - base_rate):
+                        print(f"    [prob-check] WARNING: pred_mean closer to 1-base_rate — POSSIBLE INVERSION!")
+
+                preds_class = (preds_np >= 0.5).astype(int)
+            else:
+                preds = predictor.predict(val_data[feature_cols])
+                preds_np = preds.to_numpy() if hasattr(preds, "to_numpy") else np.asarray(preds)
             oof_preds.loc[val_data.index] = preds_np
 
             # Fold-level metrics
             actuals = val_data[target_col].values
-            fold_mae = mean_absolute_error(actuals, preds_np)
-            fold_rmse = np.sqrt(mean_squared_error(actuals, preds_np))
-            print(f"\n    Fold MAE: {fold_mae:.6f}  RMSE: {fold_rmse:.6f}")
+            if MODE == "classify":
+                from sklearn.metrics import roc_auc_score, accuracy_score
+                fold_auc = roc_auc_score(actuals, preds_np)
+                fold_acc = accuracy_score(actuals, preds_class)
+                fold_ic, _ = spearmanr(actuals, preds_np)
+                print(f"\n    Fold AUC: {fold_auc:.4f}  Acc: {fold_acc:.4f}  IC: {fold_ic:.4f}")
+            else:
+                fold_mae = mean_absolute_error(actuals, preds_np)
+                fold_rmse = np.sqrt(mean_squared_error(actuals, preds_np))
+                fold_ic, _ = spearmanr(actuals, preds_np)
+                print(f"\n    Fold MAE: {fold_mae:.6f}  RMSE: {fold_rmse:.6f}  IC: {fold_ic:.4f}")
 
             # Feature importance from best single model (not ensemble)
+            top_features = []
             try:
                 importance = predictor.feature_importance(val_data, silent=True)
                 top5 = importance.head(5)
                 print(f"    Top 5 features: {list(top5.index)}")
+                top_features = list(top5.index)
             except Exception:
                 pass  # Some folds may not support importance
+
+            # ─── Fold metadata JSON ───────────────────────────────────────
+            fold_meta = {
+                "horizon": horizon_name,
+                "fold": fold_i,
+                "n_train": len(train_data),
+                "n_val": len(val_data),
+                "n_features": len(feature_cols),
+                "models_trained": list(leaderboard["model"].values) if "model" in leaderboard.columns else [],
+                "top_features": top_features,
+            }
+            if MODE == "classify":
+                fold_meta["auc"] = float(fold_auc)
+                fold_meta["acc"] = float(fold_acc)
+                fold_meta["ic"] = float(fold_ic)
+            else:
+                fold_meta["mae"] = float(fold_mae)
+                fold_meta["rmse"] = float(fold_rmse)
+                fold_meta["ic"] = float(fold_ic)
+            fold_meta_path = fold_dir / "fold_meta.json"
+            with open(fold_meta_path, "w") as f:
+                json.dump(fold_meta, f, indent=2)
+            print(f"    Fold metadata: {fold_meta_path.relative_to(PROJECT_ROOT)}")
 
         # ─── Aggregate OOF metrics for this horizon ───────────────────────────
 
@@ -310,41 +663,68 @@ def main():
         oof_pred = oof_preds[oof_mask].values
 
         if len(oof_actual) > 0:
-            mae = mean_absolute_error(oof_actual, oof_pred)
-            rmse = np.sqrt(mean_squared_error(oof_actual, oof_pred))
-            r2 = r2_score(oof_actual, oof_pred)
+            ic, ic_pval = spearmanr(oof_actual, oof_pred)
 
-            results[horizon_name] = {
-                "MAE": mae, "RMSE": rmse, "R2": r2,
-                "n_oof": len(oof_actual),
-            }
+            if MODE == "classify":
+                from sklearn.metrics import roc_auc_score, accuracy_score
+                auc = roc_auc_score(oof_actual, oof_pred)
+                acc = accuracy_score(oof_actual, (oof_pred >= 0.5).astype(int))
+                # Trading-relevant: accuracy at high-confidence thresholds
+                high_conf_mask = (oof_pred >= 0.55) | (oof_pred <= 0.45)
+                hc_acc = accuracy_score(
+                    oof_actual[high_conf_mask],
+                    (oof_pred[high_conf_mask] >= 0.5).astype(int)
+                ) if high_conf_mask.sum() > 0 else 0
+                hc_n = high_conf_mask.sum()
 
-            print(f"\n  === OOF Results: {horizon_name} ===")
-            print(f"    MAE:  {mae:.6f}")
-            print(f"    RMSE: {rmse:.6f}")
-            print(f"    R2:   {r2:.4f}")
-            print(f"    n:    {len(oof_actual):,}")
+                results[horizon_name] = {
+                    "AUC": auc, "Acc": acc, "HC_Acc": hc_acc, "HC_n": hc_n,
+                    "IC": ic, "IC_pval": ic_pval, "n_oof": len(oof_actual),
+                }
 
-            # Generate report artifacts if enabled
-            if generate_regression_report is not None:
-                report_dir = REPORT_ROOT / "core_forecaster" / "1h" / horizon_name
+                print(f"\n  === OOF Results: {horizon_name} ===")
+                print(f"    AUC:       {auc:.4f}  {'<-- SIGNAL' if auc > 0.52 else '<-- below threshold'}")
+                print(f"    Accuracy:  {acc:.4f}  ({acc*100:.1f}%)")
+                print(f"    HC Acc:    {hc_acc:.4f}  ({hc_acc*100:.1f}% on {hc_n:,} high-conf rows, p>0.55 or p<0.45)")
+                print(f"    IC:        {ic:.4f}  (p={ic_pval:.2e})")
+                print(f"    n:         {len(oof_actual):,}")
+            else:
+                mae = mean_absolute_error(oof_actual, oof_pred)
+                rmse = np.sqrt(mean_squared_error(oof_actual, oof_pred))
+                r2 = r2_score(oof_actual, oof_pred)
+
+                results[horizon_name] = {
+                    "MAE": mae, "RMSE": rmse, "R2": r2, "IC": ic, "IC_pval": ic_pval,
+                    "n_oof": len(oof_actual),
+                }
+
+                print(f"\n  === OOF Results: {horizon_name} ===")
+                print(f"    MAE:  {mae:.6f}")
+                print(f"    RMSE: {rmse:.6f}")
+                print(f"    R2:   {r2:.4f}")
+                print(f"    IC:   {ic:.4f}  (p={ic_pval:.2e})")
+                print(f"    n:    {len(oof_actual):,}")
+
+            # Generate regression report artifacts only for regression-style modes
+            if generate_regression_report is not None and MODE in {"regress", "volnorm"}:
+                report_dir = REPORT_ROOT / "core_forecaster" / TIMEFRAME / horizon_name
                 try:
                     report_summary = generate_regression_report(
-                        model_name=f"core_forecaster_1h_{horizon_name}",
+                        model_name=f"core_forecaster_{TIMEFRAME}_{horizon_name}",
                         timestamps=df.loc[oof_mask, "timestamp"],
                         actual=oof_actual,
                         predicted=oof_pred,
                         out_dir=report_dir,
                         metadata={
+                            "timeframe": TIMEFRAME,
                             "horizon": horizon_name,
                             "target_col": target_col,
                             "folds": len(splits),
                             "purge_bars": purge,
                             "embargo_bars": embargo,
-                            "presets": PRESETS,
+                            "hyperparameters": list(HYPERPARAMETERS.keys()),
                             "time_limit_per_fold": TIME_LIMIT_PER_FOLD,
                             "feature_count": len(feature_cols),
-                            "excluded_models": EXCLUDED_MODELS,
                         },
                     )
                     pyfolio_state = "enabled" if report_summary.get("pyfolio", {}).get("enabled") else "skipped"
@@ -367,21 +747,39 @@ def main():
     # ─── Final Summary ────────────────────────────────────────────────────────
 
     print(f"\n{'='*60}")
-    print("SUMMARY: MES Core Return Forecaster")
+    MODE_LABELS = {
+        "classify": "Direction Classifier (binary)",
+        "volnorm": "Vol-Normalized Forecaster",
+        "regress": "Raw Return Forecaster",
+    }
+    print(f"SUMMARY: MES Core {MODE_LABELS.get(MODE, MODE)}  [{TIMEFRAME}]")
     print(f"{'='*60}")
-    print(f"Dataset:  mes_lean_1h.csv ({len(df):,} rows x {len(df.columns)} cols)")
+    print(f"Dataset:  {DATASET_PATH.name} ({len(df):,} rows x {len(df.columns)} cols)")
     print(f"Features: {len(feature_cols)}")
-    print(f"Models:   GBM + CAT + XGB + XT -> WeightedEnsemble")
-    print(f"Presets:  {PRESETS}  |  Time/fold: {TIME_LIMIT_PER_FOLD}s")
+    print(f"Mode:     {MODE}  |  Metric: {EVAL_METRIC}")
+    print(f"Phase:    {args.phase}  |  Hyperparams: {hp_summary}  |  Time/fold: {tl_label}")
+    print(f"Models:   GBM + CAT + XGB + XT {'-> WeightedEnsemble' if NUM_STACK_LEVELS > 0 else '(no stacking)'}")
     print()
-    print(f"{'Horizon':<10} {'MAE':>10} {'RMSE':>10} {'R2':>8} {'n':>8}")
-    print(f"{'-'*48}")
-    for h, r in results.items():
-        print(f"{h:<10} {r['MAE']:>10.6f} {r['RMSE']:>10.6f} {r['R2']:>8.4f} {r['n_oof']:>8,}")
+    if MODE == "classify":
+        print(f"{'Horizon':<10} {'AUC':>8} {'Acc':>8} {'HC_Acc':>8} {'HC_n':>8} {'IC':>8} {'n':>8}")
+        print(f"{'-'*60}")
+        for h, r in results.items():
+            signal = " <SIGNAL" if r["AUC"] > 0.52 else ""
+            print(f"{h:<10} {r['AUC']:>8.4f} {r['Acc']:>8.4f} {r['HC_Acc']:>8.4f} {r['HC_n']:>8,} {r['IC']:>8.4f} {r['n_oof']:>8,}{signal}")
+    else:
+        print(f"{'Horizon':<10} {'MAE':>10} {'RMSE':>10} {'R2':>8} {'IC':>8} {'n':>8}")
+        print(f"{'-'*56}")
+        for h, r in results.items():
+            print(f"{h:<10} {r['MAE']:>10.6f} {r['RMSE']:>10.6f} {r['R2']:>8.4f} {r['IC']:>8.4f} {r['n_oof']:>8,}")
 
     if results:
-        print(f"\nNext: Use models/core_forecaster/{{horizon}}/fold_N/ for inference")
-        print(f"      OOF file: {OOF_OUTPUT}")
+        print(f"\nModels: {MODEL_DIR}")
+        print(f"OOF:    {OOF_OUTPUT}")
+        print(f"Log:    {log_path}")
+
+    log_file.close()
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
 
 
 if __name__ == "__main__":

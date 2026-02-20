@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { fetchCandlesForSymbol } from '@/lib/fetch-candles'
 import { fetchDailyCandlesForSymbol } from '@/lib/fetch-candles'
 import { detectSwings } from '@/lib/swing-detection'
-import { calculateFibonacci } from '@/lib/fibonacci'
+import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
 import { generateCompositeSignal } from '@/lib/signals'
 import { generateForecast } from '@/lib/forecast'
@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
       SYMBOL_KEYS.map(async (symbol) => {
         const candles = await fetchCandlesForSymbol(symbol)
         const { highs, lows } = detectSwings(candles)
-        const fibResult = calculateFibonacci(highs, lows)
+        const fibResult = calculateFibonacciMultiPeriod(candles)
         const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : 0
         const firstClose = candles.length > 1 ? candles[0].close : currentPrice
         const percentChange = firstClose > 0
