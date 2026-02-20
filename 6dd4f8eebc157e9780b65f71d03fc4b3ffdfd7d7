@@ -1,0 +1,49 @@
+package.json
+  88e8fddd7e10bd8f 50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "6dd4f8eebc157e9780b65f71d03fc4b3ffdfd7d7",
+  "prompts": {
+    "087d849f0eddd9cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6aa2d67-2490-4d9e-aa2f-9cad0adc86cd",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    },
+    "88e8fddd7e10bd8f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03576f8e-0573-453e-8419-4d5607408b4b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "96eae09dd2f364aa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d53d1bff-e0bd-4100-a097-3a881daa5bbb",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 359,
+      "overriden_lines": 0
+    }
+  }
+}
