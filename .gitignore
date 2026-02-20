@@ -25,9 +25,9 @@ mes_hft_halsey/*.csv
 mes_hft_halsey/models/
 mes_hft_halsey/output/
 datasets/autogluon/
-models/core_forecaster/
-models/fib_scorer/
-models/reports/
+models/
+.claude/
+.mcp.json
 **/__pycache__/
 *.pyc
 .venv-autogluon/
