@@ -1,0 +1,142 @@
+src/app/api/mes/setups/route.ts
+  1eda8aaedda6a0a9 4,57,59
+src/app/api/forecast/route.ts
+  1eda8aaedda6a0a9 5,72
+scripts/check-db-alignment.ts
+  88e8fddd7e10bd8f 1-387
+src/components/LiveMesChart.tsx
+  1eda8aaedda6a0a9 19,336,338
+indicators/rabid-raccoon.pine
+  1eda8aaedda6a0a9 21-23,244,246-254,257-341,344-348,355-358,369-373,381-390,393
+src/lib/fibonacci.ts
+  1eda8aaedda6a0a9 2,4-5,7-17,20,23-26,29-32,34-35,49-51,53,83-176,179-185,188-189,191-192,195
+scripts/train-core-forecaster.py
+  96eae09dd2f364aa 7-8,14-19,46,48-50,53-56,70,74,87-90,104-105,108-112,114,116,129,134-158,160,182,272-291,295-304,322-331,336-339,342,346-356,388-406,412,417-418,423,426-429,447,454,476,483,604,686,710,713,719,755,757,767-768,776-782
+  ad985cba8a110073 30,33,60-64,189,191,477,481,485,487-489,549,555,560-561
+  df3a7514a11f9f72 23,26-29,36,41-43,57-59,75,91-93,95-99,102-103,117-121,124-127,133,162-175,185-188,190,192-201,384-387,431-446,448-453,455-472,475,480,533-534,538,540-541,543-544,546,551-553,562-566,574-603,605-607,614-620,623-624,666,668-685,687-691,695,697,700,705,750-754,759,761,763-766,769-771,773
+  88e8fddd7e10bd8f 31-32,68,213-237,478-479,482,548,557,627,632,636-657,725,760
+  62ad7c44b11a94d2 361-382
+  e08985568bc78282 25,94,708-709
+src/app/api/market-data/route.ts
+  1eda8aaedda6a0a9 4,30
+src/lib/instant-analysis.ts
+  1eda8aaedda6a0a9 15,343,345,1040
+scripts/build-lean-dataset.ts
+  e08985568bc78282 140,1009-1010,1020,1022,1280,1282,1291,1501,1505,1510,1563,1565,1577
+  df3a7514a11f9f72 264-558,829,833-837,839,941-953,956-961,963-967,969-975,977-991,994-996,999-1007,1037,1040-1049,1051,1070-1078,1105-1113,1136-1137,1154-1190,1199-1202,1207-1208,1211,1219-1241,1243-1255,1257-1264,1271-1279,1297-1303,1321-1327,1351-1386,1422,1425,1427-1434,1438-1447,1491-1499,1520-1521,1524,1532-1540,1542-1547,1549-1553,1560-1562,1601-1606,1608-1615,1618-1632,1667-1669,1671-1673,1678-1680,1682-1685
+scripts/build-bhg-dataset.ts
+  1eda8aaedda6a0a9 30,34,371-376,399-400,554-570,650-654,869,888
+scripts/feature-utils.ts
+  df3a7514a11f9f72 193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "db80600de5c9f72df4d3e02f6a454669b9ca4a3d",
+  "prompts": {
+    "087d849f0eddd9cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6aa2d67-2490-4d9e-aa2f-9cad0adc86cd",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 0,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    },
+    "1eda8aaedda6a0a9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "61886ee6-bfe4-43ec-83d1-22b698c3e2fe",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 348,
+      "total_deletions": 154,
+      "accepted_lines": 313,
+      "overriden_lines": 0
+    },
+    "62ad7c44b11a94d2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c7b9d-9176-7d00-b65c-f6c5e3ef8935",
+        "model": "unknown"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 12,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    },
+    "88e8fddd7e10bd8f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03576f8e-0573-453e-8419-4d5607408b4b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 447,
+      "total_deletions": 10,
+      "accepted_lines": 447,
+      "overriden_lines": 0
+    },
+    "96eae09dd2f364aa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d53d1bff-e0bd-4100-a097-3a881daa5bbb",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 557,
+      "total_deletions": 62,
+      "accepted_lines": 524,
+      "overriden_lines": 0
+    },
+    "ad985cba8a110073": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ed78c06-1c33-491b-879c-19be77e19670",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 15,
+      "accepted_lines": 19,
+      "overriden_lines": 0
+    },
+    "df3a7514a11f9f72": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51e43faa-0175-41ab-ab2f-e8310f150ca7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 1078,
+      "total_deletions": 214,
+      "accepted_lines": 857,
+      "overriden_lines": 0
+    },
+    "e08985568bc78282": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c72ba-7ede-7d31-99fc-e53134a44194",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 37,
+      "total_deletions": 240,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
