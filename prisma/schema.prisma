@@ -95,9 +95,40 @@ model Symbol {
   mktFutures1d    MktFutures1d[]
   measuredMoves   MeasuredMoveSignal[]
   mappings        SymbolMapping[]
+  roleMembers     SymbolRoleMember[]
 
   @@index([dataSource, isActive], map: "symbols_source_active_idx")
   @@map("symbols")
+}
+
+model SymbolRole {
+  roleKey     String             @id @map("role_key") @db.VarChar(64)
+  description String
+  isActive    Boolean            @default(true) @map("is_active")
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  members     SymbolRoleMember[]
+
+  @@index([isActive], map: "symbol_roles_is_active_idx")
+  @@map("symbol_roles")
+}
+
+model SymbolRoleMember {
+  id         BigInt     @id @default(autoincrement())
+  roleKey    String     @map("role_key") @db.VarChar(64)
+  symbolCode String     @map("symbol_code") @db.VarChar(16)
+  position   Int
+  enabled    Boolean    @default(true)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  role       SymbolRole @relation(fields: [roleKey], references: [roleKey], onDelete: Cascade, onUpdate: Cascade)
+  symbol     Symbol     @relation(fields: [symbolCode], references: [code], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([roleKey, symbolCode], map: "symbol_role_members_role_symbol_key")
+  @@unique([roleKey, position], map: "symbol_role_members_role_position_key")
+  @@index([symbolCode], map: "symbol_role_members_symbol_code_idx")
+  @@index([roleKey, enabled], map: "symbol_role_members_role_enabled_idx")
+  @@map("symbol_role_members")
 }
 
 model SymbolMapping {
