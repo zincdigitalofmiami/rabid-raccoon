@@ -28,6 +28,7 @@
     "ingest:mes:live:stream": "tsx scripts/ingest-mes-live-stream.ts",
     "ingest:mes:backfill": "tsx scripts/backfill-mes-15m-1h-1d.ts",
     "ingest:all": "tsx scripts/ingest-all.ts",
+    "registry:snapshot": "tsx scripts/generate-symbol-registry-snapshot.ts",
     "ingest:fred:complete": "tsx scripts/ingest-fred-complete.ts",
     "econ:series:reconcile": "tsx scripts/reconcile-economic-series.ts",
     "import:fusion:econ": "tsx scripts/import-fusion-econ.ts",
