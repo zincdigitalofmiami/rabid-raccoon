@@ -4,7 +4,7 @@ import { Timeframe } from '@prisma/client'
 import { Decimal } from '@prisma/client/runtime/client'
 import { prisma } from '../src/lib/prisma'
 import { toNum } from '../src/lib/decimal'
-import { loadDotEnvFiles, parseArg } from './ingest-utils'
+import { loadDotEnvFiles, neutralizeFormula, parseArg, safeOutputPath } from './ingest-utils'
 import { dateKeyUtc, laggedWindowKeys, shiftUtcDays } from './feature-availability'
 
 type DailyPoint = { eventDate: Date; value: Decimal | number | null }
@@ -297,7 +297,7 @@ async function run(): Promise<void> {
     for (const ns of newsSignals) {
       const nk = dateKeyUtc(ns.pubDate)
       if (nk >= h7dStart && nk <= h7dEnd) {
-        headlineTexts.push(ns.title)
+        headlineTexts.push(neutralizeFormula(ns.title))
         if (headlineTexts.length >= 20) break
       }
     }
@@ -343,7 +343,7 @@ async function run(): Promise<void> {
     throw new Error('Target validation failed: non-positive or invalid target values detected.')
   }
 
-  writeCsv(path.resolve(process.cwd(), outFile), output)
+  writeCsv(safeOutputPath(outFile, path.resolve(__dirname, '..')), output)
 
   const schema = {
     dataset: 'MES_1H',

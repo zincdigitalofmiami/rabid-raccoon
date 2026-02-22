@@ -25,7 +25,7 @@
  */
 
 import { prisma } from '../src/lib/prisma'
-import { loadDotEnvFiles, parseArg } from './ingest-utils'
+import { loadDotEnvFiles, neutralizeFormula, parseArg, safeOutputPath } from './ingest-utils'
 import { detectSwings } from '../src/lib/swing-detection'
 import { calculateFibonacciMultiPeriod } from '../src/lib/fibonacci'
 import { detectMeasuredMoves } from '../src/lib/measured-move'
@@ -811,7 +811,7 @@ async function main() {
   loadDotEnvFiles()
 
   const daysBack = parseInt(parseArg('days-back', '730'), 10)
-  const outPath = parseArg('out', 'datasets/autogluon/bhg_setups.csv')
+  const outPath = safeOutputPath(parseArg('out', 'datasets/autogluon/bhg_setups.csv'), path.resolve(__dirname, '..'))
   const shouldPersist = parseArg('persist', 'true').toLowerCase() !== 'false'
 
   console.log(`Building BHG setup dataset (last ${daysBack} days)`)
@@ -898,7 +898,7 @@ async function main() {
         for (const ns of newsSignals) {
           const nk = dateKeyUtc(ns.pubDate)
           if (nk >= h24Start && nk <= h24End) {
-            headlineTexts.push(ns.title)
+            headlineTexts.push(neutralizeFormula(ns.title))
             if (headlineTexts.length >= 20) break
           }
         }
@@ -956,7 +956,7 @@ async function main() {
       header.map(col => {
         const val = (row as unknown as Record<string, unknown>)[col]
         if (val == null) return ''
-        if (typeof val === 'string') return `"${val}"`
+        if (typeof val === 'string') return `"${val.replace(/"/g, '""')}"`
         if (typeof val === 'number') return Number.isFinite(val) ? val.toString() : ''
         return String(val)
       }).join(',')

@@ -20,7 +20,7 @@
 
 import { prisma } from '../src/lib/prisma'
 import { toNum } from '../src/lib/decimal'
-import { loadDotEnvFiles, parseArg } from './ingest-utils'
+import { loadDotEnvFiles, neutralizeFormula, parseArg, safeOutputPath } from './ingest-utils'
 import {
   asofLookupByDateKey,
   conservativeLagDaysForFrequency,
@@ -608,7 +608,7 @@ async function run(): Promise<void> {
     for (const ns of newsSignals) {
       const nk = dateKeyUtc(ns.pubDate)
       if (nk >= ts7dKey && nk <= tsKey) {
-        headlineTexts.push(ns.title)
+        headlineTexts.push(neutralizeFormula(ns.title))
         if (headlineTexts.length >= 20) break
       }
     }
@@ -650,7 +650,7 @@ async function run(): Promise<void> {
   }
 
   // ── 6. Write CSV ──
-  const outPath = path.resolve(outFile)
+  const outPath = safeOutputPath(outFile, path.resolve(__dirname, '..'))
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
 
   const csvLines = [header.join(','), ...rows.map((r) => r.join(','))]

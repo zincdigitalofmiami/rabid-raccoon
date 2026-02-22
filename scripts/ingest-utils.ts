@@ -123,3 +123,20 @@ export function asUtcDateFromUnixSeconds(seconds: number): Date {
   return new Date(seconds * 1000)
 }
 
+/** Neutralize spreadsheet formula injection in untrusted text before CSV export. */
+export function neutralizeFormula(value: string): string {
+  const trimmed = value.trimStart()
+  if (/^[=+\-@]/.test(trimmed)) return "'" + value
+  return value
+}
+
+/** Constrain an output path to stay within the project root. Uses path.relative() to prevent sibling-prefix bypass. */
+export function safeOutputPath(raw: string, projectRoot: string): string {
+  const resolved = path.resolve(raw)
+  const rel = path.relative(projectRoot, resolved)
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Output path "${resolved}" is outside project root "${projectRoot}"`)
+  }
+  return resolved
+}
+

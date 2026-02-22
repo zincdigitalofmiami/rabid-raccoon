@@ -158,7 +158,7 @@ function stripHtml(value: string): string {
 
 function cleanText(value: string | null): string | null {
   if (!value) return null
-  const text = decodeEntities(stripCdata(value)).trim()
+  const text = stripHtml(decodeEntities(stripCdata(value))).trim()
   return text.length ? text : null
 }
 

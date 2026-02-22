@@ -734,9 +734,13 @@ async function failStaleRuns(job: string): Promise<void> {
 
 export async function runImportFusionEcon(): Promise<void> {
   const jobName = 'fusion-econ-full-import'
+  const rejectUnauthorized = process.env.FUSION_SSL_REJECT_UNAUTHORIZED !== 'false'
+  if (!rejectUnauthorized) {
+    console.warn('[fusion-econ] WARNING: TLS certificate verification disabled via FUSION_SSL_REJECT_UNAUTHORIZED')
+  }
   const source = new Client({
     connectionString: requireFusionUrl(),
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized },
   })
 
   await source.connect()

@@ -3,6 +3,26 @@ import { loadDotEnvFiles } from './ingest-utils'
 
 loadDotEnvFiles()
 
+// SECURITY: Allowlists for SQL identifiers used in $queryRawUnsafe calls.
+// All values are constant-owned. Never accept user input for these.
+const ALLOWED_TABLES = new Set([
+  'mkt_futures_mes_1h', 'mkt_futures_mes_15m', 'mkt_futures_mes_1d',
+  'mkt_futures_1h', 'mkt_futures_1d',
+  'econ_rates_1d', 'econ_yields_1d', 'econ_fx_1d', 'econ_vol_indices_1d',
+  'econ_inflation_1d', 'econ_labor_1d', 'econ_activity_1d', 'econ_money_1d',
+  'econ_commodities_1d', 'econ_indexes_1d', 'econ_news_1d', 'policy_news_1d',
+  'macro_reports_1d', 'econ_calendar', 'news_signals',
+  'measured_move_signals', 'bhg_setups', 'ingestion_runs',
+])
+const ALLOWED_COLUMNS = new Set([
+  'eventTime', 'eventDate', 'pubDate', 'timestamp', 'goTime', 'startedAt',
+  'symbolCode', 'seriesId', 'layer', 'timeframe',
+])
+
+function assertAllowedId(value: string, allowlist: Set<string>, label: string) {
+  if (!allowlist.has(value)) throw new Error(`Disallowed ${label}: "${value}"`)
+}
+
 interface TableSummary {
   table: string
   rows: number
@@ -16,6 +36,10 @@ async function queryTable(
   dateCol: string,
   groupCol?: string
 ): Promise<void> {
+  assertAllowedId(table, ALLOWED_TABLES, 'table')
+  assertAllowedId(dateCol, ALLOWED_COLUMNS, 'column')
+  if (groupCol) assertAllowedId(groupCol, ALLOWED_COLUMNS, 'column')
+
   try {
     if (groupCol) {
       const rows = await prisma.$queryRawUnsafe<
@@ -112,6 +136,7 @@ async function main() {
   // ── Ingestion Runs ──
   console.log('\n\n── INGESTION RUNS (last 10) ─────────────────')
   try {
+    // No interpolated identifiers — this query is fully constant
     const runs = await prisma.$queryRawUnsafe<
       Array<{
         job: string
@@ -154,6 +179,8 @@ async function main() {
 
   const summary: TableSummary[] = []
   for (const { table, dateCol } of summaryTables) {
+    assertAllowedId(table, ALLOWED_TABLES, 'table')
+    assertAllowedId(dateCol, ALLOWED_COLUMNS, 'column')
     try {
       const rows = await prisma.$queryRawUnsafe<
         Array<{ count: number; min_date: Date; max_date: Date }>
