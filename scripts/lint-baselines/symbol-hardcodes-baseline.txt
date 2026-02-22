@@ -1,0 +1,210 @@
+scripts/backfill-futures-all.ts:28:const NON_MES_ACTIVE = ['ES', 'NQ', 'YM', 'RTY', 'SOX', 'ZN', 'ZB', 'ZF', 'CL', 'GC', 'SI']
+scripts/backfill-futures-all.ts:41:    symbols: symbolsArg ? symbolsArg.split(',').map(s => s.trim().toUpperCase()) : NON_MES_ACTIVE,
+scripts/build-autogluon-1h-dataset.ts:213:        symbolCode: 'MES',
+scripts/build-lean-dataset.ts:1091:  for (const sym of CROSS_ASSET_SYMBOLS) {
+scripts/build-lean-dataset.ts:1152:  console.log(`[lean-dataset] Cross-asset technicals computed for ${CROSS_ASSET_SYMBOLS.length} symbols`)
+scripts/build-lean-dataset.ts:1168:  const mesNqCorr = rollingPearsonCorr(mesRet1hArr, crossAssetTech.get('NQ')!.ret1h, CORR_WINDOW)
+scripts/build-lean-dataset.ts:1169:  const mesClCorr = rollingPearsonCorr(mesRet1hArr, crossAssetTech.get('CL')!.ret1h, CORR_WINDOW)
+scripts/build-lean-dataset.ts:1170:  const mesE6Corr = rollingPearsonCorr(mesRet1hArr, crossAssetTech.get('6E')!.ret1h, CORR_WINDOW)
+scripts/build-lean-dataset.ts:1171:  const mesZnCorr = rollingPearsonCorr(mesRet1hArr, crossAssetTech.get('ZN')!.ret1h, CORR_WINDOW)
+scripts/build-lean-dataset.ts:1283:    ...CROSS_ASSET_SYMBOLS.flatMap(sym => [
+scripts/build-lean-dataset.ts:147:const CROSS_ASSET_SYMBOLS: CrossAssetSymbol[] = [
+scripts/build-lean-dataset.ts:148:  { code: 'NQ',  prefix: 'nq'  },  // tech beta / duration
+scripts/build-lean-dataset.ts:149:  { code: 'ZN',  prefix: 'zn'  },  // 10Y rate impulse
+scripts/build-lean-dataset.ts:150:  { code: 'CL',  prefix: 'cl'  },  // energy / AI power narrative
+scripts/build-lean-dataset.ts:151:  { code: '6E',  prefix: 'e6'  },  // EUR/USD — USD liquidity (prefix avoids leading digit)
+scripts/build-lean-dataset.ts:152:  { code: '6J',  prefix: 'j6'  },  // JPY/USD — carry unwind stress
+scripts/build-lean-dataset.ts:153:  { code: 'NG',  prefix: 'ng'  },  // natural gas — AI data center power
+scripts/build-lean-dataset.ts:1566:      ...CROSS_ASSET_SYMBOLS.flatMap(sym => {
+scripts/build-lean-dataset.ts:1580:        const nq = crossAssetTech.get('NQ')!.ret1h[i]
+scripts/build-lean-dataset.ts:1588:        const znRet = crossAssetTech.get('ZN')!.ret1h[i]
+scripts/build-lean-dataset.ts:1593:        const e6Ret = crossAssetTech.get('6E')!.ret1h[i]
+scripts/build-lean-dataset.ts:1598:        const j6Ret = crossAssetTech.get('6J')!.ret1h[i]
+scripts/build-lean-dataset.ts:1612:        for (const sym of CROSS_ASSET_SYMBOLS) {
+scripts/build-lean-dataset.ts:1622:        const nqR = crossAssetTech.get('NQ')!.ret1h[i]
+scripts/build-lean-dataset.ts:1623:        const znR = crossAssetTech.get('ZN')!.ret1h[i]
+scripts/build-lean-dataset.ts:786:  console.log(`[lean-dataset] Loading cross-asset hourly candles (${CROSS_ASSET_SYMBOLS.map(s => s.code).join(', ')})...`)
+scripts/build-lean-dataset.ts:794:  for (const sym of CROSS_ASSET_SYMBOLS) {
+scripts/build-lean-dataset.ts:822:  for (const sym of CROSS_ASSET_SYMBOLS) {
+scripts/build-lean-dataset.ts:831:  for (const sym of CROSS_ASSET_SYMBOLS) {
+scripts/check-db-alignment.ts:139:      const expectedSymbols = ['NQ', 'ZN', 'CL', '6E', '6J', 'NG']
+scripts/check-db-alignment.ts:143:        const needed = expectedSymbols.includes(g.symbolCode) ? '' : ' (not needed by builder)'
+scripts/check-db-alignment.ts:158:      const missingSymbols = expectedSymbols.filter((s) => !foundSymbols.has(s))
+scripts/db-check.ts:33:  for (const sym of ["6J", "6E", "ZN", "GC", "SI", "SOX"]) {
+scripts/db-counts.ts:44:    prisma.mktFutures1h.count({ where: { symbolCode: 'MES' } }),
+scripts/db-gaps.ts:8:  for (const sym of ["MES_1H", "6J", "6E", "ZN", "GC", "SI", "SOX", "ES", "NQ", "CL"]) {
+scripts/ingest-all.ts:24:  const mm = await runIngestMeasuredMoveSignals({ timeframe: '1h', symbols: ['MES'] })
+scripts/ingest-market-prices-daily.ts:101:  if (symbolCode === 'MES') {
+scripts/ingest-market-prices-daily.ts:158:  if (symbolCode === 'MES') {
+scripts/ingest-market-prices-daily.ts:314:        if (symbol.code === 'MES') {
+scripts/ingest-market-prices-daily.ts:5:import { INGESTION_SYMBOLS } from '../src/lib/ingestion-symbols'
+scripts/ingest-market-prices-daily.ts:94:function pickSymbols(requested: string[]): typeof INGESTION_SYMBOLS {
+scripts/ingest-market-prices-daily.ts:95:  if (requested.length === 0) return INGESTION_SYMBOLS
+scripts/ingest-market-prices-daily.ts:97:  return INGESTION_SYMBOLS.filter((s) => set.has(s.code))
+scripts/ingest-market-prices.ts:107:  const canonicalByCode = new Map(INGESTION_SYMBOLS.map((symbol) => [symbol.code, symbol]))
+scripts/ingest-market-prices.ts:117:  if (activeRows.length !== INGESTION_SYMBOLS.length) {
+scripts/ingest-market-prices.ts:119:      `Expected ${INGESTION_SYMBOLS.length} active Databento symbols, found ${activeRows.length}. ` +
+scripts/ingest-market-prices.ts:125:  const missingCanonical = INGESTION_SYMBOLS.filter((symbol) => !activeCodes.has(symbol.code)).map(
+scripts/ingest-market-prices.ts:223:  for (const cfg of INGESTION_SYMBOLS) {
+scripts/ingest-market-prices.ts:275:  if (symbolCode === 'MES') {
+scripts/ingest-market-prices.ts:292:  if (symbolCode === 'MES') {
+scripts/ingest-market-prices.ts:356:  if (symbolCodes.includes('MES') && mesCount < minCoverageHourly) {
+scripts/ingest-market-prices.ts:360:  const nonMes = symbolCodes.filter((code) => code !== 'MES')
+scripts/ingest-market-prices.ts:416:    const symbolMinCoverage = symbol.code === 'MES' ? minCoverageHourly : minCoverageDaily
+scripts/ingest-market-prices.ts:417:    const symbolTimeframe = symbol.code === 'MES' ? INGEST_CONFIG.MES_TIMEFRAME : INGEST_CONFIG.NON_MES_TIMEFRAME
+scripts/ingest-market-prices.ts:418:    const sourceSchema = symbol.code === 'MES' ? INGEST_CONFIG.MES_RAW_SCHEMA : INGEST_CONFIG.NON_MES_RAW_SCHEMA
+scripts/ingest-market-prices.ts:420:      symbol.code === 'MES'
+scripts/ingest-market-prices.ts:442:      symbol.code === 'MES'
+scripts/ingest-market-prices.ts:463:        timeoutMs: symbol.code === 'MES' ? 120_000 : 45_000,
+scripts/ingest-market-prices.ts:464:        maxAttempts: symbol.code === 'MES' ? 3 : 2,
+scripts/ingest-market-prices.ts:507:        : aggregateCandles(uniqueCandles, symbol.code === 'MES' ? 60 : 1440)
+scripts/ingest-market-prices.ts:5:import { INGESTION_SYMBOLS, type IngestionSymbol } from '../src/lib/ingestion-symbols'
+scripts/ingest-market-prices.ts:638:    const mesSymbol = selected.find((symbol) => symbol.code === 'MES')
+scripts/ingest-market-prices.ts:652:    const nonMesSymbols = selected.filter((symbol) => symbol.code !== 'MES')
+scripts/ingest-market-prices.ts:94:  if (INGESTION_SYMBOLS.length !== CANONICAL_SYMBOL_COUNT) {
+scripts/ingest-market-prices.ts:97:  const uniqueCodes = new Set(INGESTION_SYMBOLS.map((s) => s.code))
+scripts/ingest-market-prices.ts:98:  if (uniqueCodes.size !== INGESTION_SYMBOLS.length) {
+scripts/ingest-mm-signals.ts:106:          'MES',
+scripts/ingest-mm-signals.ts:119:    const nonMesRequested = symbolsRequested.filter((code) => code !== 'MES')
+scripts/ingest-mm-signals.ts:60:    : ['MES']
+scripts/ingest-mm-signals.ts:90:    const includeMes = symbolsRequested.includes('MES')
+scripts/lint-symbol-hardcodes.mjs:13:  'SYMBOL_KEYS|PRIMARY_SYMBOL|ACTIVE_SYMBOLS|INGESTION_SYMBOLS|EXPECTED_SYMBOLS|ANALYSE_SYMBOLS|INVERSE_SYMBOLS|inverseSymbols|CROSS_ASSET_SYMBOLS|expectedSymbols|NON_MES_ACTIVE|NEW_CODES'
+scripts/seed-new-symbols.ts:11:import { INGESTION_SYMBOLS } from '../src/lib/ingestion-symbols'
+scripts/seed-new-symbols.ts:16:const NEW_CODES = ['NG', '6E', '6J', 'SR3']
+scripts/seed-new-symbols.ts:19:  for (const cfg of INGESTION_SYMBOLS.filter((s) => NEW_CODES.includes(s.code))) {
+src/app/api/forecast/route.ts:119:      SYMBOL_KEYS.map(async (symbol) => ({
+src/app/api/forecast/route.ts:17:import { SYMBOLS, SYMBOL_KEYS } from '@/lib/symbols'
+src/app/api/forecast/route.ts:69:      SYMBOL_KEYS.map(async (symbol) => {
+src/app/api/market-data/batch/route.ts:45:      SYMBOL_KEYS.map(async (symbol): Promise<SymbolProcessResult> => {
+src/app/api/market-data/batch/route.ts:6:import { SYMBOLS, SYMBOL_KEYS } from '@/lib/symbols'
+src/app/api/mes/correlation/route.ts:103:    map.set('MES', [...mesRows].reverse().map(rowToCandle))
+src/app/api/mes/correlation/route.ts:107:      'NQ',
+src/app/api/mes/correlation/route.ts:142:      where: { symbolCode: 'NQ', eventDate: { gte: cutoffDay } },
+src/app/api/mes/correlation/route.ts:181:      map.set('MES', mesDaily)
+src/app/api/mes/correlation/route.ts:187:      'NQ',
+src/app/api/mes/correlation/route.ts:201:    map.set('VX', vix)
+src/app/api/mes/correlation/route.ts:206:    map.set('DX', dxy)
+src/app/api/mes/correlation/route.ts:221:  const canScore = symbolCandles.has('MES') && symbolCandles.size > 1 && obs >= 5
+src/app/api/mes/correlation/route.ts:249:    const intradayUsable = intraday.has('MES') && intraday.size > 1 && observationCount(intraday) >= 5
+src/app/api/mes/correlation/route.ts:257:    const dailyUsable = daily.has('MES') && daily.size > 1 && observationCount(daily) >= 5
+src/app/api/mes/correlation/route.ts:288:          missingSymbols: [...EXPECTED_SYMBOLS],
+src/app/api/mes/correlation/route.ts:30:const EXPECTED_SYMBOLS = ['MES', 'NQ', 'VX', 'DX'] as const
+src/app/api/mes/correlation/route.ts:84:  return EXPECTED_SYMBOLS.filter((sym) => !symbolCandles.has(sym))
+src/app/api/mes/correlation/route.ts:96:      where: { symbolCode: 'NQ' },
+src/components/ForecastPanel.tsx:11:const INVERSE_SYMBOLS = new Set(['VX', 'DX', 'US10Y', 'ZN', 'ZB'])
+src/components/ForecastPanel.tsx:15:  if (INVERSE_SYMBOLS.has(symbol)) {
+src/components/ForecastPanel.tsx:59:  const overallPressure = spxPressureForSymbol('MES', forecast.direction)
+src/components/MarketTile.tsx:12:  const inverseSymbols = new Set(['VX', 'DX', 'US10Y', 'ZN', 'ZB'])
+src/components/MarketTile.tsx:13:  const isInverse = inverseSymbols.has(data.symbol)
+src/components/MarketsGrid.tsx:29:    keys: ['MES', 'NQ', 'YM', 'RTY'],
+src/components/MarketsGrid.tsx:33:    keys: ['GC', 'CL'],
+src/components/MarketsGrid.tsx:37:    keys: ['VX', 'US10Y', 'ZN', 'ZB', 'DX'],
+src/components/MesIntraday/CorrelationTile.tsx:87:          <Badge label="NQ" value={alignment.nq} />
+src/components/MesIntraday/CorrelationTile.tsx:88:          <Badge label="DXY" value={alignment.dxy} />
+src/inngest/_functions-monolith-deprecated.ts:70:      runIngestMeasuredMoveSignals({ timeframe: '1h', daysBack: 120, symbols: ['MES'], dryRun: false })
+src/inngest/functions/measured-moves.ts:17:        symbols: ['MES'],
+src/inngest/functions/mkt-commodities.ts:4:const SYMBOLS = ['CL', 'GC', 'SI', 'NG'] as const
+src/inngest/functions/mkt-equity-indices.ts:4:const SYMBOLS = ['ES', 'NQ', 'YM', 'RTY', 'SOX'] as const
+src/inngest/functions/mkt-fx-rates.ts:4:const SYMBOLS = ['6E', '6J', 'SR3'] as const
+src/inngest/functions/mkt-mes-1h.ts:14:      runIngestMarketPricesDaily({ lookbackHours: 48, dryRun: false, symbols: ['MES'] })
+src/inngest/functions/mkt-treasuries.ts:4:const SYMBOLS = ['ZN', 'ZB', 'ZF'] as const
+src/lib/analyse-data.ts:12:export const ANALYSE_SYMBOLS = [
+src/lib/analyse-data.ts:13:  'MES',
+src/lib/analyse-data.ts:14:  'NQ',
+src/lib/analyse-data.ts:15:  'YM',
+src/lib/analyse-data.ts:16:  'RTY',
+src/lib/analyse-data.ts:17:  'VX',
+src/lib/analyse-data.ts:18:  'US10Y',
+src/lib/analyse-data.ts:19:  'ZN',
+src/lib/analyse-data.ts:20:  'DX',
+src/lib/analyse-data.ts:21:  'GC',
+src/lib/analyse-data.ts:22:  'CL',
+src/lib/analyse-data.ts:69:    const candles = symbol === 'VX'
+src/lib/analyse-data.ts:97:  symbols: readonly string[] = ANALYSE_SYMBOLS
+src/lib/fetch-candles.ts:101:    if (symbol === 'MES') {
+src/lib/fetch-candles.ts:302:  if (symbol === 'DX' || symbol === 'DXY') {
+src/lib/fetch-candles.ts:331:  if (symbol === 'DX' || symbol === 'DXY') {
+src/lib/fetch-candles.ts:338:  if (symbol !== 'MES') return hourly
+src/lib/fetch-candles.ts:81:  if (symbol === 'VX') return 'VIXCLS'
+src/lib/fetch-candles.ts:82:  if (symbol === 'US10Y') return 'DGS10'
+src/lib/fetch-candles.ts:83:  if (symbol === 'DX' || symbol === 'DXY') return 'DTWEXBGS'
+src/lib/fetch-candles.ts:88:  if (symbol === 'MES') return defaultSessionWindow()
+src/lib/forecast.ts:243:  "symbolForecasts": [{"symbol":"MES","direction":"BULLISH","confidence":78}, ...for all input symbols],
+src/lib/forecast.ts:56:  const mes = symbols.find((s) => s.symbol === 'MES')
+src/lib/forecast.ts:67:  const mes = symbols.find((s) => s.symbol === 'MES') || symbols[0]
+src/lib/forecast.ts:94:  const mes = symbols.find((s) => s.symbol === 'MES') || symbols[0]
+src/lib/ingestion-symbols.ts:13:const ACTIVE_SYMBOLS = [
+src/lib/ingestion-symbols.ts:15:  'ES',   // E-mini S&P 500
+src/lib/ingestion-symbols.ts:16:  'MES',  // Micro E-mini S&P 500 (primary target)
+src/lib/ingestion-symbols.ts:17:  'NQ',   // E-mini Nasdaq-100 — tech beta / duration
+src/lib/ingestion-symbols.ts:18:  'YM',   // E-mini Dow Jones
+src/lib/ingestion-symbols.ts:19:  'RTY',  // E-mini Russell 2000
+src/lib/ingestion-symbols.ts:20:  'SOX',  // PHLX Semiconductor Index — semis leadership
+src/lib/ingestion-symbols.ts:22:  'ZN',   // 10Y Treasury Note — rate impulse
+src/lib/ingestion-symbols.ts:23:  'ZB',   // 30Y Treasury Bond
+src/lib/ingestion-symbols.ts:24:  'ZF',   // 5Y Treasury Note
+src/lib/ingestion-symbols.ts:26:  'CL',   // WTI Crude Oil — energy / AI power narrative
+src/lib/ingestion-symbols.ts:27:  'GC',   // Gold
+src/lib/ingestion-symbols.ts:28:  'SI',   // Silver
+src/lib/ingestion-symbols.ts:29:  'NG',   // Natural Gas — AI data center / power grid narrative
+src/lib/ingestion-symbols.ts:31:  '6E',   // EUR/USD — USD liquidity / risk proxy
+src/lib/ingestion-symbols.ts:32:  '6J',   // JPY/USD — carry unwind / risk stress
+src/lib/ingestion-symbols.ts:34:  'SR3',  // 3-Month SOFR — front-end policy shock detector
+src/lib/ingestion-symbols.ts:51:  '6E':  { shortName: 'EUR/USD',      description: 'Euro FX Futures (EUR/USD)',             tickSize: 0.00005 },
+src/lib/ingestion-symbols.ts:52:  '6J':  { shortName: 'JPY/USD',      description: 'Japanese Yen Futures (JPY/USD)',        tickSize: 0.0000001 },
+src/lib/ingestion-symbols.ts:56:export const INGESTION_SYMBOLS: IngestionSymbol[] = ACTIVE_SYMBOLS.map((code) => {
+src/lib/ingestion-symbols.ts:69:export const INGESTION_SYMBOL_CODES = INGESTION_SYMBOLS.map((s) => s.code)
+src/lib/instant-analysis.ts:1020:  const mesData = allData.get('MES')
+src/lib/instant-analysis.ts:1095:  const mes = signalData.find((s) => s.symbol === 'MES')
+src/lib/instant-analysis.ts:1120:    const mesBias = s.symbol === 'MES' ? applyVixBias(verdict, confidence, vixLevel) : null
+src/lib/instant-analysis.ts:1128:    const mesLevels = s.symbol === 'MES'
+src/lib/instant-analysis.ts:1131:    const fallbackLevels = s.symbol === 'MES' && mesLevels
+src/lib/instant-analysis.ts:1147:      s.symbol === 'MES' && mesLevels
+src/lib/instant-analysis.ts:1182:  const mesPrice = core.signalData.find((s) => s.symbol === 'MES')?.price || 0
+src/lib/instant-analysis.ts:1367:      "symbol": "MES",
+src/lib/instant-analysis.ts:1414:  const mesPrice = signalData.find((s) => s.symbol === 'MES')?.price || 0
+src/lib/instant-analysis.ts:567:  const vx = signalData.find((s) => s.symbol === 'VX')
+src/lib/instant-analysis.ts:922:    fallback.symbol === 'MES' &&
+src/lib/instant-analysis.ts:985:      if (symbol === 'MES') {
+src/lib/market-context.ts:149:  if (symbol === 'NQ') {
+src/lib/market-context.ts:154:  if (symbol === 'VX') {
+src/lib/market-context.ts:159:  if (symbol === 'US10Y') {
+src/lib/market-context.ts:164:  if (symbol === 'ZN' || symbol === 'ZB') {
+src/lib/market-context.ts:169:  if (symbol === 'DX') {
+src/lib/market-context.ts:174:  if (symbol === 'GC') {
+src/lib/market-context.ts:179:  if (symbol === 'CL') {
+src/lib/market-context.ts:191:  const mesCandles = symbolCandles.get('MES')
+src/lib/market-context.ts:198:    if (symbol === 'MES') continue
+src/lib/market-context.ts:219:  const mes = changes.get('MES') || 0
+src/lib/market-context.ts:220:  const nq = changes.get('NQ') || 0
+src/lib/market-context.ts:221:  const vix = changes.get('VX') || 0
+src/lib/market-context.ts:222:  const zn = changes.get('ZN') || 0
+src/lib/market-context.ts:223:  const gc = changes.get('GC') || 0
+src/lib/market-context.ts:224:  const cl = changes.get('CL') || 0
+src/lib/market-context.ts:225:  const dx = changes.get('DX') || 0
+src/lib/market-context.ts:226:  const us10y = changes.get('US10Y') || 0
+src/lib/market-context.ts:680:  const goldCandles = allCandles15m.get('GC')
+src/lib/market-context.ts:681:  const oilCandles = allCandles15m.get('CL')
+src/lib/market-context.ts:682:  const tenYearCandles = allCandles15m.get('US10Y')
+src/lib/market-context.ts:683:  const vixCandles = allCandles15m.get('VX')
+src/lib/market-context.ts:684:  const mesCandles = allCandles15m.get('MES') || []
+src/lib/signals.ts:140:  '6E': { weight: 0.05, invert: true  }, // USD liquidity (invert: EUR up = USD weak = equities up)
+src/lib/signals.ts:141:  '6J': { weight: 0.05, invert: true  }, // carry unwind stress (invert: yen up = carry unwind = risk off)
+src/lib/signals.ts:161:  const mesSignal = symbolSignals.find((s) => s.symbol === 'MES')
+src/lib/signals.ts:162:  const nqSignal = symbolSignals.find((s) => s.symbol === 'NQ')
+src/lib/signals.ts:163:  const vxSignal = symbolSignals.find((s) => s.symbol === 'VX')
+src/lib/signals.ts:166:    const mesData = allSymbolData.find((d) => d.symbol === 'MES')
+src/lib/signals.ts:167:    const nqData = allSymbolData.find((d) => d.symbol === 'NQ')
+src/lib/signals.ts:178:    const vxData = allSymbolData.find((d) => d.symbol === 'VX')
+src/lib/symbols.ts:109:    displayName: 'CL',
+src/lib/symbols.ts:120:export const SYMBOL_KEYS = Object.keys(SYMBOLS)
+src/lib/symbols.ts:121:export const PRIMARY_SYMBOL = 'MES'
+src/lib/symbols.ts:15:    displayName: 'MES',
+src/lib/symbols.ts:25:    displayName: 'NQ',
+src/lib/symbols.ts:35:    displayName: 'YM',
+src/lib/symbols.ts:45:    displayName: 'RTY',
+src/lib/symbols.ts:63:    displayName: 'ZN',
+src/lib/symbols.ts:73:    displayName: 'ZB',
+src/lib/symbols.ts:83:    displayName: 'DXY',
+src/lib/symbols.ts:91:    displayName: 'US10Y',
+src/lib/symbols.ts:99:    displayName: 'GC',
