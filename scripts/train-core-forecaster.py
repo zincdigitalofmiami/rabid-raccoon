@@ -3,33 +3,21 @@ train-core-forecaster.py
 
 MES Core Return Forecaster — AutoGluon 1.5 TabularPredictor
 Optimized for 1h/4h day-trading horizons with walk-forward validation.
+15m model training is intentionally retired.
 
-Timeframes:
-  1h (default): mes_lean_1h.csv (~144 columns, ~36K rows from 2020+)
-    - 22 MES technicals (EDSS, MAs, returns, vol)
-    - 48 cross-asset technicals (8 symbols x 6 features)
-    - 19 FRED macro, 10 derived regime features
-    - 6 event/calendar, 7 release signals, 4 news sentiment
-    - 9 BHG quality feedback, 5 time features, 6 cross-asset composites
-    - Horizons: 1h (purge=1), 4h (purge=4)
-
-  15m: mes_15m_complete.csv (~46K rows from 2020+)
-    - Same feature groups as lean_1h but at 15m granularity
-    - Direction targets auto-computed from ret columns at load time
-    - Horizons: 15m (purge=1), 1h (purge=4), 4h (purge=16)
-
-Models: GBM (LightGBM), CAT (CatBoost), XGB (XGBoost), XT (ExtraTrees)
+Models: GBM (LightGBM), CAT (CatBoost), XGB (XGBoost), XT (ExtraTrees),
+        REALMLP, TABM, EBM (11 configs total)
   - KNN, FASTAI, RF, NN_TORCH excluded
   - dynamic_stacking=False (prevents DyStack inside outer walk-forward)
 
-Three modes:
+Modes:
   classify (default): Directional prediction (up/down), eval=roc_auc
   regress:            Raw return prediction, eval=MAE
   volnorm:            Vol-normalized return prediction, eval=R2
 
-Two-phase training (sequential, num_cpus=1, no time limit by default):
-  Phase 1 (fast validation): explicit hyperparams (GBM+CAT+XGB+XT), 2 folds, no time limit, no bagging/stacking
-  Phase 2 (production):      explicit hyperparams (GBM+CAT+XGB+XT), 3 folds, no time limit, 3-fold bagging + 1 stack
+Two-phase training defaults:
+  Phase 1 (validation): 3 folds, no bagging/stacking
+  Phase 2 (production): 5 folds, 8-fold bagging + 1 stack level
   Use --time-limit=N to override with a per-fold time budget (seconds)
 
 Walk-forward scheme:
@@ -43,27 +31,18 @@ Metrics:
   regress/volnorm: MAE, RMSE, R2, Spearman IC
 
 Outputs:
-  1h:  models/core_forecaster/{horizon}/fold_N/      AutoGluon artifacts per fold
-       datasets/autogluon/core_oof_1h.csv            OOF predictions + actuals
-  15m: models/core_forecaster_15m/{horizon}/fold_N/
-       datasets/autogluon/core_oof_15m.csv
-  Both: models/logs/training_YYYYMMDD_HHMMSS.log     Full stdout log
+  models/core_forecaster/{horizon}/fold_N/      AutoGluon artifacts per fold
+  datasets/autogluon/core_oof_1h.csv            OOF predictions + actuals
+  models/logs/training_1h_YYYYMMDD_HHMMSS.log   Full stdout log
 
 Usage:
-  python scripts/train-core-forecaster.py                          # Phase 1, 1h (default)
-  python scripts/train-core-forecaster.py --timeframe=15m          # Phase 1, 15m
-  python scripts/train-core-forecaster.py --phase=2                # Phase 2 production
-  python scripts/train-core-forecaster.py --clean                  # Delete old folds before training
-  python scripts/train-core-forecaster.py --horizons=1h            # Single horizon
-  python scripts/train-core-forecaster.py --time-limit=1200        # Override time limit
-
-Training time estimates (sequential, num_cpus=1, no time limit):
-  Phase 1 (1h):  ~1-2 hours on Apple Silicon (2 folds x 2 horizons)
-  Phase 1 (15m): ~2-3 hours on Apple Silicon (2 folds x 3 horizons)
-  Phase 2 (1h):  ~4-8 hours on Apple Silicon (3 folds x 2 horizons, bagged)
-  Phase 2 (15m): ~6-12 hours on Apple Silicon (3 folds x 3 horizons, bagged)
+  python scripts/train-core-forecaster.py
+  python scripts/train-core-forecaster.py --phase=2 --clean
+  python scripts/train-core-forecaster.py --horizons=1h --time-limit=3600
+  python scripts/train-core-forecaster.py --phase=2 --num-cpus=20
 """
 
+import os
 import sys
 import json
 import warnings
@@ -84,19 +63,24 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Parse CLI args
 import argparse
 parser = argparse.ArgumentParser(description="MES Core Return Forecaster")
-parser.add_argument("--timeframe", default="1h", choices=["1h", "15m"],
-                    help="Timeframe: 1h (default) uses mes_lean_1h.csv with 1h/4h horizons. "
-                         "15m uses mes_15m_complete.csv with 15m/1h/4h horizons.")
-parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (e.g. 1h,4h or 15m,1h)")
+parser.add_argument("--timeframe", default="1h", choices=["1h"],
+                    help="Compatibility flag. 15m training is retired; only 1h dataset is supported.")
+parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (1h,4h)")
 parser.add_argument("--mode", default="classify", choices=["classify", "regress", "volnorm"],
                     help="classify: directional (up/down) with roc_auc. "
                          "regress: raw return with MAE. "
                          "volnorm: vol-normalized return with R2.")
-parser.add_argument("--presets", default=None, help="AutoGluon presets (overrides --phase default)")
 parser.add_argument("--phase", type=int, default=1, choices=[1, 2],
-                    help="Phase 1: fast validation (high_quality_v150, 3 folds, 600s, no stacking). "
-                         "Phase 2: production (best_quality_v150, 5 folds, 2400s, light bagging)")
+                    help="Phase 1: validation (3 folds, no bagging). "
+                         "Phase 2: production (5 folds, bagging + stacking).")
 parser.add_argument("--time-limit", type=int, default=None, help="Seconds per fold (overrides --phase default)")
+parser.add_argument("--n-folds", type=int, default=None, help="Override walk-forward folds")
+parser.add_argument("--num-bag-folds", type=int, default=None, help="Override AutoGluon bag folds")
+parser.add_argument("--num-stack-levels", type=int, default=None, help="Override AutoGluon stack levels")
+parser.add_argument("--num-cpus", type=int, default=max(1, (os.cpu_count() or 2) - 1),
+                    help="CPUs for model fitting (default: all cores minus one)")
+parser.add_argument("--max-memory-ratio", type=float, default=3.0,
+                    help="AutoGluon ag.max_memory_usage_ratio (3.0 for 24GB M4 Pro)")
 parser.add_argument("--report-root", default="models/reports", help="Directory for reports")
 parser.add_argument("--skip-reports", action="store_true", help="Skip report generation")
 parser.add_argument("--min-coverage", type=float, default=0.50,
@@ -105,59 +89,34 @@ parser.add_argument("--clean", action="store_true",
                     help="Delete existing model fold directories before training (prevents stale-fold confusion)")
 args = parser.parse_args()
 
-# ─── Timeframe-based paths and horizon configs ────────────────────────────────
+# ─── Paths and horizon configs (1h-only policy) ───────────────────────────────
 
-TIMEFRAME = args.timeframe
+TIMEFRAME = args.timeframe  # compatibility; always "1h"
 
-if TIMEFRAME == "1h":
-    DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
-    MODEL_DIR = PROJECT_ROOT / "models" / "core_forecaster"
-    OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_1h.csv"
-    # Pre-computed binary targets in the lean dataset
-    HORIZONS_CLASSIFY = {
-        "1h": {"target": "target_dir_1h", "purge_bars": 1,  "embargo_bars": 2},
-        "4h": {"target": "target_dir_4h", "purge_bars": 4,  "embargo_bars": 8},
-    }
-    HORIZONS_REGRESS = {
-        "1h": {"target": "target_ret_1h", "purge_bars": 1,  "embargo_bars": 2},
-        "4h": {"target": "target_ret_4h", "purge_bars": 4,  "embargo_bars": 8},
-    }
-    HORIZONS_VOLNORM = {
-        "1h": {"target": "target_ret_norm_1h", "purge_bars": 1,  "embargo_bars": 2},
-        "4h": {"target": "target_ret_norm_4h", "purge_bars": 4,  "embargo_bars": 8},
-    }
-    # All target columns in this dataset — never used as features
-    DROP_COLS = {
-        "item_id", "timestamp", "target",
-        "target_ret_1h", "target_ret_4h",
-        "target_dir_1h", "target_dir_4h",
-        "target_ret_norm_1h", "target_ret_norm_4h",
-    }
-    COMPUTE_DIR_TARGETS = False  # pre-computed in dataset
+DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
+MODEL_DIR = PROJECT_ROOT / "models" / "core_forecaster"
+OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_1h.csv"
 
-else:  # 15m
-    DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_15m_complete.csv"
-    MODEL_DIR = PROJECT_ROOT / "models" / "core_forecaster_15m"
-    OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_15m.csv"
-    # The 15m dataset only has regression targets; direction targets computed at load time
-    HORIZONS_CLASSIFY = {
-        "15m": {"target": "target_dir_15m", "purge_bars": 1,  "embargo_bars": 2},
-        "1h":  {"target": "target_dir_1h",  "purge_bars": 4,  "embargo_bars": 8},
-        "4h":  {"target": "target_dir_4h",  "purge_bars": 16, "embargo_bars": 32},
-    }
-    HORIZONS_REGRESS = {
-        "15m": {"target": "target_ret_15m", "purge_bars": 1,  "embargo_bars": 2},
-        "1h":  {"target": "target_ret_1h",  "purge_bars": 4,  "embargo_bars": 8},
-        "4h":  {"target": "target_ret_4h",  "purge_bars": 16, "embargo_bars": 32},
-    }
-    HORIZONS_VOLNORM = HORIZONS_REGRESS  # no vol-normalized targets in 15m dataset
-    # All target/identity columns in the 15m dataset — never used as features
-    DROP_COLS = {
-        "item_id", "timestamp", "target",
-        "target_ret_15m", "target_ret_1h", "target_ret_4h",
-        "target_dir_15m", "target_dir_1h", "target_dir_4h",
-    }
-    COMPUTE_DIR_TARGETS = True  # must derive from target_ret_* at load time
+HORIZONS_CLASSIFY = {
+    "1h": {"target": "target_dir_1h", "purge_bars": 1, "embargo_bars": 2},
+    "4h": {"target": "target_dir_4h", "purge_bars": 4, "embargo_bars": 8},
+}
+HORIZONS_REGRESS = {
+    "1h": {"target": "target_ret_1h", "purge_bars": 1, "embargo_bars": 2},
+    "4h": {"target": "target_ret_4h", "purge_bars": 4, "embargo_bars": 8},
+}
+HORIZONS_VOLNORM = {
+    "1h": {"target": "target_ret_norm_1h", "purge_bars": 1, "embargo_bars": 2},
+    "4h": {"target": "target_ret_norm_4h", "purge_bars": 4, "embargo_bars": 8},
+}
+
+# All target columns in this dataset — never used as features
+DROP_COLS = {
+    "item_id", "timestamp", "target",
+    "target_ret_1h", "target_ret_4h",
+    "target_dir_1h", "target_dir_4h",
+    "target_ret_norm_1h", "target_ret_norm_4h",
+}
 
 # Select horizons based on mode
 MODE = args.mode
@@ -186,18 +145,20 @@ if args.horizons:
 #   Phase 1: fast validation — confirm no leakage, features work, beats baseline
 #   Phase 2: production candidate — full ensemble with light bagging
 PHASE_DEFAULTS = {
-    1: {"presets": "high_quality_v150", "time_limit": None, "n_folds": 2,
+    1: {"presets": "high_quality_v150", "time_limit": None, "n_folds": 3,
         "num_bag_folds": 0, "num_stack_levels": 0, "dynamic_stacking": False},
-    2: {"presets": "best_quality_v150", "time_limit": None, "n_folds": 3,
-        "num_bag_folds": 3, "num_stack_levels": 1, "dynamic_stacking": False},
+    2: {"presets": "best_quality_v150", "time_limit": None, "n_folds": 5,
+        "num_bag_folds": 8, "num_stack_levels": 1, "dynamic_stacking": False},
 }
 phase_cfg = PHASE_DEFAULTS[args.phase]
 
-N_FOLDS = phase_cfg["n_folds"]
+N_FOLDS = args.n_folds if args.n_folds is not None else phase_cfg["n_folds"]
 TIME_LIMIT_PER_FOLD = args.time_limit if args.time_limit is not None else phase_cfg["time_limit"]
-NUM_BAG_FOLDS = phase_cfg["num_bag_folds"]
-NUM_STACK_LEVELS = phase_cfg["num_stack_levels"]
+NUM_BAG_FOLDS = args.num_bag_folds if args.num_bag_folds is not None else phase_cfg["num_bag_folds"]
+NUM_STACK_LEVELS = args.num_stack_levels if args.num_stack_levels is not None else phase_cfg["num_stack_levels"]
 DYNAMIC_STACKING = phase_cfg["dynamic_stacking"]
+NUM_CPUS = max(1, args.num_cpus)
+MAX_MEMORY_RATIO = args.max_memory_ratio
 
 REPORT_ROOT = Path(args.report_root)
 if not REPORT_ROOT.is_absolute():
@@ -207,7 +168,7 @@ if not REPORT_ROOT.is_absolute():
 # KNN:      curse of dimensionality on 130+ feature space
 # FASTAI:   unreliable on CPU-only Apple Silicon, wastes time budget
 # RF:       redundant with ExtraTrees, slower training
-# NN_TORCH: tends to overfit on weak financial signal with tabular data
+# NN_TORCH: replaced by REALMLP, TABM, MITRA (better on tabular, less overfit)
 EXCLUDED_MODELS = ["KNN", "FASTAI", "RF", "NN_TORCH"]
 
 # ─── Explicit hyperparameters ────────────────────────────────────────────────
@@ -231,8 +192,17 @@ HYPERPARAMETERS = {
     "XGB": [
         {"n_estimators": 5000, "learning_rate": 0.02,
          "max_depth": 6, "colsample_bytree": 0.7},
+        {"n_estimators": 5000, "learning_rate": 0.01,
+         "max_depth": 8, "colsample_bytree": 0.5},
     ],
-    "XT": [{}],
+    "XT": [
+        {},
+        {"max_features": 0.5, "min_samples_leaf": 5},
+    ],
+    "REALMLP": [{}],
+    "TABM": [{}],
+    # MITRA: removed — estimates 68-252 GB RAM, needs GPU + >>24GB
+    "EBM": [{}],
 }
 
 
@@ -333,27 +303,12 @@ def main():
 
     if not DATASET_PATH.exists():
         print(f"ERROR: Dataset not found at {DATASET_PATH}")
-        if TIMEFRAME == "1h":
-            print("Run: npx tsx scripts/build-lean-dataset.ts")
-        else:
-            print("Run: npx tsx scripts/build-15m-dataset.ts")
+        print("Run: npx tsx scripts/build-lean-dataset.ts --timeframe=1h")
         sys.exit(1)
 
     print(f"Loading dataset: {DATASET_PATH.name}  (timeframe={TIMEFRAME})")
     df = pd.read_csv(DATASET_PATH)
     print(f"  Rows: {len(df):,}  Columns: {len(df.columns)}")
-
-    # ─── Compute direction targets for 15m dataset ────────────────────────────
-    # The 15m dataset only has target_ret_* columns. Derive binary direction
-    # targets at load time so classify mode works: 1=up (ret>0), 0=down/flat.
-    if COMPUTE_DIR_TARGETS:
-        for suffix, ret_col in [("15m", "target_ret_15m"), ("1h", "target_ret_1h"), ("4h", "target_ret_4h")]:
-            dir_col = f"target_dir_{suffix}"
-            if ret_col in df.columns and dir_col not in df.columns:
-                df[dir_col] = (df[ret_col] > 0).astype(float)
-                # Propagate NaN from the source return column
-                df.loc[df[ret_col].isna(), dir_col] = np.nan
-                print(f"  Computed {dir_col} from {ret_col}  ({df[dir_col].notna().sum():,} non-null)")
 
     # Sort by timestamp (critical for walk-forward integrity)
     df = df.sort_values("timestamp").reset_index(drop=True)
@@ -478,8 +433,8 @@ def main():
     hp_summary = ", ".join(f"{k}({len(v)})" for k, v in HYPERPARAMETERS.items())
     print(f"  Phase: {args.phase}  |  Hyperparameters: {hp_summary}  |  Time/fold: {tl_label}  |  Folds: {N_FOLDS}")
     print(f"  Bagging: {NUM_BAG_FOLDS} folds  |  Stacking: {NUM_STACK_LEVELS} levels  |  DyStack: {DYNAMIC_STACKING}")
-    print(f"  Sequential: num_cpus=1 (single-threaded, one model at a time)")
-    print(f"  Memory ratio: 1.3 (ag.max_memory_usage_ratio)")
+    print(f"  Compute: num_cpus={NUM_CPUS}")
+    print(f"  Memory ratio: {MAX_MEMORY_RATIO} (ag.max_memory_usage_ratio)")
     print(f"  Clean mode: {'YES — old fold dirs deleted' if args.clean else 'NO'}")
 
     if TIME_LIMIT_PER_FOLD is not None:
@@ -546,22 +501,22 @@ def main():
             fit_kwargs = dict(
                 train_data=train_data,
                 hyperparameters=HYPERPARAMETERS,
-                num_cpus=1,
+                num_cpus=NUM_CPUS,
                 num_gpus=0,
                 num_bag_folds=NUM_BAG_FOLDS,
                 num_stack_levels=NUM_STACK_LEVELS,
                 dynamic_stacking=DYNAMIC_STACKING,
                 ag_args_fit={
-                    "num_cpus": 1,
+                    "num_cpus": NUM_CPUS,
                     "num_early_stopping_rounds": 30,
-                    "ag.max_memory_usage_ratio": 1.3,
+                    "ag.max_memory_usage_ratio": MAX_MEMORY_RATIO,
                 },
             )
             if TIME_LIMIT_PER_FOLD is not None:
                 fit_kwargs["time_limit"] = TIME_LIMIT_PER_FOLD
             if NUM_BAG_FOLDS > 0:
                 fit_kwargs["ag_args_ensemble"] = {
-                    "fold_fitting_strategy": "sequential_local",
+                    "fold_fitting_strategy": "parallel_local" if NUM_CPUS > 1 else "sequential_local",
                 }
             predictor.fit(**fit_kwargs)
 

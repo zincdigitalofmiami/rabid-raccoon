@@ -24,6 +24,7 @@ node_modules/
 mes_hft_halsey/*.csv
 mes_hft_halsey/models/
 mes_hft_halsey/output/
+measured-move/output/
 datasets/autogluon/
 models/
 .claude/
@@ -37,3 +38,5 @@ models/
 /src/generated/prisma
 .env*.local
 prisma/dev.db
+security_best_practices_report.md
+indicators/*.bak*
