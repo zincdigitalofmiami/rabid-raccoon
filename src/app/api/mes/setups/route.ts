@@ -9,6 +9,7 @@ import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
 import { toNum } from '@/lib/decimal'
 import type { Decimal } from '@prisma/client/runtime/client'
 import type { CandleData } from '@/lib/types'
+import { getEventContext, loadTodayEvents, EventContext } from '@/lib/event-awareness'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -81,11 +82,16 @@ export async function GET(): Promise<Response> {
       return { ...s, risk }
     })
 
+    // Event awareness
+    const todayEvents = await loadTodayEvents()
+    const eventContext = getEventContext(new Date(), todayEvents)
+
     return NextResponse.json({
       setups: enrichedSetups,
       fibResult,
       currentPrice,
       measuredMoves,
+      eventContext,
       timestamp: new Date().toISOString(),
     })
   } catch (error) {

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import type { BhgSetup } from '@/lib/bhg-engine'
 import type { FibResult, MeasuredMove } from '@/lib/types'
 import type { RiskResult } from '@/lib/risk-engine'
+import type { EventContext } from '@/lib/event-awareness'
 
 export interface EnrichedSetup extends BhgSetup {
   risk?: RiskResult
@@ -16,6 +17,7 @@ export interface MesSetupsResponse {
   fibResult: FibResult | null
   currentPrice: number | null
   measuredMoves?: MeasuredMove[]
+  eventContext?: EventContext
   timestamp: string
   error?: string
 }
