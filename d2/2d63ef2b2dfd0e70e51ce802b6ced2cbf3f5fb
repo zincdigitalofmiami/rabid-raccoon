@@ -1,0 +1,36 @@
+prisma.config.ts
+  95c7c025e986619f 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "d22d63ef2b2dfd0e70e51ce802b6ced2cbf3f5fb",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 1,
+      "accepted_lines": 14,
+      "overriden_lines": 0
+    },
+    "cd56fdfa798a9f44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9e2316-e5bb-4d5f-b3ca-91b9236547d3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 132,
+      "overriden_lines": 0
+    }
+  }
+}
