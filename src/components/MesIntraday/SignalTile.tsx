@@ -16,7 +16,7 @@ export default function SignalTile({ leadSetup }: SignalTileProps) {
           </span>
         </div>
         <div className="text-lg font-semibold text-white/20">--</div>
-        <div className="text-xs text-white/20 mt-1">No active GO signal</div>
+        <div className="text-xs text-white/20 mt-1">No active TRIGGER signal</div>
       </div>
     )
   }
@@ -71,7 +71,7 @@ export default function SignalTile({ leadSetup }: SignalTileProps) {
       </div>
 
       <div className="mt-2 text-[10px] text-white/20">
-        {leadSetup.goType} GO @ .{leadSetup.fibRatio === 0.5 ? '500' : '618'}
+        {leadSetup.goType} TRIGGER @ .{leadSetup.fibRatio === 0.5 ? '500' : '618'}
       </div>
     </div>
   )

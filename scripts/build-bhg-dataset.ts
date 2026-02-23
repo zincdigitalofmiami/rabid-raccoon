@@ -399,7 +399,7 @@ function computeGoFeatures(
   goBarGlobalIndex: number,
   measuredMoves: MeasuredMove[],
 ): GoEventFeatures | null {
-  if (setup.phase !== 'GO_FIRED' || !setup.entry || !setup.stopLoss || !setup.tp1 || !setup.tp2) {
+  if (setup.phase !== 'TRIGGERED' || !setup.entry || !setup.stopLoss || !setup.tp1 || !setup.tp2) {
     return null
   }
 
@@ -872,9 +872,9 @@ async function main() {
     const measuredMoves = detectMeasuredMoves(swings.highs, swings.lows, window[window.length - 1].close)
     const setups = advanceBhgSetups(window, fibResult, measuredMoves)
 
-    // Extract GO_FIRED setups
+    // Extract TRIGGERED setups
     for (const setup of setups) {
-      if (setup.phase !== 'GO_FIRED' || !setup.goTime) continue
+      if (setup.phase !== 'TRIGGERED' || !setup.goTime) continue
 
       // Deduplicate by goTime + direction + fibRatio
       const dedupeKey = `${setup.goTime}-${setup.direction}-${setup.fibRatio}`
@@ -992,7 +992,7 @@ async function main() {
             setupId,
             direction: event.direction as 'BULLISH' | 'BEARISH',
             timeframe: 'M15',
-            phase: 'GO_FIRED',
+            phase: 'GO_FIRED', // TODO: rename to 'TRIGGERED' after Prisma schema migration
             fibLevel: event.fib_touch_level,
             fibRatio: event.fib_ratio,
             goTime: new Date(event.go_time * 1000),

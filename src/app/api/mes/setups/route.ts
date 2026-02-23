@@ -72,9 +72,9 @@ export async function GET(): Promise<Response> {
     // 3. Run BHG state machine
     const setups = advanceBhgSetups(candles, fibResult, measuredMoves)
 
-    // 4. Attach risk computations for GO_FIRED setups
+    // 4. Attach risk computations for TRIGGERED setups
     const enrichedSetups = setups.map((s) => {
-      if (s.phase !== 'GO_FIRED' || !s.entry || !s.stopLoss || !s.tp1) {
+      if (s.phase !== 'TRIGGERED' || !s.entry || !s.stopLoss || !s.tp1) {
         return s
       }
       const risk = computeRisk(s.entry, s.stopLoss, s.tp1, MES_DEFAULTS)

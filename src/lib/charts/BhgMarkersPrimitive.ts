@@ -88,7 +88,7 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
         }
 
         // Draw GO marker + level lines
-        if (setup.phase === 'GO_FIRED' && setup.goTime != null && setup.entry != null) {
+        if (setup.phase === 'TRIGGERED' && setup.goTime != null && setup.entry != null) {
           this._drawGo(ctx, setup)
           this._drawLevelLines(ctx, setup, lastTime, futureEnd, mediaSize.width, drawnLevelKeys)
         }
@@ -324,7 +324,7 @@ export class BhgMarkersPrimitive implements ISeriesPrimitive<Time> {
       >()
 
       for (const setup of this._data.setups) {
-        if (setup.phase !== 'GO_FIRED') continue
+        if (setup.phase !== 'TRIGGERED') continue
         const levels: { price: number; label: string; color: string }[] = []
         if (setup.entry != null) levels.push({ price: setup.entry, label: 'Entry', color: COLORS.entry })
         if (setup.stopLoss != null) levels.push({ price: setup.stopLoss, label: 'SL', color: COLORS.sl })
@@ -365,7 +365,7 @@ export class BhgMarkersPrimitive implements ISeriesPrimitive<Time> {
     let max = -Infinity
 
     for (const setup of this._data.setups) {
-      if (setup.phase !== 'GO_FIRED') continue
+      if (setup.phase !== 'TRIGGERED') continue
       for (const price of [setup.entry, setup.stopLoss, setup.tp1, setup.tp2]) {
         if (price != null) {
           if (price < min) min = price

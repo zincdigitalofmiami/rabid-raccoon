@@ -61,7 +61,7 @@ function setupSortTime(setup: BhgSetup): number {
 }
 
 function isRenderableGoSetup(setup: BhgSetup): boolean {
-  if (setup.phase !== 'GO_FIRED') return false
+  if (setup.phase !== 'TRIGGERED') return false
   if (setup.entry == null || setup.stopLoss == null || setup.tp1 == null || setup.tp2 == null) return false
 
   if (setup.direction === 'BULLISH') {
@@ -94,14 +94,14 @@ function selectSetupsForChart(
   const leadTime = selectedGo[0] ? setupSortTime(selectedGo[0]) : null
 
   const selectedHooks = setups
-    .filter((s) => s.phase === 'HOOKED')
+    .filter((s) => s.phase === 'CONFIRMED')
     .filter((s) => (leadDirection ? s.direction === leadDirection : true))
     .filter((s) => (leadTime != null ? setupSortTime(s) <= leadTime : true))
     .sort((a, b) => setupSortTime(b) - setupSortTime(a))
     .slice(0, MAX_HOOK_MARKERS)
 
   const selectedTouches = setups
-    .filter((s) => s.phase === 'TOUCHED')
+    .filter((s) => s.phase === 'CONTACT')
     .filter((s) => (leadDirection ? s.direction === leadDirection : true))
     .filter((s) => (leadTime != null ? setupSortTime(s) <= leadTime : true))
     .sort((a, b) => setupSortTime(b) - setupSortTime(a))

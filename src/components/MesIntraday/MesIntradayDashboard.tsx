@@ -15,16 +15,16 @@ export default function MesIntradayDashboard() {
 
   const leadSetup = useMemo(() => {
     if (!setupsData?.setups) return null
-    return setupsData.setups.find((s) => s.phase === 'GO_FIRED') ?? null
+    return setupsData.setups.find((s) => s.phase === 'TRIGGERED') ?? null
   }, [setupsData])
 
   const activeCount = useMemo(() => {
     if (!setupsData?.setups) return { touched: 0, hooked: 0, goFired: 0 }
     const setups = setupsData.setups
     return {
-      touched: setups.filter((s) => s.phase === 'TOUCHED').length,
-      hooked: setups.filter((s) => s.phase === 'HOOKED').length,
-      goFired: setups.filter((s) => s.phase === 'GO_FIRED').length,
+      touched: setups.filter((s) => s.phase === 'CONTACT').length,
+      hooked: setups.filter((s) => s.phase === 'CONFIRMED').length,
+      goFired: setups.filter((s) => s.phase === 'TRIGGERED').length,
     }
   }, [setupsData])
 

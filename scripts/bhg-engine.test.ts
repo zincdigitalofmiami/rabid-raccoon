@@ -29,7 +29,7 @@ function baseGoSetup(direction: 'BULLISH' | 'BEARISH'): BhgSetup {
   return {
     id: `${direction}-0.5-1`,
     direction,
-    phase: 'GO_FIRED',
+    phase: 'TRIGGERED',
     fibLevel: 6950,
     fibRatio: 0.5,
     hookTime: 1,

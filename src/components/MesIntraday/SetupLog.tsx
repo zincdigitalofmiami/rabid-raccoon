@@ -19,9 +19,9 @@ function formatTime(unixSeconds?: number): string {
 
 function PhaseBadge({ phase }: { phase: string }) {
   const config: Record<string, { text: string; className: string }> = {
-    GO_FIRED: { text: 'GO', className: 'text-emerald-400 bg-emerald-400/10' },
-    HOOKED: { text: 'HOOK', className: 'text-amber-400 bg-amber-400/10' },
-    TOUCHED: { text: 'TOUCH', className: 'text-white/40 bg-white/5' },
+    TRIGGERED: { text: 'TRIGGER', className: 'text-emerald-400 bg-emerald-400/10' },
+    CONFIRMED: { text: 'CONFIRM', className: 'text-amber-400 bg-amber-400/10' },
+    CONTACT: { text: 'CONTACT', className: 'text-white/40 bg-white/5' },
     EXPIRED: { text: 'EXPIRED', className: 'text-white/20 bg-white/5' },
     INVALIDATED: { text: 'INVALID', className: 'text-red-400/40 bg-red-400/5' },
   }
@@ -34,12 +34,12 @@ function PhaseBadge({ phase }: { phase: string }) {
 }
 
 export default function SetupLog({ setups }: SetupLogProps) {
-  // Show most relevant setups: GO_FIRED first, then HOOKED, then recent
+  // Show most relevant setups: TRIGGERED first, then CONFIRMED, then recent
   const sorted = [...setups].sort((a, b) => {
     const phaseOrder: Record<string, number> = {
-      GO_FIRED: 0,
-      HOOKED: 1,
-      TOUCHED: 2,
+      TRIGGERED: 0,
+      CONFIRMED: 1,
+      CONTACT: 2,
       EXPIRED: 3,
       INVALIDATED: 4,
     }
@@ -94,7 +94,7 @@ export default function SetupLog({ setups }: SetupLogProps) {
               </span>
 
               {/* Grade (only for GO) */}
-              {setup.phase === 'GO_FIRED' && setup.risk && (
+              {setup.phase === 'TRIGGERED' && setup.risk && (
                 <span
                   className={`text-[10px] font-bold ml-auto ${
                     setup.risk.grade === 'A'
@@ -111,7 +111,7 @@ export default function SetupLog({ setups }: SetupLogProps) {
               )}
 
               {/* Entry price for GO setups */}
-              {setup.phase === 'GO_FIRED' && setup.entry && (
+              {setup.phase === 'TRIGGERED' && setup.entry && (
                 <span className="text-[10px] font-mono text-white/40 ml-auto tabular-nums">
                   {setup.entry.toFixed(2)}
                 </span>
