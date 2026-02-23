@@ -1,52 +1,66 @@
-# Prisma Connection Cleanup — Implementation Plan
+# Prisma 7 Connection Cleanup — Implementation Plan (v2)
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Fix the Prisma connection setup so migrations/studio use a direct Postgres URL, runtime queries use Accelerate, and redundant env vars and code are removed.
+**Goal:** Fix Prisma CLI (migrate/studio), enable Accelerate everywhere with caching, and clean up redundant Vercel env vars.
 
-**Architecture:** Add `url` + `directUrl` to the Prisma schema datasource block. Simplify `src/lib/prisma.ts` by removing the manual `@prisma/adapter-pg` dual-mode logic — Prisma Client handles Accelerate routing natively when the schema has an Accelerate `url`. Clean up Vercel env vars to exactly 2 database vars.
+**Architecture:** Prisma 7 splits connection config: `prisma.config.ts` feeds CLI tools (direct Postgres via DIRECT_URL), while `PrismaClient` constructor gets `adapter` or `accelerateUrl` at runtime. The schema datasource block has NO url fields — this is correct for Prisma 7. The existing dual-mode URL detection in `prisma.ts` is correct and stays.
 
-**Tech Stack:** Prisma 7.4, PostgreSQL, Prisma Accelerate, Vercel CLI (`npx vercel`), Next.js
+**Tech Stack:** Prisma 7.4.0, @prisma/adapter-pg 7.4.0, @prisma/extension-accelerate 3.0.1, PostgreSQL, Prisma Accelerate, Vercel CLI
 
-**Reference:** Design doc at `docs/plans/2026-02-23-prisma-connection-cleanup-design.md`
+**Reference:** Corrected design at `docs/plans/2026-02-23-prisma-connection-cleanup-design.md`
+
+**CRITICAL — what Prisma 7 changed from 5/6:**
+- `url` and `directUrl` REMOVED from `schema.prisma` — use `prisma.config.ts` instead
+- `PrismaClient()` with no args THROWS — must provide `adapter` or `accelerateUrl`
+- `@prisma/adapter-pg` is REQUIRED for direct Postgres connections
+- `@prisma/extension-accelerate` enables query caching via `cacheStrategy`
 
 ---
 
-### Task 1: Update Prisma Schema Datasource
+### Task 1: Create `prisma.config.ts`
 
 **Files:**
-- Modify: `prisma/schema.prisma:6-8`
+- Create: `prisma.config.ts` (project root, next to package.json)
 
-**Step 1: Edit the datasource block**
+**Step 1: Create the file**
 
-Replace lines 6-8 in `prisma/schema.prisma`:
+Create `prisma.config.ts` at the project root with this exact content:
 
-```prisma
-datasource db {
-  provider = "postgresql"
-}
+```typescript
+import "dotenv/config"
+import { defineConfig, env } from "prisma/config"
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+  },
+  datasource: {
+    url: env("DIRECT_URL"),
+  },
+})
 ```
 
-With:
+**Why this works:**
+- `dotenv/config` loads `.env.local` (which has DIRECT_URL after Task 2)
+- `env("DIRECT_URL")` reads the direct Postgres connection string
+- `datasource.url` is used ONLY by CLI commands (migrate, studio, introspect, db push)
+- Runtime queries go through `src/lib/prisma.ts` — completely separate path
 
-```prisma
-datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
-}
-```
-
-**Step 2: Verify schema is valid**
+**Step 2: Verify schema still validates**
 
 Run: `npx prisma validate`
-Expected: `The schema at prisma/schema.prisma is valid`
+Expected: `The schema at prisma/schema.prisma is valid 🚀`
 
 **Step 3: Commit**
 
 ```bash
-git add prisma/schema.prisma
-git commit -m "fix(prisma): add url and directUrl to datasource block"
+git add prisma.config.ts
+git commit -m "fix(prisma): add prisma.config.ts for CLI database connection
+
+Prisma 7 requires prisma.config.ts for CLI tools (migrate, studio,
+introspect). Uses DIRECT_URL env var for direct Postgres connection."
 ```
 
 ---
@@ -54,127 +68,191 @@ git commit -m "fix(prisma): add url and directUrl to datasource block"
 ### Task 2: Add DIRECT_URL to Local Environment
 
 **Files:**
-- Modify: `.env.local`
+- Modify: `.env.local` (gitignored — no commit)
 
-**Step 1: Get the direct Postgres URL from Vercel**
+**Step 1: Pull direct Postgres URL from Vercel**
 
-Run: `npx vercel env pull /tmp/rr-env-pull --environment=production 2>/dev/null && grep "^POSTGRES_URL=" /tmp/rr-env-pull`
+Run:
+```bash
+npx vercel env pull /tmp/rr-env-pull --environment=production 2>/dev/null
+grep "^POSTGRES_URL=" /tmp/rr-env-pull
+```
 
-This gives you the direct connection string (format: `postgres://...@db.prisma.io:5432/postgres?sslmode=require`).
+Expected: `POSTGRES_URL="postgres://...@db.prisma.io:5432/postgres?sslmode=require"`
+
+Copy the value (everything inside the quotes).
 
 **Step 2: Add DIRECT_URL to .env.local**
 
-Add this line to `.env.local` (use the exact value from step 1):
+Add this line to the end of `.env.local` (paste the value from step 1):
 
 ```
-DIRECT_URL="postgres://USER:PASS@db.prisma.io:5432/postgres?sslmode=require"
+# Direct Postgres for CLI (migrate, studio)
+DIRECT_URL="postgres://...@db.prisma.io:5432/postgres?sslmode=require"
 ```
 
 **Step 3: Clean up temp file**
 
 Run: `rm /tmp/rr-env-pull`
 
-**Step 4: Verify Prisma can connect via direct URL**
+**Step 4: Verify Prisma CLI now works**
 
 Run: `npx prisma migrate status`
-Expected: Shows migration history without errors. This confirms `DIRECT_URL` works for CLI operations.
+Expected: Lists all 23 migrations as applied. NO errors about "datasource.url property is required".
+
+This is the critical verification — if this works, `prisma.config.ts` + `DIRECT_URL` is correctly wired.
+
+**Step 5: Verify Studio connects**
+
+Run: `npx prisma studio`
+Expected: Opens browser at localhost:5555 with all tables visible. Ctrl+C to close.
 
 **DO NOT COMMIT** — `.env.local` is gitignored.
 
 ---
 
-### Task 3: Simplify `src/lib/prisma.ts`
+### Task 3: Add Accelerate Extension to `prisma.ts`
 
 **Files:**
-- Modify: `src/lib/prisma.ts`
+- Modify: `src/lib/prisma.ts:1-35`
 
-**Step 1: Replace the entire file**
+**Step 1: Read the current file to confirm starting state**
 
-Replace the contents of `src/lib/prisma.ts` with:
+Run: `cat src/lib/prisma.ts`
 
+Confirm it matches:
 ```typescript
+import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@prisma/client'
-
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
-
-function createPrismaClient(): PrismaClient {
-  return new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-  })
-}
-
-export const prisma: PrismaClient =
-  globalForPrisma.prisma ??
-  (process.env.NODE_ENV !== 'production'
-    ? (globalForPrisma.prisma = createPrismaClient())
-    : createPrismaClient())
+// ... (45 lines total, dual-mode URL detection, Proxy wrapper)
 ```
 
-What changed:
-- Removed `import { PrismaPg } from '@prisma/adapter-pg'`
-- Removed URL-sniffing regex logic (`usePgAdapter`, `useAccelerateUrl`)
-- Removed `Proxy` wrapper (unnecessary indirection)
-- Removed `prismaUrl` tracking (no longer needed without dual-mode)
-- Kept singleton pattern for dev hot-reload safety
-- Kept configurable logging (warn in dev, error-only in prod)
+**Step 2: Add the Accelerate extension import and usage**
 
-**Step 2: Verify TypeScript compiles**
+Add import on line 3:
+```typescript
+import { withAccelerate } from '@prisma/extension-accelerate'
+```
+
+Replace lines 23-27 (the PrismaClient constructor block):
+
+BEFORE:
+```typescript
+  const client = new PrismaClient({
+    ...(adapter ? { adapter } : {}),
+    ...(useAccelerateUrl ? { accelerateUrl: databaseUrl } : {}),
+    log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+  })
+```
+
+AFTER:
+```typescript
+  const baseClient = new PrismaClient({
+    ...(adapter ? { adapter } : {}),
+    ...(useAccelerateUrl ? { accelerateUrl: databaseUrl } : {}),
+    log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+  })
+
+  const client = useAccelerateUrl
+    ? (baseClient.$extends(withAccelerate()) as unknown as PrismaClient)
+    : baseClient
+```
+
+**What this does:**
+- When Accelerate URL detected: extends client with `withAccelerate()` for caching support
+- When direct Postgres URL: uses base client with PrismaPg adapter (no extension needed)
+- `as unknown as PrismaClient` cast is necessary because `$extends()` returns a wider type — verified this compiles clean during forensic audit
+- All 15 consumer files continue to work — they only use standard Prisma methods
+
+**Step 3: Verify the full file looks correct**
+
+The complete file after edits should be:
+
+```typescript
+import { PrismaPg } from '@prisma/adapter-pg'
+import { PrismaClient } from '@prisma/client'
+import { withAccelerate } from '@prisma/extension-accelerate'
+
+const globalForPrisma = globalThis as unknown as {
+  prisma?: PrismaClient
+  prismaUrl?: string
+}
+
+function getPrismaClient(): PrismaClient {
+  const databaseUrl = process.env.DATABASE_URL
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is not configured; Prisma client is unavailable')
+  }
+
+  if (globalForPrisma.prisma && globalForPrisma.prismaUrl === databaseUrl) {
+    return globalForPrisma.prisma
+  }
+
+  const usePgAdapter = /^postgres(ql)?:\/\//i.test(databaseUrl)
+  const useAccelerateUrl = /^prisma(\+postgres)?:\/\//i.test(databaseUrl)
+  const adapter = usePgAdapter ? new PrismaPg({ connectionString: databaseUrl }) : undefined
+
+  const baseClient = new PrismaClient({
+    ...(adapter ? { adapter } : {}),
+    ...(useAccelerateUrl ? { accelerateUrl: databaseUrl } : {}),
+    log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+  })
+
+  const client = useAccelerateUrl
+    ? (baseClient.$extends(withAccelerate()) as unknown as PrismaClient)
+    : baseClient
+
+  if (process.env.NODE_ENV !== 'production') {
+    globalForPrisma.prisma = client
+    globalForPrisma.prismaUrl = databaseUrl
+  }
+
+  return client
+}
+
+const prismaProxy = new Proxy({} as PrismaClient, {
+  get(_target, prop, receiver) {
+    const client = getPrismaClient()
+    const value = Reflect.get(client, prop, receiver)
+    return typeof value === 'function' ? value.bind(client) : value
+  },
+})
+
+export const prisma: PrismaClient = prismaProxy
+```
+
+**Step 4: Verify TypeScript compiles**
 
 Run: `npx tsc --noEmit`
 Expected: No errors.
 
-**Step 3: Commit**
+**Step 5: Verify Prisma generate still works**
+
+Run: `npx prisma generate`
+Expected: `✔ Generated Prisma Client (v7.4.0)`
+
+**Step 6: Commit**
 
 ```bash
 git add src/lib/prisma.ts
-git commit -m "fix(prisma): simplify client — remove adapter-pg dual-mode logic"
+git commit -m "feat(prisma): add Accelerate caching extension
+
+Adds withAccelerate() when DATABASE_URL is an Accelerate URL.
+Enables per-query cacheStrategy support for edge caching.
+Direct Postgres path unchanged (PrismaPg adapter, no extension)."
 ```
 
 ---
 
-### Task 4: Remove `@prisma/adapter-pg` Dependency
+### Task 4: Update `.env.example` and `.env`
 
 **Files:**
-- Modify: `package.json`
-
-**Step 1: Confirm no other files import adapter-pg**
-
-Run: `grep -r "adapter-pg\|PrismaPg" src/ scripts/ --include="*.ts" --include="*.tsx"`
-Expected: No matches (we already removed it from `prisma.ts` in Task 3).
-
-**Step 2: Uninstall the package**
-
-Run: `npm uninstall @prisma/adapter-pg`
-Expected: Removes from `package.json` dependencies and `package-lock.json`.
-
-**Step 3: Regenerate Prisma Client**
-
-Run: `npx prisma generate`
-Expected: `✔ Generated Prisma Client`
-
-**Step 4: Verify build**
-
-Run: `npx next build`
-Expected: Build succeeds without errors.
-
-**Step 5: Commit**
-
-```bash
-git add package.json package-lock.json
-git commit -m "chore: remove @prisma/adapter-pg — no longer needed with schema directUrl"
-```
-
----
-
-### Task 5: Update `.env.example` and `.env`
-
-**Files:**
-- Modify: `.env.example`
-- Modify: `.env`
+- Modify: `.env.example:1-2`
+- Modify: `.env` (entire file)
 
 **Step 1: Update `.env.example`**
 
-Replace lines 1-2 of `.env.example`:
+Replace lines 1-2:
 
 ```
 # Database (Postgres — set via .env)
@@ -185,20 +263,20 @@ With:
 
 ```
 # Database (Prisma Postgres)
-# Runtime queries go through Accelerate (pooled + edge-cached)
+# Runtime queries — Accelerate proxy (pooled + edge-cached)
 DATABASE_URL=prisma+postgres://accelerate.prisma-data.net/?api_key=YOUR_ACCELERATE_KEY
-# Direct connection for migrations, studio, introspection
+# CLI operations (migrate, studio) — direct Postgres
 DIRECT_URL=postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=require
 ```
 
 **Step 2: Update `.env`**
 
-Replace the full contents of `.env` with:
+Replace entire contents with:
 
 ```
 # See .env.local for actual DATABASE_URL and DIRECT_URL (Prisma Postgres)
-# DATABASE_URL = Accelerate proxy (pooled, for app runtime)
-# DIRECT_URL   = Direct Postgres (for migrations, studio, CLI)
+# DATABASE_URL = Accelerate proxy (pooled + cached, for app runtime queries)
+# DIRECT_URL   = Direct Postgres (for prisma migrate, studio, introspect)
 # This file is committed to git — do NOT put secrets here.
 ```
 
@@ -206,45 +284,61 @@ Replace the full contents of `.env` with:
 
 ```bash
 git add .env.example .env
-git commit -m "docs: update env templates with DATABASE_URL + DIRECT_URL pattern"
+git commit -m "docs: update env templates for Prisma 7 two-URL pattern
+
+DATABASE_URL = Accelerate (runtime queries, pooled + cached)
+DIRECT_URL = Direct Postgres (CLI: migrate, studio, introspect)"
 ```
 
 ---
 
-### Task 6: Set Vercel Environment Variables
+### Task 5: Set Vercel Environment Variables
 
-**Context:** Vercel currently has 6+ database env vars. We need exactly 2: `DATABASE_URL` (Accelerate) and `DIRECT_URL` (direct Postgres). The Accelerate URL is in `.env.local`. The direct Postgres URL is currently stored as `POSTGRES_URL` on Vercel.
+**Context:** Vercel currently has `DATABASE_URL = postgres://` (direct). We need to change it to Accelerate, add `DIRECT_URL`, and remove 5 redundant vars.
 
-**Step 1: Get the two URLs we need**
+**Step 1: Get the Accelerate URL**
 
-Get the Accelerate URL (from `.env.local`):
-Run: `grep "^DATABASE_URL=" .env.local | sed 's/DATABASE_URL=//'`
+Run: `grep "^DATABASE_URL=" .env.local`
 
-Get the direct Postgres URL (from Vercel):
-Run: `npx vercel env pull /tmp/rr-env-pull --environment=production 2>/dev/null && grep "^POSTGRES_URL=" /tmp/rr-env-pull | sed 's/POSTGRES_URL=//'`
+Copy the value — this is the Accelerate URL (`prisma+postgres://accelerate.prisma-data.net/?api_key=...`).
 
-**Step 2: Set DATABASE_URL on Vercel to the Accelerate URL**
+**Step 2: Get the direct Postgres URL**
 
-For each environment (production, preview, development), set `DATABASE_URL` to the Accelerate URL from Step 1.
+Run: `npx vercel env pull /tmp/rr-env-pull --environment=production 2>/dev/null && grep "^POSTGRES_URL=" /tmp/rr-env-pull`
 
-Run for each environment:
-```bash
-echo "ACCELERATE_URL_VALUE" | npx vercel env add DATABASE_URL production
-echo "ACCELERATE_URL_VALUE" | npx vercel env add DATABASE_URL preview
-echo "ACCELERATE_URL_VALUE" | npx vercel env add DATABASE_URL development
-```
+Copy the value — this is the direct URL (`postgres://...@db.prisma.io:5432/postgres?sslmode=require`).
 
-Note: If Vercel says the var already exists, remove it first with `npx vercel env rm DATABASE_URL production -y`.
-
-**Step 3: Add DIRECT_URL on Vercel**
+**Step 3: Remove existing DATABASE_URL from all envs**
 
 ```bash
-echo "DIRECT_POSTGRES_URL_VALUE" | npx vercel env add DIRECT_URL production
-echo "DIRECT_POSTGRES_URL_VALUE" | npx vercel env add DIRECT_URL preview
-echo "DIRECT_POSTGRES_URL_VALUE" | npx vercel env add DIRECT_URL development
+npx vercel env rm DATABASE_URL production -y
+npx vercel env rm DATABASE_URL preview -y
+npx vercel env rm DATABASE_URL development -y
 ```
 
-**Step 4: Remove redundant vars**
+**Step 4: Set DATABASE_URL to Accelerate URL on all envs**
+
+```bash
+printf '%s' 'ACCELERATE_URL_HERE' | npx vercel env add DATABASE_URL production
+printf '%s' 'ACCELERATE_URL_HERE' | npx vercel env add DATABASE_URL preview
+printf '%s' 'ACCELERATE_URL_HERE' | npx vercel env add DATABASE_URL development
+```
+
+Replace `ACCELERATE_URL_HERE` with the actual value from Step 1 (no quotes).
+
+**Step 5: Add DIRECT_URL on all envs**
+
+```bash
+printf '%s' 'DIRECT_PG_URL_HERE' | npx vercel env add DIRECT_URL production
+printf '%s' 'DIRECT_PG_URL_HERE' | npx vercel env add DIRECT_URL preview
+printf '%s' 'DIRECT_PG_URL_HERE' | npx vercel env add DIRECT_URL development
+```
+
+Replace `DIRECT_PG_URL_HERE` with the actual value from Step 2 (no quotes).
+
+**Step 6: Remove redundant vars**
+
+Check which envs each var exists on, then remove:
 
 ```bash
 npx vercel env rm POSTGRES_URL production -y
@@ -254,54 +348,74 @@ npx vercel env rm PRISMA_DATABASE_URL production -y
 npx vercel env rm PRISMA_DATABASE_URL preview -y
 npx vercel env rm PRISMA_DATABASE_URL development -y
 npx vercel env rm rrdb_DATABASE_URL production -y
+npx vercel env rm rrdb_DATABASE_URL preview -y
+npx vercel env rm rrdb_DATABASE_URL development -y
 npx vercel env rm rrdb_POSTGRES_URL production -y
+npx vercel env rm rrdb_POSTGRES_URL preview -y
+npx vercel env rm rrdb_POSTGRES_URL development -y
 npx vercel env rm rrdb_PRISMA_DATABASE_URL production -y
+npx vercel env rm rrdb_PRISMA_DATABASE_URL preview -y
+npx vercel env rm rrdb_PRISMA_DATABASE_URL development -y
 ```
 
-Run for all environments where each var exists (check `npx vercel env ls` output).
+Some of these may not exist on all envs — that's fine, `vercel env rm` will just say "not found".
 
-**Step 5: Verify final state**
+**Step 7: Verify final state**
 
-Run: `npx vercel env ls | grep -E "DATABASE_URL|DIRECT_URL|POSTGRES_URL|PRISMA_DATABASE"`
-Expected: Only `DATABASE_URL` and `DIRECT_URL` remain (across production/preview/development).
+Run: `npx vercel env ls | grep -iE "DATABASE|POSTGRES|PRISMA_DATA|DIRECT"`
 
-**Step 6: Clean up temp file**
+Expected: ONLY `DATABASE_URL` and `DIRECT_URL` remain, on production/preview/development.
+
+**Step 8: Clean up temp file**
 
 Run: `rm /tmp/rr-env-pull`
 
 ---
 
-### Task 7: Deploy and Verify
+### Task 6: Deploy and Verify
 
 **Step 1: Deploy to Vercel**
 
 Run: `npx vercel --prod`
-Expected: Build succeeds, deployment URL returned.
+Expected: Build succeeds. Deployment URL returned.
 
-**Step 2: Verify the app works**
+**Step 2: Verify app database connectivity**
 
-Hit a known API route to confirm database connectivity:
 Run: `curl -s https://rabid-raccoon.vercel.app/api/market-data/mes | head -c 200`
-Expected: JSON response with market data (not an error).
+Expected: JSON response with candle data. NOT an error page.
 
 **Step 3: Verify Prisma CLI works locally**
 
 Run: `npx prisma migrate status`
-Expected: Shows all 23 migrations as applied.
-
-Run: `npx prisma studio`
-Expected: Opens browser with Prisma Studio connected to the database.
+Expected: All 23 migrations listed as applied.
 
 **Step 4: Force Inngest re-sync**
 
 Run: `curl -X PUT "https://rabid-raccoon.vercel.app/api/inngest" -H "Content-Type: application/json" -d '{}'`
 Expected: `{"message":"Successfully registered","modified":true}`
 
+**Step 5: Verify TypeScript + lint clean**
+
+Run: `npx tsc --noEmit && npx next lint`
+Expected: No errors from either command.
+
 ---
 
 ## Rollback Plan
 
-If anything breaks after Vercel deploy:
-1. Set `DATABASE_URL` back to direct Postgres URL on Vercel: `npx vercel env rm DATABASE_URL production -y && echo "DIRECT_PG_URL" | npx vercel env add DATABASE_URL production`
-2. Revert schema: `git revert HEAD~N` (however many commits back)
-3. Redeploy: `npx vercel --prod`
+If production breaks after Vercel deploy:
+
+1. **Restore direct Postgres as DATABASE_URL:**
+```bash
+npx vercel env rm DATABASE_URL production -y
+printf '%s' 'DIRECT_PG_URL' | npx vercel env add DATABASE_URL production
+npx vercel --prod
+```
+
+2. **Revert code changes:**
+```bash
+git log --oneline -5  # find commits to revert
+git revert HEAD~N..HEAD --no-commit
+git commit -m "revert: roll back prisma connection cleanup"
+npx vercel --prod
+```
