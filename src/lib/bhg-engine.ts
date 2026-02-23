@@ -15,7 +15,7 @@ import { CandleData, FibResult, MeasuredMove } from './types'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type GoType = 'BREAK' | 'CLOSE'
-export type SetupPhase = 'AWAITING_TOUCH' | 'TOUCHED' | 'HOOKED' | 'GO_FIRED' | 'EXPIRED' | 'INVALIDATED'
+export type SetupPhase = 'AWAITING_CONTACT' | 'CONTACT' | 'CONFIRMED' | 'TRIGGERED' | 'EXPIRED' | 'INVALIDATED'
 export type SetupDirection = 'BULLISH' | 'BEARISH'
 
 export interface BhgSetup {
@@ -105,7 +105,7 @@ export function detectTouch(
   return {
     id: `${direction}-${fibRatio}-${barIndex}`,
     direction,
-    phase: 'TOUCHED',
+    phase: 'CONTACT',
     fibLevel,
     fibRatio,
     touchTime: candle.time,
@@ -130,7 +130,7 @@ export function detectHook(
   barIndex: number,
   setup: BhgSetup
 ): BhgSetup | null {
-  if (setup.phase !== 'TOUCHED') return null
+  if (setup.phase !== 'CONTACT') return null
 
   const body = Math.abs(candle.close - candle.open)
 
@@ -143,7 +143,7 @@ export function detectHook(
     ) {
       return {
         ...setup,
-        phase: 'HOOKED',
+        phase: 'CONFIRMED',
         hookTime: candle.time,
         hookBarIndex: barIndex,
         hookLow: candle.low,
@@ -162,7 +162,7 @@ export function detectHook(
     ) {
       return {
         ...setup,
-        phase: 'HOOKED',
+        phase: 'CONFIRMED',
         hookTime: candle.time,
         hookBarIndex: barIndex,
         hookLow: candle.low,
@@ -191,7 +191,7 @@ export function detectGo(
   barIndex: number,
   setup: BhgSetup
 ): BhgSetup | null {
-  if (setup.phase !== 'HOOKED') return null
+  if (setup.phase !== 'CONFIRMED') return null
 
   // Check expiry first
   if (barIndex - (setup.hookBarIndex ?? 0) > setup.expiryBars) {
@@ -204,7 +204,7 @@ export function detectGo(
     if (candle.high > hookHigh) {
       return {
         ...setup,
-        phase: 'GO_FIRED',
+        phase: 'TRIGGERED',
         goTime: candle.time,
         goBarIndex: barIndex,
         goType: candle.close > hookHigh ? 'CLOSE' : 'BREAK',
@@ -214,7 +214,7 @@ export function detectGo(
     if (candle.close > hookHigh) {
       return {
         ...setup,
-        phase: 'GO_FIRED',
+        phase: 'TRIGGERED',
         goTime: candle.time,
         goBarIndex: barIndex,
         goType: 'CLOSE',
@@ -228,7 +228,7 @@ export function detectGo(
     if (candle.low < hookLow) {
       return {
         ...setup,
-        phase: 'GO_FIRED',
+        phase: 'TRIGGERED',
         goTime: candle.time,
         goBarIndex: barIndex,
         goType: candle.close < hookLow ? 'CLOSE' : 'BREAK',
@@ -238,7 +238,7 @@ export function detectGo(
     if (candle.close < hookLow) {
       return {
         ...setup,
-        phase: 'GO_FIRED',
+        phase: 'TRIGGERED',
         goTime: candle.time,
         goBarIndex: barIndex,
         goType: 'CLOSE',
@@ -250,7 +250,7 @@ export function detectGo(
 }
 
 /**
- * Compute entry/SL/TP1/TP2 for a GO_FIRED setup.
+ * Compute entry/SL/TP1/TP2 for a TRIGGERED setup.
  *
  * Entry: hook close price
  * SL: beyond the next fib level (0.618 stop for 0.5 touch, 0.786 stop for 0.618 touch)
@@ -264,7 +264,7 @@ export function computeTargets(
   fibResult: FibResult,
   measuredMoves: MeasuredMove[]
 ): BhgSetup {
-  if (setup.phase !== 'GO_FIRED') return setup
+  if (setup.phase !== 'TRIGGERED') return setup
 
   const range = fibResult.anchorHigh - fibResult.anchorLow
   if (range <= 0) return setup
@@ -385,14 +385,14 @@ export function advanceBhgSetups(
             s.fibRatio === ratio &&
             s.phase !== 'EXPIRED' &&
             s.phase !== 'INVALIDATED' &&
-            s.phase !== 'GO_FIRED'
+            s.phase !== 'TRIGGERED'
         )
         if (hasActive) continue
 
         // Skip if we already fired a GO for this combo recently (within 40 bars)
         if (firedGoKeys.has(dedupeKey)) {
           const lastGo = completedSetups.find(
-            (s) => s.direction === direction && s.fibRatio === ratio && s.phase === 'GO_FIRED'
+            (s) => s.direction === direction && s.fibRatio === ratio && s.phase === 'TRIGGERED'
           )
           if (lastGo && i - (lastGo.goBarIndex ?? 0) < 40) continue
           firedGoKeys.delete(dedupeKey)
@@ -409,18 +409,18 @@ export function advanceBhgSetups(
     for (const [id, setup] of activeSetups) {
       let updated: BhgSetup | null = null
 
-      if (setup.phase === 'TOUCHED') {
+      if (setup.phase === 'CONTACT') {
         // Try hook detection on this candle (can happen same bar as touch)
         updated = detectHook(candle, i, setup)
       }
 
-      if (!updated && setup.phase === 'HOOKED') {
+      if (!updated && setup.phase === 'CONFIRMED') {
         // Try GO detection
         updated = detectGo(candle, i, setup)
       }
 
       if (updated) {
-        if (updated.phase === 'GO_FIRED') {
+        if (updated.phase === 'TRIGGERED') {
           // Compute targets and move to completed
           const withTargets = computeTargets(updated, fibResult, measuredMoves)
           completedSetups.push(withTargets)
@@ -432,13 +432,13 @@ export function advanceBhgSetups(
         } else {
           activeSetups.set(id, updated)
         }
-      } else if (setup.phase === 'TOUCHED') {
+      } else if (setup.phase === 'CONTACT') {
         // Check touch expiry (if no hook within 10 bars, invalidate)
         if (i - (setup.touchBarIndex ?? 0) > 10) {
           activeSetups.delete(id)
           completedSetups.push({ ...setup, phase: 'EXPIRED' })
         }
-      } else if (setup.phase === 'HOOKED') {
+      } else if (setup.phase === 'CONFIRMED') {
         // Check hook expiry
         if (i - (setup.hookBarIndex ?? 0) > setup.expiryBars) {
           activeSetups.delete(id)
