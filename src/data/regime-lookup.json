@@ -1,0 +1,18 @@
+{
+  "generatedAt": "placeholder",
+  "totalSetups": 0,
+  "bucketsWithMinSamples": 0,
+  "minSamples": 5,
+  "global": {
+    "pTp1": 0.50,
+    "pTp2": 0.30,
+    "count": 0
+  },
+  "gradeFallback": {
+    "A": { "pTp1": 0.60, "pTp2": 0.40, "count": 0 },
+    "B": { "pTp1": 0.50, "pTp2": 0.30, "count": 0 },
+    "C": { "pTp1": 0.40, "pTp2": 0.20, "count": 0 },
+    "D": { "pTp1": 0.30, "pTp2": 0.15, "count": 0 }
+  },
+  "buckets": []
+}
