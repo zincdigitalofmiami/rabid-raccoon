@@ -143,6 +143,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
 
   const chartSetups = useMemo(
     () => selectSetupsForChart(setups ?? [], pointsRef.current[pointsRef.current.length - 1]?.time ?? null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lastPrice triggers recalc when pointsRef updates
     [setups, lastPrice]
   )
 

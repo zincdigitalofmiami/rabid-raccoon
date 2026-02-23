@@ -40,3 +40,4 @@ models/
 prisma/dev.db
 security_best_practices_report.md
 indicators/*.bak*
+.audit-reports/
