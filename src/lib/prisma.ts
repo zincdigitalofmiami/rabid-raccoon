@@ -1,5 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@prisma/client'
+import { withAccelerate } from '@prisma/extension-accelerate'
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient
@@ -20,11 +21,15 @@ function getPrismaClient(): PrismaClient {
   const useAccelerateUrl = /^prisma(\+postgres)?:\/\//i.test(databaseUrl)
   const adapter = usePgAdapter ? new PrismaPg({ connectionString: databaseUrl }) : undefined
 
-  const client = new PrismaClient({
+  const baseClient = new PrismaClient({
     ...(adapter ? { adapter } : {}),
     ...(useAccelerateUrl ? { accelerateUrl: databaseUrl } : {}),
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   })
+
+  const client = useAccelerateUrl
+    ? (baseClient.$extends(withAccelerate()) as unknown as PrismaClient)
+    : baseClient
 
   if (process.env.NODE_ENV !== 'production') {
     globalForPrisma.prisma = client

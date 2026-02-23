@@ -1,6 +1,4 @@
-import { config } from "dotenv"
-config({ path: ".env.local" })
-config() // .env fallback
+import "dotenv/config"
 import { defineConfig, env } from "prisma/config"
 
 export default defineConfig({
