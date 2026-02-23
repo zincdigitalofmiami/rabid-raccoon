@@ -1,0 +1,23 @@
+.gitignore
+  95c7c025e986619f 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "d2c304d888d8bcd6d3064ee5870b79ce66e57765",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
