@@ -1,7 +1,6 @@
 'use client'
 
 import { useRef, useMemo } from 'react'
-import Link from 'next/link'
 import LiveMesChart, { LiveMesChartHandle } from '../LiveMesChart'
 import { useMesSetups } from '@/hooks/useMesSetups'
 import StatusTile from './StatusTile'
@@ -32,26 +31,6 @@ export default function MesIntradayDashboard() {
   return (
     <div className="min-h-screen bg-[#0d1117]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold text-white tracking-tight">
-              MES Intraday
-            </h1>
-            <span className="text-[10px] font-mono text-white/20 bg-white/5 px-2 py-0.5 rounded">
-              Touch-Hook-Go
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            {loading && (
-              <div className="w-3 h-3 border border-white/20 border-t-white/60 rounded-full animate-spin" />
-            )}
-            <Link href="/" className="text-xs text-white/30 hover:text-white/50 transition-colors">
-              Markets
-            </Link>
-          </div>
-        </div>
-
         {error && (
           <div className="mb-4 p-3 rounded-lg border border-red-500/20 bg-red-500/5">
             <p className="text-sm text-red-400">{error}</p>

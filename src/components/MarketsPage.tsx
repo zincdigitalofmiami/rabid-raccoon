@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
-import Header from './Header'
 import AnalysePanel from './AnalysePanel'
 import MarketsGrid from './MarketsGrid'
 import ForecastPanel from './ForecastPanel'
@@ -20,8 +19,6 @@ export default function MarketsPage() {
   return (
     <div className="min-h-screen bg-[#0d1117]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <Header />
-
         {marketsError && (
           <div className="mb-4 p-3 rounded-lg border border-red-500/20 bg-red-500/5">
             <p className="text-sm text-red-400">Market data error: {marketsError}</p>
