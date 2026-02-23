@@ -1,102 +1,113 @@
-# Prisma Connection Cleanup — Design
+# Prisma 7 Connection Cleanup — Corrected Design
 
 **Date:** 2026-02-23
-**Status:** Approved
+**Status:** Approved (v2 — corrected after forensic audit)
+**Supersedes:** Original design was based on Prisma 5/6 patterns that don't apply to Prisma 7.
 
-## Problem
+## What We Learned (Forensic Audit)
 
-The Prisma database connection setup has several issues:
+Prisma 7.4.0 has fundamentally different connection architecture:
 
-1. **URL mismatch:** Vercel production uses direct Postgres (`postgres://...@db.prisma.io`) but local dev uses Accelerate (`prisma+postgres://accelerate.prisma-data.net`). Different connection paths cause different behavior.
-2. **No `directUrl` in schema:** `prisma migrate dev`, `prisma studio`, and `prisma db push` all go through Accelerate locally, which is unreliable for DDL operations.
-3. **Redundant Vercel env vars:** 6 database env vars exist on Vercel (`DATABASE_URL`, `POSTGRES_URL`, `PRISMA_DATABASE_URL`, plus `rrdb_*` prefixed duplicates). Only 2 are needed.
-4. **Over-engineered `prisma.ts`:** Dual-mode URL detection logic (`PrismaPg` adapter vs Accelerate) adds complexity. The schema's `url`/`directUrl` handles this natively.
-5. **No connection limit:** Missing `connection_limit` parameter for serverless environments.
-6. **Unused dependency:** `@prisma/adapter-pg` is imported but unnecessary when using schema-level `url`/`directUrl`.
+1. **`url` and `directUrl` removed from `schema.prisma`** — Prisma 7 moved these to `prisma.config.ts`
+2. **`PrismaClient` REQUIRES either `adapter` or `accelerateUrl`** — bare `new PrismaClient()` throws
+3. **`prisma.config.ts` feeds CLI** (migrate, studio, introspect) — completely separate from runtime
+4. **`@prisma/adapter-pg` IS needed** — it's the Prisma 7 way to do direct Postgres connections
+5. **The dual-mode URL detection in `prisma.ts` is correct** — it's not "over-engineered", it's necessary
+
+## What's Actually Broken
+
+| Issue | Root Cause |
+|-------|------------|
+| `prisma migrate status` fails | No `prisma.config.ts` exists — CLI has no DB URL |
+| `prisma studio` fails | Same — no `prisma.config.ts` |
+| Accelerate unused in production | Vercel `DATABASE_URL` = `postgres://` (direct), not Accelerate |
+| No caching support | `@prisma/extension-accelerate` not installed |
+| 5 redundant Vercel vars | Auto-generated `rrdb_*` + unused `POSTGRES_URL`, `PRISMA_DATABASE_URL` |
 
 ## Solution
 
-Align to Prisma's recommended Accelerate + direct connection pattern.
-
-### 1. Schema (`prisma/schema.prisma`)
-
-```prisma
-datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")    // Accelerate (pooled, for app queries)
-  directUrl = env("DIRECT_URL")      // Direct Postgres (for migrations, studio)
-}
-```
-
-Generator block unchanged (`engineType = "binary"` is correct).
-
-### 2. Vercel Environment Variables — Target State
-
-**Keep/Set:**
-- `DATABASE_URL` = Accelerate URL (`prisma+postgres://accelerate.prisma-data.net/?api_key=...`)
-- `DIRECT_URL` = Direct Postgres (`postgres://...@db.prisma.io:5432/postgres?sslmode=require`)
-
-**Remove (redundant):**
-- `POSTGRES_URL`
-- `PRISMA_DATABASE_URL`
-- `rrdb_DATABASE_URL`
-- `rrdb_POSTGRES_URL`
-- `rrdb_PRISMA_DATABASE_URL`
-
-### 3. Local Environment (`.env.local`)
-
-```
-DATABASE_URL="prisma+postgres://accelerate.prisma-data.net/?api_key=..."  (existing)
-DIRECT_URL="postgres://...@db.prisma.io:5432/postgres?sslmode=require"    (new)
-```
-
-### 4. Prisma Client (`src/lib/prisma.ts`)
-
-Remove `@prisma/adapter-pg` import and URL-sniffing logic. Simplify to standard singleton:
+### 1. Create `prisma.config.ts` (NEW FILE — project root)
 
 ```typescript
-import { PrismaClient } from '@prisma/client'
+import "dotenv/config"
+import { defineConfig, env } from "prisma/config"
 
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
-
-function createPrismaClient(): PrismaClient {
-  return new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-  })
-}
-
-export const prisma = globalForPrisma.prisma ?? (
-  process.env.NODE_ENV !== 'production'
-    ? (globalForPrisma.prisma = createPrismaClient())
-    : createPrismaClient()
-)
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+  },
+  datasource: {
+    url: env("DIRECT_URL"),
+  },
+})
 ```
 
-### 5. Remove `@prisma/adapter-pg` from `package.json`
+This file is ONLY used by the Prisma CLI. Runtime queries go through `src/lib/prisma.ts`.
 
-No longer needed — schema-level `url`/`directUrl` handles connection routing.
+### 2. `prisma/schema.prisma` — NO CHANGES
 
-### 6. Update `.env.example`
+```prisma
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "binary"
+}
 
-Document both URLs with comments explaining their purpose.
+datasource db {
+  provider = "postgresql"
+}
+```
 
-### 7. Update `.env`
+This is already correct for Prisma 7. No `url`, no `directUrl`.
 
-Add comment referencing both vars.
+### 3. Modify `src/lib/prisma.ts` — Add Accelerate extension
 
-## What This Does NOT Touch
+Changes:
+- Add import: `@prisma/extension-accelerate`
+- When Accelerate path: call `.$extends(withAccelerate())` on client
+- Cast back to `PrismaClient` for type compat (verified: compiles clean)
 
-- No model/table changes
-- No new migrations
-- No Inngest function changes
-- No API route changes
+The dual-mode URL detection STAYS. `@prisma/adapter-pg` STAYS.
+
+### 4. Install `@prisma/extension-accelerate` — ALREADY DONE
+
+Added to package.json during type verification.
+
+### 5. Environment Variables — Target State
+
+**Local `.env.local`:**
+```
+DATABASE_URL="prisma+postgres://..."  (existing — Accelerate)
+DIRECT_URL="postgres://...@db.prisma.io:5432/postgres?sslmode=require"  (NEW)
+```
+
+**Vercel (all envs):**
+```
+DATABASE_URL="prisma+postgres://..."  (CHANGE from postgres:// to Accelerate)
+DIRECT_URL="postgres://...@db.prisma.io:5432/postgres?sslmode=require"  (NEW)
+```
+
+**Remove from Vercel:** POSTGRES_URL, PRISMA_DATABASE_URL, rrdb_DATABASE_URL, rrdb_POSTGRES_URL, rrdb_PRISMA_DATABASE_URL
+
+### 6. Update `.env.example` and `.env`
+
+Document the two-URL pattern.
+
+## What Does NOT Change
+
+- `prisma/schema.prisma` — already correct
+- `@prisma/adapter-pg` — needed for direct connections
+- `pg` — needed by adapter-pg
+- All 15 consumer files — untouched
+- All 23 migrations — untouched
+- Inngest functions — untouched
 
 ## Verification
 
-After implementation:
-1. `prisma generate` succeeds
-2. `prisma migrate dev --create-only` works locally (via DIRECT_URL)
-3. `prisma studio` connects locally
-4. App queries work in dev (`next dev`)
-5. Vercel deploy succeeds with new env vars
-6. No type errors, lint passes
+1. `prisma validate` passes
+2. `prisma generate` succeeds
+3. `prisma migrate status` works (via DIRECT_URL in prisma.config.ts)
+4. `npx tsc --noEmit` passes
+5. `next build` succeeds
+6. Vercel deploy works
+7. App queries work with Accelerate
