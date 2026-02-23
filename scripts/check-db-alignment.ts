@@ -61,7 +61,7 @@ async function checkEconTable(
   row('Latest date', fmt(latest?.eventDate))
 
   // Group by seriesId
-  const groups: { seriesId: string; _count: { id: number } }[] = await delegate.groupBy({
+  const groups = await delegate.groupBy({
     by: ['seriesId'],
     _count: { id: true },
     orderBy: { seriesId: 'asc' },
@@ -129,7 +129,7 @@ async function main() {
       row('Earliest', fmtTs(earliest?.eventTime))
       row('Latest', fmtTs(latest?.eventTime))
 
-      const groups: { symbolCode: string; _count: { id: number } }[] = await prisma.mktFutures1h.groupBy({
+      const groups = await prisma.mktFutures1h.groupBy({
         by: ['symbolCode'],
         _count: { id: true },
         orderBy: { symbolCode: 'asc' },
@@ -240,7 +240,7 @@ async function main() {
       row('Latest date', fmt(latest?.eventDate))
 
       // Impact rating breakdown
-      const impactGroups: { impactRating: string | null; _count: { id: number } }[] = await prisma.econCalendar.groupBy({
+      const impactGroups = await prisma.econCalendar.groupBy({
         by: ['impactRating'],
         _count: { id: true },
         orderBy: { impactRating: 'asc' },
@@ -252,7 +252,7 @@ async function main() {
       }
 
       // Event type breakdown
-      const typeGroups: { eventType: string; _count: { id: number } }[] = await prisma.econCalendar.groupBy({
+      const typeGroups = await prisma.econCalendar.groupBy({
         by: ['eventType'],
         _count: { id: true },
         orderBy: { _count: { id: 'desc' } },
@@ -278,7 +278,7 @@ async function main() {
       row('Earliest pubDate', fmtTs(earliest?.pubDate))
       row('Latest pubDate', fmtTs(latest?.pubDate))
 
-      const layerGroups: { layer: string; _count: { id: number } }[] = await prisma.newsSignal.groupBy({
+      const layerGroups = await prisma.newsSignal.groupBy({
         by: ['layer'],
         _count: { id: true },
         orderBy: { layer: 'asc' },
@@ -289,7 +289,7 @@ async function main() {
         console.log(`    ${g.layer.padEnd(20)} ${String(g._count.id).padStart(8)} signals`)
       }
 
-      const catGroups: { category: string; _count: { id: number } }[] = await prisma.newsSignal.groupBy({
+      const catGroups = await prisma.newsSignal.groupBy({
         by: ['category'],
         _count: { id: true },
         orderBy: { _count: { id: 'desc' } },
@@ -345,7 +345,7 @@ async function main() {
       row('Earliest createdAt', fmtTs(earliest?.createdAt))
       row('Latest createdAt', fmtTs(latest?.createdAt))
 
-      const phaseGroups: { phase: string; _count: { id: number } }[] = await prisma.bhgSetup.groupBy({
+      const phaseGroups = await prisma.bhgSetup.groupBy({
         by: ['phase'],
         _count: { id: true },
         orderBy: { phase: 'asc' },
@@ -356,7 +356,7 @@ async function main() {
         console.log(`    ${g.phase.padEnd(20)} ${String(g._count.id).padStart(8)} setups`)
       }
 
-      const dirGroups: { direction: string; _count: { id: number } }[] = await prisma.bhgSetup.groupBy({
+      const dirGroups = await prisma.bhgSetup.groupBy({
         by: ['direction'],
         _count: { id: true },
         orderBy: { direction: 'asc' },
