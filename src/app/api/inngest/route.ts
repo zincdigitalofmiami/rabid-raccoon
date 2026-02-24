@@ -1,7 +1,8 @@
 import { serve } from 'inngest/next'
 import { inngest } from '@/inngest/client'
 import {
-  // Market Data (Databento) — 5 functions
+  // Market Data (Databento) — 6 functions
+  ingestMktMes15m,
   ingestMktMes1h,
   ingestMktEquityIndices,
   ingestMktTreasuries,
@@ -35,8 +36,9 @@ export const maxDuration = 300
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    // Market Data (Databento, 00:00–04:00 UTC)
-    ingestMktMes1h,
+    // Market Data (Databento)
+    ingestMktMes15m, // every hour at :05
+    ingestMktMes1h,  // daily at 00:00 UTC
     ingestMktEquityIndices,
     ingestMktTreasuries,
     ingestMktCommodities,

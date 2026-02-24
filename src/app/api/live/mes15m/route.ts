@@ -102,7 +102,7 @@ export async function GET(request: Request): Promise<Response> {
         return
       }
 
-      // Poll every 15 seconds and detect changed rows, including same-timestamp candle refreshes.
+      // Poll every 60 seconds and detect changed rows, including same-timestamp candle refreshes.
       const interval = setInterval(async () => {
         if (closed) return
         try {
@@ -150,7 +150,7 @@ export async function GET(request: Request): Promise<Response> {
           const message = error instanceof Error ? error.message : String(error)
           pushErrorAndClose(`Live stream query failed: ${message}`)
         }
-      }, 15_000)
+      }, 60_000)
 
       const abortListener = () => {
         if (closed) return

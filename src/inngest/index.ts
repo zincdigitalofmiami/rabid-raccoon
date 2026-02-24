@@ -1,8 +1,8 @@
 /**
  * Inngest function registry — barrel export for route.ts serve() call.
  *
- * 20 functions total:
- *   5 market data (Databento, 00:00–04:00 UTC, 1hr apart)
+ * 21 functions total:
+ *   6 market data (Databento — 15m hourly, 1h–fx daily)
  *   10 FRED econ domains (05:00–14:00 UTC, 1hr apart)
  *   3 events/news (15:00–17:00 UTC)
  *   1 signals (18:00 UTC)
@@ -10,6 +10,7 @@
  */
 
 // Market data — Databento futures
+export { ingestMktMes15m } from './functions/mkt-mes-15m'
 export { ingestMktMes1h } from './functions/mkt-mes-1h'
 export { ingestMktEquityIndices } from './functions/mkt-equity-indices'
 export { ingestMktTreasuries } from './functions/mkt-treasuries'

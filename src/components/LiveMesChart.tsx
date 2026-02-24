@@ -266,7 +266,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
 
   // --- SSE stream ---
   useEffect(() => {
-    const eventSource = new EventSource('/api/live/mes15m?backfill=96')
+    const eventSource = new EventSource('/api/live/mes15m?backfill=384')
 
     const updateSessionStats = (points: MesPoint[]) => {
       if (points.length === 0) return
