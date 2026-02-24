@@ -23,6 +23,12 @@ export const ingestEconVolIndices = inngest.createFunction(
       results.push(result)
     }
 
+    const totalFetched = results.reduce((s, r) => s + r.fetched, 0)
+    const totalInserted = results.reduce((s, r) => s + r.inserted, 0)
+    const errors = results.filter(r => r.error)
+    console.log(`[fred] ${DOMAIN} complete — ${SERIES.length} series, ${totalFetched} fetched, ${totalInserted} inserted, ${errors.length} errors`)
+    if (errors.length > 0) console.error(`[fred] ${DOMAIN} errors:`, JSON.stringify(errors))
+
     return { ranAt: new Date().toISOString(), domain: DOMAIN, seriesCount: SERIES.length, results }
   }
 )

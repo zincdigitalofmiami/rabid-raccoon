@@ -1,11 +1,11 @@
 /**
  * ingest-fred-complete.ts
  *
- * Comprehensive FRED ingestion — pulls ALL economic series from FRED API
- * for 2 years, truncates stale data, and inserts into domain-specific
- * Prisma tables (econ_rates_1d, econ_yields_1d, etc.).
+ * Comprehensive FRED ingestion — pulls ALL economic series from FRED API,
+ * upserts into domain-specific tables via direct pg (bypasses Accelerate).
  *
- * Mirrors zinc-fusion-v15 series catalog — 139 FRED series, zero Yahoo.
+ * Uses DIRECT_URL for writes (same pattern as trade-recorder.ts).
+ * Prisma Accelerate times out on batch createMany — direct pg does not.
  *
  * Usage:
  *   npx tsx scripts/ingest-fred-complete.ts                # full fresh 2y pull
@@ -14,8 +14,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { Prisma, DataSource } from '@prisma/client'
-import { prisma } from '../src/lib/prisma'
+import pg from 'pg'
 import { fetchFredSeries } from '../src/lib/fred'
 import { loadDotEnvFiles } from './ingest-utils'
 
@@ -39,14 +38,23 @@ interface SeriesSpec {
   frequency: string
 }
 
-function toJson(value: unknown): Prisma.InputJsonValue {
-  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue
+function hashRow(seriesId: string, eventDate: string, value: number, source: string): string {
+  return createHash('sha256')
+    .update(`${seriesId}|${eventDate}|${value}|${source}`)
+    .digest('hex')
 }
 
-function hashRow(seriesId: string, eventDate: Date, value: number, source: string): string {
-  return createHash('sha256')
-    .update(`${seriesId}|${eventDate.toISOString().slice(0, 10)}|${value}|${source}`)
-    .digest('hex')
+// ─── DIRECT PG POOL (bypasses Prisma Accelerate) ─────────────────────────
+
+let pool: pg.Pool | null = null
+
+function getPool(): pg.Pool {
+  if (!pool) {
+    const url = process.env.DIRECT_URL || process.env.DATABASE_URL
+    if (!url) throw new Error('Neither DIRECT_URL nor DATABASE_URL is set')
+    pool = new pg.Pool({ connectionString: url, max: 3 })
+  }
+  return pool
 }
 
 // ─── COMPLETE FRED SERIES CATALOG ──────────────────────────────────────────
@@ -124,16 +132,35 @@ export const FRED_SERIES: SeriesSpec[] = [
   { seriesId: 'DJIA', domain: 'INDEXES', displayName: 'Dow Jones Industrial Average', units: 'index', frequency: 'daily' },
 ]
 
-// ─── DOMAIN INSERT FUNCTIONS ───────────────────────────────────────────────
+// ─── DOMAIN → TABLE MAPPING ──────────────────────────────────────────────
 
-interface ValueRow {
-  seriesId: string
-  eventDate: Date
-  value: number
-  source: DataSource
-  rowHash: string
-  metadata?: Prisma.InputJsonValue
+const DOMAIN_TABLE: Record<EconDomain, string> = {
+  RATES: 'econ_rates_1d',
+  YIELDS: 'econ_yields_1d',
+  FX: 'econ_fx_1d',
+  VOL_INDICES: 'econ_vol_indices_1d',
+  INFLATION: 'econ_inflation_1d',
+  LABOR: 'econ_labor_1d',
+  ACTIVITY: 'econ_activity_1d',
+  MONEY: 'econ_money_1d',
+  COMMODITIES: 'econ_commodities_1d',
+  INDEXES: 'econ_indexes_1d',
 }
+
+const DOMAIN_CATEGORY: Record<EconDomain, string> = {
+  RATES: 'RATES',
+  YIELDS: 'YIELDS',
+  FX: 'FX',
+  VOL_INDICES: 'VOLATILITY',
+  INFLATION: 'INFLATION',
+  LABOR: 'LABOR',
+  ACTIVITY: 'ACTIVITY',
+  MONEY: 'MONEY',
+  COMMODITIES: 'COMMODITIES',
+  INDEXES: 'EQUITY',
+}
+
+// ─── DIRECT PG INSERT (bypasses Prisma Accelerate) ───────────────────────
 
 export interface FredSeriesResult {
   seriesId: string
@@ -143,39 +170,67 @@ export interface FredSeriesResult {
   error?: string
 }
 
+async function upsertEconomicSeries(spec: SeriesSpec): Promise<void> {
+  const db = getPool()
+  const now = new Date().toISOString()
+  await db.query(
+    `INSERT INTO economic_series ("seriesId", "displayName", category, source, "sourceSymbol", frequency, units, "isActive", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, 'FRED', $4, $5, $6, true, $7, $7)
+     ON CONFLICT ("seriesId") DO UPDATE SET
+       "displayName" = EXCLUDED."displayName",
+       category = EXCLUDED.category,
+       frequency = EXCLUDED.frequency,
+       units = EXCLUDED.units,
+       "isActive" = true,
+       "updatedAt" = EXCLUDED."updatedAt"`,
+    [spec.seriesId, spec.displayName, DOMAIN_CATEGORY[spec.domain], spec.seriesId, spec.frequency, spec.units, now]
+  )
+}
+
+interface ValueRow {
+  seriesId: string
+  eventDate: string  // YYYY-MM-DD
+  value: number
+  rowHash: string
+  metadata: string   // JSON string
+}
+
 async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<number> {
   if (rows.length === 0) return 0
 
-  const splitData = rows.map((r) => ({
-    seriesId: r.seriesId,
-    eventDate: r.eventDate,
-    value: r.value,
-    source: r.source,
-    rowHash: r.rowHash,
-    metadata: r.metadata ?? toJson({ provider: r.source }),
-  }))
+  const table = DOMAIN_TABLE[domain]
+  const db = getPool()
+  let inserted = 0
 
-  const splitInsertMap: Record<EconDomain, () => Promise<{ count: number }>> = {
-    RATES: () => prisma.econRates1d.createMany({ data: splitData, skipDuplicates: true }),
-    YIELDS: () => prisma.econYields1d.createMany({ data: splitData, skipDuplicates: true }),
-    FX: () => prisma.econFx1d.createMany({ data: splitData, skipDuplicates: true }),
-    VOL_INDICES: () => prisma.econVolIndices1d.createMany({ data: splitData, skipDuplicates: true }),
-    INFLATION: () => prisma.econInflation1d.createMany({ data: splitData, skipDuplicates: true }),
-    LABOR: () => prisma.econLabor1d.createMany({ data: splitData, skipDuplicates: true }),
-    ACTIVITY: () => prisma.econActivity1d.createMany({ data: splitData, skipDuplicates: true }),
-    MONEY: () => prisma.econMoney1d.createMany({ data: splitData, skipDuplicates: true }),
-    COMMODITIES: () => prisma.econCommodities1d.createMany({ data: splitData, skipDuplicates: true }),
-    INDEXES: () => prisma.econIndexes1d.createMany({ data: splitData, skipDuplicates: true }),
+  // Batch insert — 50 rows per statement to stay well under param limits
+  const BATCH = 50
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const batch = rows.slice(i, i + BATCH)
+    const values: unknown[] = []
+    const placeholders: string[] = []
+
+    const ingestedAt = new Date().toISOString()
+    for (let j = 0; j < batch.length; j++) {
+      const r = batch[j]
+      const offset = j * 6
+      placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, 'FRED', $${offset + 4}, $${offset + 5}, $${offset + 6}::jsonb)`)
+      values.push(r.seriesId, r.eventDate, r.value, r.rowHash, ingestedAt, r.metadata)
+    }
+
+    const result = await db.query(
+      `INSERT INTO "${table}" ("seriesId", "eventDate", value, source, "rowHash", "ingestedAt", metadata)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT ("seriesId", "eventDate") DO UPDATE SET
+         value = EXCLUDED.value,
+         "rowHash" = EXCLUDED."rowHash",
+         "ingestedAt" = EXCLUDED."ingestedAt",
+         metadata = EXCLUDED.metadata`,
+      values
+    )
+    inserted += result.rowCount ?? 0
   }
 
-  try {
-    const inserted = await splitInsertMap[domain]()
-    return inserted.count
-  } catch (err) {
-    console.warn(`[fred-complete] split table write failed for ${domain}: ${err instanceof Error ? err.message : err}`)
-  }
-
-  return 0
+  return inserted
 }
 
 // ─── PER-SERIES EXPORT (used by Inngest per-step invocation) ───────────────
@@ -188,57 +243,40 @@ export async function runIngestOneFredSeries(
   const endDate = new Date().toISOString().slice(0, 10)
   const fetchedAt = new Date().toISOString()
 
+  console.log(`[fred] ${spec.seriesId} (${spec.domain}) start — range ${startDate}→${endDate}, daysBack=${daysBack}`)
+
   try {
     const obs = await fetchFredSeries(spec.seriesId, startDate, endDate)
+    console.log(`[fred] ${spec.seriesId} fetched ${obs.length} observations from FRED API`)
+
     const rows: ValueRow[] = obs
       .filter((o) => o.value !== '.' && Number.isFinite(Number(o.value)))
-      .map((o) => {
-        const value = Number(o.value)
-        const eventDate = new Date(`${o.date}T00:00:00Z`)
-        return {
-          seriesId: spec.seriesId,
-          eventDate,
-          value,
-          source: 'FRED' as DataSource,
-          rowHash: hashRow(spec.seriesId, eventDate, value, 'FRED'),
-          metadata: toJson({
-            seriesId: spec.seriesId,
-            domain: spec.domain,
-            displayName: spec.displayName,
-            frequency: spec.frequency,
-            units: spec.units,
-            daysBack,
-            fetchedAt,
-            observationCount: obs.length,
-          }),
-        }
-      })
-
-    await prisma.economicSeries.upsert({
-      where: { seriesId: spec.seriesId },
-      create: {
+      .map((o) => ({
         seriesId: spec.seriesId,
-        displayName: spec.displayName,
-        category: domainToCategory(spec.domain),
-        source: 'FRED',
-        sourceSymbol: spec.seriesId,
-        frequency: spec.frequency,
-        units: spec.units,
-        isActive: true,
-      },
-      update: {
-        displayName: spec.displayName,
-        category: domainToCategory(spec.domain),
-        frequency: spec.frequency,
-        units: spec.units,
-        isActive: true,
-      },
-    })
+        eventDate: o.date,
+        value: Number(o.value),
+        rowHash: hashRow(spec.seriesId, o.date, Number(o.value), 'FRED'),
+        metadata: JSON.stringify({
+          seriesId: spec.seriesId,
+          domain: spec.domain,
+          displayName: spec.displayName,
+          frequency: spec.frequency,
+          units: spec.units,
+          daysBack,
+          fetchedAt,
+          observationCount: obs.length,
+        }),
+      }))
+
+    await upsertEconomicSeries(spec)
+    console.log(`[fred] ${spec.seriesId} economic_series upsert OK`)
 
     const inserted = await insertDomain(spec.domain, rows)
+    console.log(`[fred] ${spec.seriesId} → ${rows.length} fetched, ${inserted} inserted into ${spec.domain}`)
     return { seriesId: spec.seriesId, domain: spec.domain, fetched: rows.length, inserted }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
+    console.error(`[fred] ${spec.seriesId} FAILED: ${msg.slice(0, 500)}`)
     return { seriesId: spec.seriesId, domain: spec.domain, fetched: 0, inserted: 0, error: msg.slice(0, 300) }
   }
 }
@@ -247,21 +285,14 @@ export async function runIngestOneFredSeries(
 
 async function truncateEconTables(): Promise<void> {
   console.log('[fred-complete] deleting all econ rows...')
-  // Delete split observations first (FK child), then series (FK parent)
-  const splitResults = await Promise.all([
-    prisma.econRates1d.deleteMany(),
-    prisma.econYields1d.deleteMany(),
-    prisma.econFx1d.deleteMany(),
-    prisma.econVolIndices1d.deleteMany(),
-    prisma.econInflation1d.deleteMany(),
-    prisma.econLabor1d.deleteMany(),
-    prisma.econActivity1d.deleteMany(),
-    prisma.econMoney1d.deleteMany(),
-    prisma.econCommodities1d.deleteMany(),
-    prisma.econIndexes1d.deleteMany(),
-  ])
-  const seriesResult = await prisma.economicSeries.deleteMany()
-  const total = splitResults.reduce((sum, r) => sum + r.count, 0) + seriesResult.count
+  const db = getPool()
+  let total = 0
+  for (const table of Object.values(DOMAIN_TABLE)) {
+    const result = await db.query(`DELETE FROM "${table}"`)
+    total += result.rowCount ?? 0
+  }
+  const seriesResult = await db.query('DELETE FROM economic_series')
+  total += seriesResult.rowCount ?? 0
   console.log(`[fred-complete] deleted ${total.toLocaleString()} rows.`)
 }
 
@@ -270,7 +301,7 @@ async function truncateEconTables(): Promise<void> {
 async function run() {
   loadDotEnvFiles()
   if (!process.env.FRED_API_KEY) throw new Error('FRED_API_KEY is required')
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!process.env.DIRECT_URL && !process.env.DATABASE_URL) throw new Error('DIRECT_URL or DATABASE_URL is required')
 
   const args = process.argv.slice(2)
   const daysBack = Number(args.find((a) => a.startsWith('--days-back='))?.split('=')[1] ?? '730')
@@ -279,7 +310,7 @@ async function run() {
   const startDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   const endDate = new Date().toISOString().slice(0, 10)
 
-  console.log(`[fred-complete] ${FRED_SERIES.length} FRED series (zero Yahoo)`)
+  console.log(`[fred-complete] ${FRED_SERIES.length} FRED series, direct pg (no Accelerate)`)
   console.log(`[fred-complete] range: ${startDate} → ${endDate} (${daysBack} days)`)
   console.log(`[fred-complete] truncate: ${!noTruncate}`)
 
@@ -297,52 +328,19 @@ async function run() {
     const spec = FRED_SERIES[i]
     const label = `[${i + 1}/${FRED_SERIES.length}] ${spec.seriesId}`
     try {
-      const obs = await fetchFredSeries(spec.seriesId, startDate, endDate)
-      const rows: ValueRow[] = obs
-        .filter((o) => o.value !== '.' && Number.isFinite(Number(o.value)))
-        .map((o) => {
-          const value = Number(o.value)
-          const eventDate = new Date(`${o.date}T00:00:00Z`)
-          return {
-            seriesId: spec.seriesId,
-            eventDate,
-            value,
-            source: 'FRED',
-            rowHash: hashRow(spec.seriesId, eventDate, value, 'FRED'),
-          }
-        })
+      const result = await runIngestOneFredSeries(spec, daysBack)
 
-      // Upsert economic_series FIRST (FK parent for domain econ tables)
-      await prisma.economicSeries.upsert({
-        where: { seriesId: spec.seriesId },
-        create: {
-          seriesId: spec.seriesId,
-          displayName: spec.displayName,
-          category: domainToCategory(spec.domain),
-          source: 'FRED',
-          sourceSymbol: spec.seriesId,
-          frequency: spec.frequency,
-          units: spec.units,
-          isActive: true,
-        },
-        update: {
-          displayName: spec.displayName,
-          category: domainToCategory(spec.domain),
-          frequency: spec.frequency,
-          units: spec.units,
-          isActive: true,
-        },
-      })
-
-      const inserted = await insertDomain(spec.domain, rows)
-
-      totalFetched += rows.length
-      totalInserted += inserted
-      if (!domainCounts[spec.domain]) domainCounts[spec.domain] = { fetched: 0, inserted: 0 }
-      domainCounts[spec.domain].fetched += rows.length
-      domainCounts[spec.domain].inserted += inserted
-
-      console.log(`${label} → ${rows.length} obs, ${inserted} new (${spec.domain})`)
+      if (result.error) {
+        failed[spec.seriesId] = result.error
+        console.error(`${label} FAILED: ${result.error}`)
+      } else {
+        totalFetched += result.fetched
+        totalInserted += result.inserted
+        if (!domainCounts[spec.domain]) domainCounts[spec.domain] = { fetched: 0, inserted: 0 }
+        domainCounts[spec.domain].fetched += result.fetched
+        domainCounts[spec.domain].inserted += result.inserted
+        console.log(`${label} → ${result.fetched} obs, ${result.inserted} new (${spec.domain})`)
+      }
 
       // FRED rate limit: 120 req/min → ~500ms between requests
       if (i < FRED_SERIES.length - 1) await sleep(500)
@@ -370,52 +368,39 @@ async function run() {
   }
 
   // Record ingestion run
-  await prisma.ingestionRun.create({
-    data: {
-      job: 'fred-complete',
-      status: Object.keys(failed).length === 0 ? 'COMPLETED' : 'FAILED',
-      finishedAt: new Date(),
-      rowsProcessed: totalFetched,
-      rowsInserted: totalInserted,
-      rowsFailed: Object.keys(failed).length,
-      details: toJson({ daysBack, domainCounts, failed }),
-    },
-  })
+  const db = getPool()
+  await db.query(
+    `INSERT INTO ingestion_runs (job, status, "finishedAt", "rowsProcessed", "rowsInserted", "rowsFailed", details)
+     VALUES ($1, $2, NOW(), $3, $4, $5, $6::jsonb)`,
+    [
+      'fred-complete',
+      Object.keys(failed).length === 0 ? 'COMPLETED' : 'FAILED',
+      totalFetched,
+      totalInserted,
+      Object.keys(failed).length,
+      JSON.stringify({ daysBack, domainCounts, failed }),
+    ]
+  )
 
-  await prisma.dataSourceRegistry.upsert({
-    where: { sourceId: 'fred-complete' },
-    create: {
-      sourceId: 'fred-complete',
-      sourceName: 'FRED Complete Economic Dataset',
-      description: `${FRED_SERIES.length} FRED series across 9 econ domains (mirrors zinc-fusion-v15).`,
-      targetTable: 'econ_*_1d',
-      apiProvider: 'fred',
-      updateFrequency: 'daily',
-      authEnvVar: 'FRED_API_KEY',
-      ingestionScript: 'scripts/ingest-fred-complete.ts',
-      isActive: true,
-    },
-    update: {
-      description: `${FRED_SERIES.length} FRED series across 9 econ domains (mirrors zinc-fusion-v15).`,
-      isActive: true,
-    },
-  })
-}
+  const now = new Date().toISOString()
+  await db.query(
+    `INSERT INTO data_source_registry ("sourceId", "sourceName", description, "targetTable", "apiProvider", "updateFrequency", "authEnvVar", "ingestionScript", "isActive", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $9)
+     ON CONFLICT ("sourceId") DO UPDATE SET description = EXCLUDED.description, "isActive" = true, "updatedAt" = EXCLUDED."updatedAt"`,
+    [
+      'fred-complete',
+      'FRED Complete Economic Dataset',
+      `${FRED_SERIES.length} FRED series across 10 econ domains (direct pg, no Accelerate).`,
+      'econ_*_1d',
+      'fred',
+      'daily',
+      'FRED_API_KEY',
+      'scripts/ingest-fred-complete.ts',
+      now,
+    ]
+  )
 
-function domainToCategory(domain: EconDomain) {
-  const map: Record<EconDomain, string> = {
-    RATES: 'RATES',
-    YIELDS: 'YIELDS',
-    FX: 'FX',
-    VOL_INDICES: 'VOLATILITY',
-    INFLATION: 'INFLATION',
-    LABOR: 'LABOR',
-    ACTIVITY: 'ACTIVITY',
-    MONEY: 'MONEY',
-    COMMODITIES: 'COMMODITIES',
-    INDEXES: 'EQUITY',
-  }
-  return map[domain] as Parameters<typeof prisma.economicSeries.create>[0]['data']['category']
+  await db.end()
 }
 
 function sleep(ms: number): Promise<void> {
