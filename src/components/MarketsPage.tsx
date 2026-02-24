@@ -25,14 +25,14 @@ export default function MarketsPage() {
           </div>
         )}
 
-        {/* Analyse — 3 Timeframe Gauges at the top */}
-        <div className="mb-4">
-          <AnalysePanel onResult={setAnalysisResult} onCaptureChart={captureChart} />
-        </div>
-
-        {/* Hero Chart — right under Analyse */}
+        {/* Hero Chart — at the very top */}
         <div className="mb-10">
           <LiveMesChart ref={chartRef} forecast={forecast} />
+        </div>
+
+        {/* Analyse — 3 Timeframe Gauges under chart */}
+        <div className="mb-4">
+          <AnalysePanel onResult={setAnalysisResult} onCaptureChart={captureChart} />
         </div>
 
         {/* Markets Grid */}

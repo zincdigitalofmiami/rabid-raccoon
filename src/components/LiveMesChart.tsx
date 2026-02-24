@@ -7,6 +7,7 @@ import {
   createChart,
   IChartApi,
   ISeriesApi,
+  LineStyle,
   Time,
   UTCTimestamp,
 } from 'lightweight-charts'
@@ -197,11 +198,13 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
         vertLine: {
           color: 'rgba(139,92,246,0.6)',
           width: 1,
+          style: LineStyle.Solid,
           labelBackgroundColor: 'rgba(20,10,40,0.9)',
         },
         horzLine: {
           color: 'rgba(139,92,246,0.6)',
           width: 1,
+          style: LineStyle.Solid,
           labelBackgroundColor: 'rgba(20,10,40,0.9)',
         },
       },
@@ -307,12 +310,13 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
 
         updateSessionStats(points)
 
-        // Show all bars with proper barSpacing (don't fitContent — it overrides barSpacing)
+        // V15 spec: show last 150 bars initially, scrollable to see more
         const totalBars = points.length
-        const RIGHT_PADDING = 16
+        const INITIAL_VISIBLE_BARS = 150
+        const RIGHT_PADDING_BARS = 16
         chartRef.current?.timeScale().setVisibleLogicalRange({
-          from: 0,
-          to: totalBars - 1 + RIGHT_PADDING,
+          from: Math.max(0, totalBars - INITIAL_VISIBLE_BARS),
+          to: totalBars - 1 + RIGHT_PADDING_BARS,
         })
 
         setStatus('live')
@@ -482,7 +486,20 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
       </div>
 
       {/* Chart */}
-      <div ref={containerRef} className="w-full" style={{ height: '70vh' }} />
+      <div className="relative w-full" style={{ height: '80vh' }}>
+        {/* Watermark — DOM overlay, not LWC watermark API */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/chart_watermark.svg"
+            alt=""
+            width={280}
+            height={140}
+            className="opacity-[0.10] grayscale"
+          />
+        </div>
+        <div ref={containerRef} className="absolute inset-0 z-10" />
+      </div>
 
       {/* Legend Footer */}
       <div className="flex items-center justify-center gap-8 px-6 py-3 border-t border-white/5 bg-black/20">
