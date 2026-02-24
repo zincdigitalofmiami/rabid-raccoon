@@ -506,7 +506,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 const isMain = import.meta.url === `file://${process.argv[1]}`
-  || import.meta.url?.endsWith('/scripts/ingest-fred-complete.ts')
 
 if (isMain) {
   run()
