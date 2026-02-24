@@ -1,0 +1,23 @@
+scripts/ingest-fred-complete.ts
+  f376d9e7b0b4362d 62,78,86-93,95-183
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "56a17ec00375a2c676c2ccbcff81739a78f883f4",
+  "prompts": {
+    "f376d9e7b0b4362d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6dd138b-99dd-42d5-8356-0f2daba558d7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 102,
+      "total_deletions": 4,
+      "accepted_lines": 100,
+      "overriden_lines": 0
+    }
+  }
+}
