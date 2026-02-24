@@ -422,7 +422,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isMain = import.meta.url === `file://${process.argv[1]}`
+  || import.meta.url?.endsWith('/scripts/ingest-fred-complete.ts')
+
+if (isMain) {
   run()
     .then(() => {
       console.log('\n[fred-complete] done.')

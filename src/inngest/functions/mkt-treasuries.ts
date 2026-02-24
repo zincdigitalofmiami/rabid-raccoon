@@ -1,7 +1,7 @@
 import { inngest } from '../client'
 import { runIngestMarketPricesDaily } from '../../../scripts/ingest-market-prices-daily'
 
-const SYMBOLS = ['ZN', 'ZB', 'ZF'] as const
+const SYMBOLS = ['ZN', 'ZB', 'ZF', 'ZT'] as const
 
 /**
  * Treasury futures — one step per symbol for isolated retry.

@@ -1,7 +1,7 @@
 /**
  * backfill-futures-all.ts
  *
- * Databento backfill for non-MES active symbols: ES, NQ, YM, RTY, SOX, ZN, ZB, ZF, CL, GC, SI
+ * Databento backfill for non-MES active symbols (20 total on GLBX.MDP3).
  * Pulls ohlcv-1d and ohlcv-1h, inserts into mkt_futures_1d and mkt_futures_1h.
  * Chunks by 3-month windows to avoid Databento timeout. Fully idempotent (skipDuplicates).
  *
@@ -25,7 +25,13 @@ const BATCH_SIZE = 100
 const REQUEST_TIMEOUT_MS = 120_000
 const DEFAULT_START = '2020-01-01'
 
-const NON_MES_ACTIVE = ['ES', 'NQ', 'YM', 'RTY', 'SOX', 'ZN', 'ZB', 'ZF', 'CL', 'GC', 'SI']
+const NON_MES_ACTIVE = [
+  'ES', 'NQ', 'YM', 'RTY', 'SOX',       // equity indices
+  'ZN', 'ZB', 'ZF', 'ZT',                // treasuries
+  'CL', 'GC', 'SI', 'NG',                // commodities
+  '6E', '6J', 'SR3', 'SR1', 'ZQ',        // fx & rates
+  'MNQ', 'MYM',                           // micro indices
+]
 
 interface RawRecord {
   hd: { ts_event: string; publisher_id: number; instrument_id: number }

@@ -1,7 +1,7 @@
 import { inngest } from '../client'
 import { runIngestMarketPricesDaily } from '../../../scripts/ingest-market-prices-daily'
 
-const SYMBOLS = ['ES', 'NQ', 'YM', 'RTY', 'SOX'] as const
+const SYMBOLS = ['ES', 'NQ', 'YM', 'RTY', 'SOX', 'MNQ', 'MYM'] as const
 
 /**
  * Equity index futures — one step per symbol for isolated retry.

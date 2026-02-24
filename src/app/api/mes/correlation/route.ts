@@ -87,7 +87,7 @@ function missingSymbols(symbolCandles: Map<string, CandleData[]>): string[] {
 async function loadIntradayMap(): Promise<Map<string, CandleData[]>> {
   const map = new Map<string, CandleData[]>()
 
-  const [mesRows, nqRows] = await Promise.all([
+  const [mesRows, nqRows, vxRows, dxRows] = await Promise.all([
     prisma.mktFuturesMes1h.findMany({
       orderBy: { eventTime: 'desc' },
       take: INTRADAY_LOOKBACK,
@@ -97,23 +97,26 @@ async function loadIntradayMap(): Promise<Map<string, CandleData[]>> {
       orderBy: { eventTime: 'desc' },
       take: INTRADAY_LOOKBACK,
     }),
+    prisma.mktFutures1h.findMany({
+      where: { symbolCode: 'VX' },
+      orderBy: { eventTime: 'desc' },
+      take: INTRADAY_LOOKBACK,
+    }),
+    prisma.mktFutures1h.findMany({
+      where: { symbolCode: 'DX' },
+      orderBy: { eventTime: 'desc' },
+      take: INTRADAY_LOOKBACK,
+    }),
   ])
 
   if (mesRows.length >= 20) {
     map.set('MES', [...mesRows].reverse().map(rowToCandle))
   }
-  if (nqRows.length >= 20) {
-    map.set(
-      'NQ',
-      [...nqRows].reverse().map((r) => ({
-        time: Math.floor(r.eventTime.getTime() / 1000),
-        open: toNum(r.open),
-        high: toNum(r.high),
-        low: toNum(r.low),
-        close: toNum(r.close),
-        volume: r.volume == null ? 0 : Number(r.volume),
-      }))
-    )
+
+  for (const [code, rows] of [['NQ', nqRows], ['VX', vxRows], ['DX', dxRows]] as const) {
+    if (rows.length >= 20) {
+      map.set(code, [...rows].reverse().map(rowToCandle))
+    }
   }
 
   return map
