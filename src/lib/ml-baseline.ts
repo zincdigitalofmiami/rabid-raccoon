@@ -78,21 +78,24 @@ function featureFibBucket(fibRatio: number): string {
 }
 
 /**
- * Map the current hour (ET) to the session bucket used in training.
- * This mirrors the session_bucket logic in build-bhg-dataset.ts.
+ * Map the current time to the session bucket used in training data.
+ * Mirrors build-bhg-dataset.ts getSessionBucket() exactly.
+ * Uses CT (Central Time) hhmm format.
  */
 function currentSessionBucket(): string {
-  // Get current ET hour
   const now = new Date()
-  const etOffset = isDST(now) ? -4 : -5
-  const utcHour = now.getUTCHours()
-  const etHour = (utcHour + etOffset + 24) % 24
+  const ctOffset = isDST(now) ? -5 : -6
+  const utcHours = now.getUTCHours()
+  const utcMinutes = now.getUTCMinutes()
+  const ctMinutesTotal = (utcHours * 60 + utcMinutes) + ctOffset * 60
+  const ctAdjusted = ((ctMinutesTotal % 1440) + 1440) % 1440
+  const hhmm = Math.floor(ctAdjusted / 60) * 100 + (ctAdjusted % 60)
 
-  if (etHour >= 4 && etHour < 9) return 'pre_market'
-  if (etHour >= 9 && etHour < 12) return 'rth_morning'
-  if (etHour >= 12 && etHour < 16) return 'rth_afternoon'
-  if (etHour >= 16 && etHour < 18) return 'post_market'
-  return 'overnight'
+  if (hhmm >= 1700 || hhmm < 830) return 'OVERNIGHT'
+  if (hhmm < 1000) return 'RTH_OPEN'
+  if (hhmm < 1200) return 'MIDDAY'
+  if (hhmm < 1400) return 'LUNCH'
+  return 'POWER_HOUR'
 }
 
 /** US DST check (second Sunday March – first Sunday November). */

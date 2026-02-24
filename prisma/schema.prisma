@@ -657,6 +657,74 @@ model BhgSetup {
   @@map("bhg_setups")
 }
 
+// ─── Scored Trades (Intelligence Engine output + outcome tracking) ────────
+
+model ScoredTrade {
+  id             BigInt   @id @default(autoincrement())
+
+  // Setup identification
+  setupHash      String   @db.VarChar(128)  // deterministic hash of setup params for dedup
+  direction      SignalDirection
+  fibRatio       Decimal  @db.Decimal(8, 6)
+  goType         String?  @db.VarChar(10)
+
+  // Price levels at scoring time
+  entryPrice     Decimal? @db.Decimal(18, 6)
+  stopLoss       Decimal? @db.Decimal(18, 6)
+  tp1            Decimal? @db.Decimal(18, 6)
+  tp2            Decimal? @db.Decimal(18, 6)
+  currentPrice   Decimal  @db.Decimal(18, 6)
+
+  // Composite scoring
+  compositeScore Int                           // 0-100
+  grade          String   @db.VarChar(1)       // A, B, C, D
+  pTp1           Decimal  @db.Decimal(8, 6)    // probability of TP1 hit
+  pTp2           Decimal  @db.Decimal(8, 6)    // probability of TP2 hit
+  mlSource       String   @db.VarChar(16)      // exact, grade, global
+
+  // Risk
+  rr             Decimal? @db.Decimal(8, 4)    // reward:risk ratio
+  dollarRisk     Decimal? @db.Decimal(12, 2)
+
+  // Event context at time of scoring
+  eventPhase     String   @db.VarChar(16)      // CLEAR, APPROACHING, etc.
+  confidenceAdj  Decimal  @db.Decimal(4, 2)    // 0.00-1.00
+
+  // AI reasoning
+  rationale      String?
+  reasoningSource String  @db.VarChar(16)      // ai or deterministic
+  adjustedPTp1   Decimal? @db.Decimal(8, 6)    // AI-adjusted probability
+  adjustedPTp2   Decimal? @db.Decimal(8, 6)
+
+  // Full feature vector + score breakdown (for training)
+  features       Json                           // TradeFeatureVector
+  scoreBreakdown Json                           // sub-scores object
+  flags          String[] @default([])
+
+  // Outcome tracking (filled by outcome checker)
+  tp1Hit         Boolean?
+  tp2Hit         Boolean?
+  slHit          Boolean?
+  tp1HitTime     DateTime? @db.Timestamptz(6)
+  tp2HitTime     DateTime? @db.Timestamptz(6)
+  slHitTime      DateTime? @db.Timestamptz(6)
+  maxFavorable   Decimal?  @db.Decimal(18, 6)  // MFE in points
+  maxAdverse     Decimal?  @db.Decimal(18, 6)  // MAE in points
+  outcomeCheckedAt DateTime? @db.Timestamptz(6)
+
+  // Timestamps
+  scoredAt       DateTime  @default(now()) @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@unique([setupHash, scoredAt], map: "scored_trades_hash_time_key")
+  @@index([scoredAt], map: "scored_trades_scored_at_idx")
+  @@index([grade, scoredAt], map: "scored_trades_grade_time_idx")
+  @@index([tp1Hit], map: "scored_trades_tp1_outcome_idx")
+  @@index([outcomeCheckedAt], map: "scored_trades_outcome_checked_idx")
+  @@map("scored_trades")
+}
+
 // ─── MES Model Registry ───────────────────────────────────────────────────
 
 model MesModelRegistry {

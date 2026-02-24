@@ -43,6 +43,12 @@ interface BucketStats {
   pTp2_8h: number
 }
 
+/** Strip surrounding double-quotes from a CSV field value. */
+function unquote(s: string): string {
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) return s.slice(1, -1)
+  return s
+}
+
 function parseCSV(filepath: string): BhgRow[] {
   const raw = fs.readFileSync(filepath, 'utf-8')
   const lines = raw.trim().split('\n')
@@ -60,10 +66,10 @@ function parseCSV(filepath: string): BhgRow[] {
     const vix = cols[idx('vix_level')]
     rows.push({
       fib_ratio: parseFloat(cols[idx('fib_ratio')]),
-      grade: cols[idx('grade')],
+      grade: unquote(cols[idx('grade')]),
       vix_level: vix && vix !== '' ? parseFloat(vix) : null,
-      session_bucket: cols[idx('session_bucket')],
-      go_type: cols[idx('go_type')],
+      session_bucket: unquote(cols[idx('session_bucket')]),
+      go_type: unquote(cols[idx('go_type')]),
       rr: parseFloat(cols[idx('rr')]),
       tp1_before_sl_1h: parseInt(cols[idx('tp1_before_sl_1h')], 10),
       tp1_before_sl_4h: parseInt(cols[idx('tp1_before_sl_4h')], 10),

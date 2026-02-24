@@ -16,6 +16,7 @@ export default function Header() {
       const hours = ct.getHours()
       const minutes = ct.getMinutes()
       const totalMinutes = hours * 60 + minutes
+      const day = ct.getDay() // 0=Sun, 6=Sat
 
       setTime(
         ct.toLocaleTimeString('en-US', {
@@ -25,10 +26,23 @@ export default function Header() {
         }) + ' CT'
       )
 
-      if (totalMinutes < 360) setWindow('Morning')
-      else if (totalMinutes < 510) setWindow('Premarket')
-      else if (totalMinutes < 900) setWindow('Session')
-      else setWindow('After Hours')
+      // MES futures: Sun 5pm CT – Fri 4pm CT, daily halt 4pm-5pm CT
+      const isSaturday = day === 6
+      const isSundayBeforeOpen = day === 0 && totalMinutes < 1020  // before 5pm
+      const isFridayAfterClose = day === 5 && totalMinutes >= 960  // after 4pm
+      const isDailyHalt = totalMinutes >= 960 && totalMinutes < 1020 // 4pm-5pm CT
+
+      if (isSaturday || isSundayBeforeOpen || isFridayAfterClose) {
+        setWindow('Closed')
+      } else if (isDailyHalt) {
+        setWindow('Daily Halt')
+      } else if (totalMinutes >= 510 && totalMinutes < 960) {
+        // 8:30am - 4pm CT — RTH (regular trading hours)
+        setWindow('RTH')
+      } else {
+        // Globex / overnight session
+        setWindow('Globex')
+      }
     }
 
     update()

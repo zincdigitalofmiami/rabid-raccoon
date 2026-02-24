@@ -1,18 +1,59 @@
 {
-  "generatedAt": "placeholder",
-  "totalSetups": 0,
-  "bucketsWithMinSamples": 0,
+  "generatedAt": "2026-02-23T23:23:38.395Z",
+  "totalSetups": 37,
+  "bucketsWithMinSamples": 2,
   "minSamples": 5,
   "global": {
-    "pTp1": 0.50,
-    "pTp2": 0.30,
-    "count": 0
+    "pTp1": 0.3784,
+    "pTp2": 0.4595,
+    "count": 37
   },
   "gradeFallback": {
-    "A": { "pTp1": 0.60, "pTp2": 0.40, "count": 0 },
-    "B": { "pTp1": 0.50, "pTp2": 0.30, "count": 0 },
-    "C": { "pTp1": 0.40, "pTp2": 0.20, "count": 0 },
-    "D": { "pTp1": 0.30, "pTp2": 0.15, "count": 0 }
+    "A": {
+      "pTp1": 0.2593,
+      "pTp2": 0.3704,
+      "count": 27
+    },
+    "B": {
+      "pTp1": 0.5,
+      "pTp2": 0.5,
+      "count": 6
+    },
+    "C": {
+      "pTp1": 1,
+      "pTp2": 1,
+      "count": 1
+    },
+    "D": {
+      "pTp1": 1,
+      "pTp2": 1,
+      "count": 3
+    }
   },
-  "buckets": []
+  "buckets": [
+    {
+      "key": "0.5|A|mid|OVERNIGHT|CLOSE",
+      "fibRatio": "0.5",
+      "riskGrade": "A",
+      "vixBucket": "mid",
+      "sessionBucket": "OVERNIGHT",
+      "goType": "CLOSE",
+      "count": 7,
+      "pTp1_1h": 0.2857,
+      "pTp1_4h": 0.2857,
+      "pTp2_8h": 0.2857
+    },
+    {
+      "key": "0.618|A|mid|OVERNIGHT|BREAK",
+      "fibRatio": "0.618",
+      "riskGrade": "A",
+      "vixBucket": "mid",
+      "sessionBucket": "OVERNIGHT",
+      "goType": "BREAK",
+      "count": 5,
+      "pTp1_1h": 0,
+      "pTp1_4h": 0,
+      "pTp2_8h": 0.2
+    }
+  ]
 }

@@ -117,9 +117,11 @@ export interface LiveMesChartHandle {
 interface LiveMesChartProps {
   forecast?: ForecastResponse | null
   setups?: BhgSetup[]
+  eventPhase?: string
+  eventLabel?: string
 }
 
-const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function LiveMesChart({ forecast, setups }, ref) {
+const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function LiveMesChart({ forecast, setups, eventPhase, eventLabel }, ref) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null)
@@ -167,34 +169,64 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
     const chart = createChart(containerRef.current, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: TV.bg.primary },
-        textColor: TV.text.secondary,
-        fontFamily: '-apple-system, BlinkMacSystemFont, Inter, sans-serif',
+        background: { type: ColorType.Solid, color: 'transparent' },
+        textColor: 'rgba(255,255,255,0.4)',
+        fontFamily: 'Inter, sans-serif',
+        fontSize: 11,
+        attributionLogo: false,
       },
       grid: {
-        vertLines: { color: TV.border.secondary },
-        horzLines: { color: TV.border.secondary },
+        vertLines: { color: 'rgba(255,255,255,0.04)' },
+        horzLines: { color: 'rgba(255,255,255,0.04)' },
       },
       rightPriceScale: {
-        borderColor: TV.border.primary,
+        borderColor: 'transparent',
+        autoScale: true,
+        scaleMargins: { top: 0.05, bottom: 0.05 },
       },
       timeScale: {
-        borderColor: TV.border.primary,
-        timeVisible: true,
-        secondsVisible: false,
+        borderColor: 'transparent',
+        timeVisible: false,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+        rightOffset: 16,
+        barSpacing: 8,
+        minBarSpacing: 4,
       },
       crosshair: {
-        vertLine: { color: 'rgba(255,255,255,0.2)' },
-        horzLine: { color: 'rgba(255,255,255,0.2)' },
+        vertLine: {
+          color: 'rgba(139,92,246,0.6)',
+          width: 1,
+          labelBackgroundColor: 'rgba(20,10,40,0.9)',
+        },
+        horzLine: {
+          color: 'rgba(139,92,246,0.6)',
+          width: 1,
+          labelBackgroundColor: 'rgba(20,10,40,0.9)',
+        },
+      },
+      handleScroll: {
+        mouseWheel: false,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        mouseWheel: false,
+        pinch: true,
+        axisPressedMouseMove: { time: true, price: true },
+        axisDoubleClickReset: { time: true, price: true },
       },
     })
 
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: TV.bull.primary,
-      downColor: TV.bear.primary,
-      borderVisible: false,
-      wickUpColor: TV.bull.primary,
-      wickDownColor: TV.bear.primary,
+      upColor: '#26C6DA',
+      downColor: '#FF0000',
+      borderUpColor: 'transparent',
+      borderDownColor: 'transparent',
+      wickUpColor: '#FFFFFF',
+      wickDownColor: 'rgba(178,181,190,0.83)',
+      priceLineVisible: true,
       priceFormat: {
         type: 'price',
         precision: 2,
@@ -216,7 +248,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
     bhgPrimitiveRef.current = bhgPrimitive
 
     const resizeObserver = new ResizeObserver(() => {
-      chart.timeScale().fitContent()
+      chart.applyOptions({ autoSize: true })
     })
     resizeObserver.observe(containerRef.current)
 
@@ -274,7 +306,15 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
         seriesRef.current.setData(chartData)
 
         updateSessionStats(points)
-        chartRef.current?.timeScale().fitContent()
+
+        // Show all bars with proper barSpacing (don't fitContent — it overrides barSpacing)
+        const totalBars = points.length
+        const RIGHT_PADDING = 16
+        chartRef.current?.timeScale().setVisibleLogicalRange({
+          from: 0,
+          to: totalBars - 1 + RIGHT_PADDING,
+        })
+
         setStatus('live')
         setError(null)
       } catch (e) {
@@ -371,7 +411,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
 
   return (
     <div
-      className="relative w-full rounded-2xl overflow-hidden border border-white/5"
+      className="relative w-full rounded-xl overflow-hidden border border-white/5"
       style={{ background: 'linear-gradient(180deg, #131722 0%, #0d1117 100%)' }}
     >
       {/* Header */}
@@ -381,13 +421,24 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
             <div
               className="w-2 h-2 rounded-full animate-pulse shadow-lg"
               style={{
-                backgroundColor: status === 'live' ? TV.bull.bright : status === 'connecting' ? '#ffa726' : TV.bear.bright,
-                boxShadow: status === 'live' ? `0 0 8px ${TV.bull.bright}80` : 'none',
+                backgroundColor: status === 'live' ? '#26C6DA' : status === 'connecting' ? '#ffa726' : '#FF0000',
+                boxShadow: status === 'live' ? '0 0 8px rgba(38,198,218,0.5)' : 'none',
               }}
             />
             <span className="text-base font-semibold text-white tracking-tight">MES</span>
           </div>
           <span className="text-xs text-white/30 font-medium">Micro E-mini S&P 500 &bull; 15m</span>
+          {eventPhase && eventPhase !== 'CLEAR' && (
+            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+              eventPhase === 'BLACKOUT' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+              eventPhase === 'IMMINENT' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' :
+              eventPhase === 'APPROACHING' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
+              eventPhase === 'DIGESTING' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+              'bg-white/5 text-white/40 border-white/10'
+            }`}>
+              {eventLabel ?? eventPhase}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-6">
@@ -395,11 +446,11 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
             <div className="flex items-center gap-4 text-xs">
               <div className="flex items-center gap-1.5">
                 <span className="text-white/30">H</span>
-                <span className="text-white/60 font-mono">{sessionHigh.toFixed(2)}</span>
+                <span className="text-white/60 font-mono tabular-nums">{sessionHigh.toFixed(2)}</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="text-white/30">L</span>
-                <span className="text-white/60 font-mono">{sessionLow.toFixed(2)}</span>
+                <span className="text-white/60 font-mono tabular-nums">{sessionLow.toFixed(2)}</span>
               </div>
             </div>
           )}
@@ -423,7 +474,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
 
           <span
             className="text-[10px] font-bold uppercase tracking-wider"
-            style={{ color: status === 'live' ? TV.bull.bright : status === 'connecting' ? '#ffa726' : TV.bear.bright }}
+            style={{ color: status === 'live' ? '#26C6DA' : status === 'connecting' ? '#ffa726' : '#FF0000' }}
           >
             {status}
           </span>
@@ -431,34 +482,18 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
       </div>
 
       {/* Chart */}
-      <div ref={containerRef} className="w-full" style={{ height: '480px' }} />
+      <div ref={containerRef} className="w-full" style={{ height: '70vh' }} />
 
       {/* Legend Footer */}
       <div className="flex items-center justify-center gap-8 px-6 py-3 border-t border-white/5 bg-black/20">
         <div className="flex items-center gap-2">
-          <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: TV.bull.primary }} />
+          <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: '#26C6DA' }} />
           <span className="text-[10px] text-white/40 uppercase tracking-wider">Bullish</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: TV.bear.primary }} />
+          <div className="w-3 h-4 rounded-sm" style={{ backgroundColor: '#FF0000' }} />
           <span className="text-[10px] text-white/40 uppercase tracking-wider">Bearish</span>
         </div>
-        {activeMove && (
-          <>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-2 rounded-sm" style={{ backgroundColor: TV.bull.primary, opacity: 0.3 }} />
-              <span className="text-[10px] text-white/40 uppercase tracking-wider">TP Zone</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-0.5 border-t border-dashed" style={{ borderColor: TV.bear.primary }} />
-              <span className="text-[10px] text-white/40 uppercase tracking-wider">Stop</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-0.5 border-t border-dashed" style={{ borderColor: TV.blue.primary }} />
-              <span className="text-[10px] text-white/40 uppercase tracking-wider">Entry</span>
-            </div>
-          </>
-        )}
         {setups && setups.length > 0 && (
           <>
             <div className="flex items-center gap-2">
@@ -470,7 +505,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
               <span className="text-[10px] text-white/40 uppercase tracking-wider">Hook</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-2.5 h-2.5 rotate-45" style={{ backgroundColor: TV.bull.bright }} />
+              <div className="w-2.5 h-2.5 rotate-45" style={{ backgroundColor: '#26C6DA' }} />
               <span className="text-[10px] text-white/40 uppercase tracking-wider">GO</span>
             </div>
           </>
