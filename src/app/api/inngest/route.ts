@@ -33,8 +33,11 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
+const serveHost = process.env.INNGEST_SERVE_HOST || ''
+
 export const { GET, POST, PUT } = serve({
   client: inngest,
+  ...(serveHost && { serveHost }),
   functions: [
     // Market Data (Databento)
     ingestMktMes15m, // every hour at :05

@@ -1,6 +1,7 @@
 import { fetchOhlcv, toCandles, getCurrentSessionTimes } from './databento'
 import {
   fetchVixCandles,
+  fetchDollarCandles,
   fetchTenYearYieldCandles,
   getFredDateRange,
 } from './fred'
@@ -66,9 +67,14 @@ export async function fetchMultiTimeframe(symbol: string): Promise<MultiTimefram
 
   if (config.dataSource === 'fred') {
     const fredRange = getFredDateRange()
-    const candles = symbol === 'VX'
-      ? await fetchVixCandles(fredRange.start, fredRange.end)
-      : await fetchTenYearYieldCandles(fredRange.start, fredRange.end)
+    let candles: CandleData[]
+    if (symbol === 'VX') {
+      candles = await fetchVixCandles(fredRange.start, fredRange.end)
+    } else if (symbol === 'DX' || symbol === 'DXY') {
+      candles = await fetchDollarCandles(fredRange.start, fredRange.end)
+    } else {
+      candles = await fetchTenYearYieldCandles(fredRange.start, fredRange.end)
+    }
     const price = candles.length > 0 ? candles[candles.length - 1].close : 0
     return { candles15m: [], candles1h: [], candles4h: candles, price }
   }
