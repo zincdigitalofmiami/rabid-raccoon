@@ -1,0 +1,41 @@
+src/components/MarketsPage.tsx
+  f376d9e7b0b4362d 28,33-35
+src/components/LiveMesChart.tsx
+  95c7c025e986619f 313,315-316,318-319
+  f376d9e7b0b4362d 10,201,207,489-502
+src/lib/mes15m-refresh.ts
+  95c7c025e986619f 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "ba6b5340fd0e2f62fe94e00aabd68c2df290eedd",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 5,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    },
+    "f376d9e7b0b4362d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6dd138b-99dd-42d5-8356-0f2daba558d7",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 23,
+      "total_deletions": 7,
+      "accepted_lines": 23,
+      "overriden_lines": 0
+    }
+  }
+}
