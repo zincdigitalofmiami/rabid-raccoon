@@ -1,0 +1,47 @@
+src/app/api/trades/upcoming/route.ts
+  95c7c025e986619f 1-265
+src/lib/trade-reasoning.ts
+  95c7c025e986619f 1-256
+scripts/create-scored-trades.ts
+  95c7c025e986619f 1-74
+src/lib/outcome-tracker.ts
+  95c7c025e986619f 1-247
+src/components/TradeDashboard.tsx
+  95c7c025e986619f 1-285
+src/hooks/useUpcomingTrades.ts
+  95c7c025e986619f 1-59
+scripts/build-regime-lookup.ts
+  95c7c025e986619f 46-51,69,71-72
+src/lib/ml-baseline.ts
+  95c7c025e986619f 81-83,87-92,94-98
+src/lib/trade-recorder.ts
+  95c7c025e986619f 1-137
+prisma/schema.prisma
+  95c7c025e986619f 660-727
+src/components/LiveMesChart.tsx
+  95c7c025e986619f 120-121,124,172-176,179-180,183-185,188-194,198-200,203-218,223-229,251,309-317,414,424-425,431-441,449,453,477,485,490,494,508
+src/components/Header.tsx
+  95c7c025e986619f 19,29-45
+src/app/page.tsx
+  95c7c025e986619f 1,4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "8e19f282b4643c76d1c42718978334cd6ed3a44b",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 1867,
+      "total_deletions": 394,
+      "accepted_lines": 1538,
+      "overriden_lines": 0
+    }
+  }
+}
