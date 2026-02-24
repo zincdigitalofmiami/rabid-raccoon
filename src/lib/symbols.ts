@@ -1,3 +1,6 @@
+import { getPrimarySymbol as getRegistryPrimarySymbol, getSymbolsByRole } from '@/lib/symbol-registry'
+import { SYMBOL_REGISTRY_SNAPSHOT } from '@/lib/symbol-registry/snapshot'
+
 export interface SymbolConfig {
   displayName: string
   shortName: string
@@ -10,112 +13,83 @@ export interface SymbolConfig {
   description: string
 }
 
-export const SYMBOLS: Record<string, SymbolConfig> = {
-  MES: {
-    displayName: 'MES',
-    shortName: 'Micro S&P',
-    dataSource: 'databento',
-    databentoSymbol: 'MES.c.0',
-    dataset: 'GLBX.MDP3',
-    stypeIn: 'continuous',
-    tickSize: 0.25,
-    description: 'Micro E-mini S&P 500',
-  },
-  NQ: {
-    displayName: 'NQ',
-    shortName: 'E-mini Nasdaq',
-    dataSource: 'databento',
-    databentoSymbol: 'NQ.c.0',
-    dataset: 'GLBX.MDP3',
-    stypeIn: 'continuous',
-    tickSize: 0.25,
-    description: 'E-mini Nasdaq-100',
-  },
-  YM: {
-    displayName: 'YM',
-    shortName: 'E-mini Dow',
-    dataSource: 'databento',
-    databentoSymbol: 'YM.c.0',
-    dataset: 'GLBX.MDP3',
-    stypeIn: 'continuous',
-    tickSize: 1.0,
-    description: 'E-mini Dow Jones',
-  },
-  RTY: {
-    displayName: 'RTY',
-    shortName: 'E-mini Russell',
-    dataSource: 'databento',
-    databentoSymbol: 'RTY.c.0',
-    dataset: 'GLBX.MDP3',
-    stypeIn: 'continuous',
-    tickSize: 0.1,
-    description: 'E-mini Russell 2000',
-  },
-  VX: {
-    displayName: 'VIX',
-    shortName: 'VIX Index',
-    dataSource: 'fred',
-    fredSymbol: 'VIXCLS',
-    tickSize: 0.01,
-    description: 'CBOE Volatility Index (via FRED)',
-  },
-  ZN: {
-    displayName: 'ZN',
-    shortName: '10Y T-Note',
-    dataSource: 'databento',
-    databentoSymbol: 'ZN.c.0',
-    dataset: 'GLBX.MDP3',
-    stypeIn: 'continuous',
-    tickSize: 0.015625,
-    description: '10-Year Treasury Note',
-  },
-  ZB: {
-    displayName: 'ZB',
-    shortName: '30Y T-Bond',
-    dataSource: 'databento',
-    databentoSymbol: 'ZB.c.0',
-    dataset: 'GLBX.MDP3',
-    stypeIn: 'continuous',
-    tickSize: 0.03125,
-    description: '30-Year Treasury Bond',
-  },
-  DX: {
-    displayName: 'DXY',
-    shortName: 'US Dollar',
-    dataSource: 'fred',
-    fredSymbol: 'DTWEXBGS',
-    tickSize: 0.01,
-    description: 'US Dollar Broad Index (via FRED)',
-  },
-  US10Y: {
-    displayName: 'US10Y',
-    shortName: '10Y Yield',
-    dataSource: 'fred',
-    fredSymbol: 'DGS10',
-    tickSize: 0.01,
-    description: 'US 10-Year Treasury Yield (via FRED)',
-  },
-  GC: {
-    displayName: 'GC',
-    shortName: 'Gold',
-    dataSource: 'databento',
-    databentoSymbol: 'GC.c.0',
-    dataset: 'GLBX.MDP3',
-    stypeIn: 'continuous',
-    tickSize: 0.1,
-    description: 'Gold Futures (COMEX)',
-  },
-  CL: {
-    displayName: 'CL',
-    shortName: 'Crude Oil',
-    dataSource: 'databento',
-    databentoSymbol: 'CL.c.0',
-    dataset: 'GLBX.MDP3',
-    stypeIn: 'continuous',
-    tickSize: 0.01,
-    description: 'Crude Oil Futures (NYMEX)',
-  },
+const SYMBOLS_ROLE_KEY = 'FORECAST_UNIVERSE'
+const DATABENTO_DEFAULT_STYPE_IN = 'continuous'
+
+type SnapshotSymbol = (typeof SYMBOL_REGISTRY_SNAPSHOT.symbols)[number]
+
+function roleMembersFromSnapshot(roleKey: string): string[] {
+  const members = SYMBOL_REGISTRY_SNAPSHOT.roleMembers
+    .filter((member) => member.roleKey === roleKey && member.enabled)
+    .sort((a, b) => a.position - b.position || a.symbolCode.localeCompare(b.symbolCode))
+    .map((member) => member.symbolCode)
+
+  if (members.length === 0) {
+    throw new Error(`[symbols adapter] snapshot role "${roleKey}" has no enabled members`)
+  }
+
+  return members
 }
 
+function getSnapshotSymbolByCode(code: string): SnapshotSymbol {
+  const symbol = SYMBOL_REGISTRY_SNAPSHOT.symbols.find((entry) => entry.code === code)
+  if (!symbol) {
+    throw new Error(`[symbols adapter] symbol "${code}" missing from registry snapshot`)
+  }
+  return symbol
+}
+
+function toLegacyDataSource(source: SnapshotSymbol['dataSource']): SymbolConfig['dataSource'] {
+  if (source === 'DATABENTO') return 'databento'
+  if (source === 'FRED') return 'fred'
+  throw new Error(`[symbols adapter] unsupported data source "${source}" for legacy symbol config`)
+}
+
+function toSymbolConfig(symbol: SnapshotSymbol): SymbolConfig {
+  const dataSource = toLegacyDataSource(symbol.dataSource)
+  const config: SymbolConfig = {
+    displayName: symbol.displayName || symbol.code,
+    shortName: symbol.shortName || symbol.displayName || symbol.code,
+    dataSource,
+    tickSize: symbol.tickSize,
+    description: symbol.description || symbol.displayName || symbol.code,
+  }
+
+  if (dataSource === 'databento') {
+    config.databentoSymbol = symbol.databentoSymbol || `${symbol.code}.c.0`
+    config.dataset = symbol.dataset || 'GLBX.MDP3'
+    config.stypeIn = DATABENTO_DEFAULT_STYPE_IN
+  } else {
+    config.fredSymbol = symbol.fredSymbol || undefined
+  }
+
+  return config
+}
+
+function buildSymbolMapFromSnapshot(): Record<string, SymbolConfig> {
+  const roleMembers = roleMembersFromSnapshot(SYMBOLS_ROLE_KEY)
+  const entries = roleMembers.map((code) => [code, toSymbolConfig(getSnapshotSymbolByCode(code))] as const)
+  if (entries.length === 0) {
+    throw new Error('[symbols adapter] symbol map resolved to empty from snapshot')
+  }
+  return Object.fromEntries(entries)
+}
+
+export async function getLegacySymbolsFromRegistry(): Promise<Record<string, SymbolConfig>> {
+  const symbols = await getSymbolsByRole(SYMBOLS_ROLE_KEY)
+  const entries = symbols.map((symbol) => [symbol.code, toSymbolConfig(symbol)] as const)
+  if (entries.length === 0) {
+    throw new Error(`[symbols adapter] registry role "${SYMBOLS_ROLE_KEY}" resolved to empty`)
+  }
+  return Object.fromEntries(entries)
+}
+
+export async function getLegacyPrimarySymbolFromRegistry(): Promise<string> {
+  return getRegistryPrimarySymbol()
+}
+
+export const SYMBOLS: Record<string, SymbolConfig> = buildSymbolMapFromSnapshot()
+
 export const SYMBOL_KEYS = Object.keys(SYMBOLS)
-export const PRIMARY_SYMBOL = 'MES'
+
+export const PRIMARY_SYMBOL = SYMBOL_REGISTRY_SNAPSHOT.primarySymbol

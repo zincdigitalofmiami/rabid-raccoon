@@ -5,7 +5,7 @@
 import type { SymbolRegistrySnapshot } from './types'
 
 export const SYMBOL_REGISTRY_SNAPSHOT: SymbolRegistrySnapshot = {
-  "generatedAt": "2026-02-22T16:16:02.375Z",
+  "generatedAt": "2026-02-22T16:56:41.741Z",
   "primarySymbol": "MES",
   "symbols": [
     {
@@ -53,6 +53,18 @@ export const SYMBOL_REGISTRY_SNAPSHOT: SymbolRegistrySnapshot = {
       "dataSource": "DATABENTO",
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "CL.c.0",
+      "fredSymbol": null,
+      "isActive": true
+    },
+    {
+      "code": "DX",
+      "displayName": "US Dollar Index",
+      "shortName": "DXY",
+      "description": "ICE US Dollar Index futures",
+      "tickSize": 0.005,
+      "dataSource": "FRED",
+      "dataset": null,
+      "databentoSymbol": null,
       "fredSymbol": null,
       "isActive": true
     },
@@ -333,6 +345,30 @@ export const SYMBOL_REGISTRY_SNAPSHOT: SymbolRegistrySnapshot = {
       "isActive": false
     },
     {
+      "code": "US10Y",
+      "displayName": "10-Year Treasury",
+      "shortName": "US10Y",
+      "description": "US 10-Year Treasury Yield",
+      "tickSize": 0.001,
+      "dataSource": "FRED",
+      "dataset": null,
+      "databentoSymbol": null,
+      "fredSymbol": null,
+      "isActive": true
+    },
+    {
+      "code": "VX",
+      "displayName": "VIX Futures",
+      "shortName": "VIX",
+      "description": "CBOE Volatility Index futures",
+      "tickSize": 0.05,
+      "dataSource": "FRED",
+      "dataset": null,
+      "databentoSymbol": null,
+      "fredSymbol": null,
+      "isActive": true
+    },
+    {
       "code": "XAB",
       "displayName": "XAB",
       "shortName": "XA B",
@@ -513,7 +549,560 @@ export const SYMBOL_REGISTRY_SNAPSHOT: SymbolRegistrySnapshot = {
       "isActive": true
     }
   ],
-  "roleMembers": [],
+  "roleMembers": [
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "MES",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "NQ",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "YM",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "RTY",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "VX",
+      "position": 4,
+      "enabled": true
+    },
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "US10Y",
+      "position": 5,
+      "enabled": true
+    },
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "ZN",
+      "position": 6,
+      "enabled": true
+    },
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "DX",
+      "position": 7,
+      "enabled": true
+    },
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "GC",
+      "position": 8,
+      "enabled": true
+    },
+    {
+      "roleKey": "ANALYSIS_DEFAULT",
+      "symbolCode": "CL",
+      "position": 9,
+      "enabled": true
+    },
+    {
+      "roleKey": "CORRELATION_SET",
+      "symbolCode": "MES",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "CORRELATION_SET",
+      "symbolCode": "NQ",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "CORRELATION_SET",
+      "symbolCode": "VX",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "CORRELATION_SET",
+      "symbolCode": "DX",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_COMMODITIES",
+      "symbolCode": "GC",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_COMMODITIES",
+      "symbolCode": "CL",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_INDICES",
+      "symbolCode": "MES",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_INDICES",
+      "symbolCode": "NQ",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_INDICES",
+      "symbolCode": "YM",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_INDICES",
+      "symbolCode": "RTY",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_MACRO",
+      "symbolCode": "VX",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_MACRO",
+      "symbolCode": "US10Y",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_MACRO",
+      "symbolCode": "ZN",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_MACRO",
+      "symbolCode": "ZB",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "DASHBOARD_MARKETS_MACRO",
+      "symbolCode": "DX",
+      "position": 4,
+      "enabled": true
+    },
+    {
+      "roleKey": "DB_ALIGNMENT_EXPECTED",
+      "symbolCode": "NQ",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "DB_ALIGNMENT_EXPECTED",
+      "symbolCode": "ZN",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "DB_ALIGNMENT_EXPECTED",
+      "symbolCode": "CL",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "DB_ALIGNMENT_EXPECTED",
+      "symbolCode": "6E",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "DB_ALIGNMENT_EXPECTED",
+      "symbolCode": "6J",
+      "position": 4,
+      "enabled": true
+    },
+    {
+      "roleKey": "DB_ALIGNMENT_EXPECTED",
+      "symbolCode": "NG",
+      "position": 5,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "MES",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "NQ",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "YM",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "RTY",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "VX",
+      "position": 4,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "US10Y",
+      "position": 5,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "ZN",
+      "position": 6,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "ZB",
+      "position": 7,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "DX",
+      "position": 8,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "GC",
+      "position": 9,
+      "enabled": true
+    },
+    {
+      "roleKey": "FORECAST_UNIVERSE",
+      "symbolCode": "CL",
+      "position": 10,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "ES",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "MES",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "NQ",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "YM",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "RTY",
+      "position": 4,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "SOX",
+      "position": 5,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "ZN",
+      "position": 6,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "ZB",
+      "position": 7,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "ZF",
+      "position": 8,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "CL",
+      "position": 9,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "GC",
+      "position": 10,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "SI",
+      "position": 11,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "NG",
+      "position": 12,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "6E",
+      "position": 13,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "6J",
+      "position": 14,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_ACTIVE",
+      "symbolCode": "SR3",
+      "position": 15,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "ES",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "NQ",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "YM",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "RTY",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "SOX",
+      "position": 4,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "ZN",
+      "position": 5,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "ZB",
+      "position": 6,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "ZF",
+      "position": 7,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "CL",
+      "position": 8,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "GC",
+      "position": 9,
+      "enabled": true
+    },
+    {
+      "roleKey": "INGESTION_NON_MES_ACTIVE",
+      "symbolCode": "SI",
+      "position": 10,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_COMMODITIES",
+      "symbolCode": "CL",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_COMMODITIES",
+      "symbolCode": "GC",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_COMMODITIES",
+      "symbolCode": "SI",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_COMMODITIES",
+      "symbolCode": "NG",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_EQUITY_INDICES",
+      "symbolCode": "ES",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_EQUITY_INDICES",
+      "symbolCode": "NQ",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_EQUITY_INDICES",
+      "symbolCode": "YM",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_EQUITY_INDICES",
+      "symbolCode": "RTY",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_EQUITY_INDICES",
+      "symbolCode": "SOX",
+      "position": 4,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_FX_RATES",
+      "symbolCode": "6E",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_FX_RATES",
+      "symbolCode": "6J",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_FX_RATES",
+      "symbolCode": "SR3",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_MES_ONLY",
+      "symbolCode": "MES",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_TREASURIES",
+      "symbolCode": "ZN",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_TREASURIES",
+      "symbolCode": "ZB",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "INNGEST_TREASURIES",
+      "symbolCode": "ZF",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "MEASURED_MOVE_DEFAULT",
+      "symbolCode": "MES",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "TRAINING_CROSS_ASSET",
+      "symbolCode": "NQ",
+      "position": 0,
+      "enabled": true
+    },
+    {
+      "roleKey": "TRAINING_CROSS_ASSET",
+      "symbolCode": "ZN",
+      "position": 1,
+      "enabled": true
+    },
+    {
+      "roleKey": "TRAINING_CROSS_ASSET",
+      "symbolCode": "CL",
+      "position": 2,
+      "enabled": true
+    },
+    {
+      "roleKey": "TRAINING_CROSS_ASSET",
+      "symbolCode": "6E",
+      "position": 3,
+      "enabled": true
+    },
+    {
+      "roleKey": "TRAINING_CROSS_ASSET",
+      "symbolCode": "6J",
+      "position": 4,
+      "enabled": true
+    },
+    {
+      "roleKey": "TRAINING_CROSS_ASSET",
+      "symbolCode": "NG",
+      "position": 5,
+      "enabled": true
+    }
+  ],
   "providerMappings": [
     {
       "symbolCode": "BIO",

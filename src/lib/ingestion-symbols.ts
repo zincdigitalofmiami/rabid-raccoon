@@ -1,3 +1,6 @@
+import { getSymbolsByRole } from '@/lib/symbol-registry'
+import { SYMBOL_REGISTRY_SNAPSHOT } from '@/lib/symbol-registry/snapshot'
+
 export interface IngestionSymbol {
   code: string
   displayName: string
@@ -8,62 +11,68 @@ export interface IngestionSymbol {
   tickSize: number
 }
 
-const GLBX = 'GLBX.MDP3'
+const INGESTION_ROLE_KEY = 'INGESTION_ACTIVE'
+const DATABENTO_DEFAULT_DATASET = 'GLBX.MDP3'
 
-const ACTIVE_SYMBOLS = [
-  // Equity index futures
-  'ES',   // E-mini S&P 500
-  'MES',  // Micro E-mini S&P 500 (primary target)
-  'NQ',   // E-mini Nasdaq-100 — tech beta / duration
-  'YM',   // E-mini Dow Jones
-  'RTY',  // E-mini Russell 2000
-  'SOX',  // PHLX Semiconductor Index — semis leadership
-  // Fixed income
-  'ZN',   // 10Y Treasury Note — rate impulse
-  'ZB',   // 30Y Treasury Bond
-  'ZF',   // 5Y Treasury Note
-  // Commodities
-  'CL',   // WTI Crude Oil — energy / AI power narrative
-  'GC',   // Gold
-  'SI',   // Silver
-  'NG',   // Natural Gas — AI data center / power grid narrative
-  // FX futures (CME)
-  '6E',   // EUR/USD — USD liquidity / risk proxy
-  '6J',   // JPY/USD — carry unwind / risk stress
-  // Rates futures
-  'SR3',  // 3-Month SOFR — front-end policy shock detector
-] as const
+type SnapshotSymbol = (typeof SYMBOL_REGISTRY_SNAPSHOT.symbols)[number]
 
-const META: Record<string, { shortName: string; description: string; tickSize: number }> = {
-  ES:  { shortName: 'E-mini S&P',     description: 'E-mini S&P 500 Futures',               tickSize: 0.25 },
-  MES: { shortName: 'Micro S&P',      description: 'Micro E-mini S&P 500 Futures',          tickSize: 0.25 },
-  NQ:  { shortName: 'E-mini Nasdaq',  description: 'E-mini Nasdaq-100 Futures',             tickSize: 0.25 },
-  YM:  { shortName: 'E-mini Dow',     description: 'E-mini Dow Jones Futures',              tickSize: 1.0 },
-  RTY: { shortName: 'E-mini Russell', description: 'E-mini Russell 2000 Futures',           tickSize: 0.1 },
-  SOX: { shortName: 'Semiconductor',  description: 'PHLX Semiconductor Index Futures',     tickSize: 0.1 },
-  ZN:  { shortName: '10Y Note',       description: '10-Year Treasury Note Futures',         tickSize: 0.015625 },
-  ZB:  { shortName: '30Y Bond',       description: '30-Year Treasury Bond Futures',         tickSize: 0.03125 },
-  ZF:  { shortName: '5Y Note',        description: '5-Year Treasury Note Futures',          tickSize: 0.0078125 },
-  CL:  { shortName: 'Crude Oil',      description: 'WTI Crude Oil Futures',                tickSize: 0.01 },
-  GC:  { shortName: 'Gold',           description: 'Gold Futures (COMEX)',                  tickSize: 0.1 },
-  SI:  { shortName: 'Silver',         description: 'Silver Futures',                        tickSize: 0.005 },
-  NG:  { shortName: 'Nat Gas',        description: 'Natural Gas Futures',                   tickSize: 0.001 },
-  '6E':  { shortName: 'EUR/USD',      description: 'Euro FX Futures (EUR/USD)',             tickSize: 0.00005 },
-  '6J':  { shortName: 'JPY/USD',      description: 'Japanese Yen Futures (JPY/USD)',        tickSize: 0.0000001 },
-  SR3:   { shortName: 'SOFR 3M',      description: '3-Month SOFR Futures',                 tickSize: 0.0025 },
+function roleMembersFromSnapshot(roleKey: string): string[] {
+  const members = SYMBOL_REGISTRY_SNAPSHOT.roleMembers
+    .filter((member) => member.roleKey === roleKey && member.enabled)
+    .sort((a, b) => a.position - b.position || a.symbolCode.localeCompare(b.symbolCode))
+    .map((member) => member.symbolCode)
+
+  if (members.length === 0) {
+    throw new Error(`[ingestion-symbols adapter] snapshot role "${roleKey}" has no enabled members`)
+  }
+
+  return members
 }
 
-export const INGESTION_SYMBOLS: IngestionSymbol[] = ACTIVE_SYMBOLS.map((code) => {
-  const meta = META[code]
-  return {
-    code,
-    displayName: code,
-    shortName: meta.shortName,
-    description: meta.description,
-    databentoSymbol: `${code}.c.0`,
-    dataset: GLBX,
-    tickSize: meta.tickSize,
+function getSnapshotSymbolByCode(code: string): SnapshotSymbol {
+  const symbol = SYMBOL_REGISTRY_SNAPSHOT.symbols.find((entry) => entry.code === code)
+  if (!symbol) {
+    throw new Error(`[ingestion-symbols adapter] symbol "${code}" missing from registry snapshot`)
   }
-})
+  return symbol
+}
 
-export const INGESTION_SYMBOL_CODES = INGESTION_SYMBOLS.map((s) => s.code)
+function toIngestionSymbol(symbol: SnapshotSymbol): IngestionSymbol {
+  if (symbol.dataSource !== 'DATABENTO') {
+    throw new Error(
+      `[ingestion-symbols adapter] symbol "${symbol.code}" has unsupported data source "${symbol.dataSource}"`,
+    )
+  }
+
+  return {
+    code: symbol.code,
+    displayName: symbol.displayName || symbol.code,
+    shortName: symbol.shortName || symbol.displayName || symbol.code,
+    description: symbol.description || symbol.displayName || symbol.code,
+    databentoSymbol: symbol.databentoSymbol || `${symbol.code}.c.0`,
+    dataset: symbol.dataset || DATABENTO_DEFAULT_DATASET,
+    tickSize: symbol.tickSize,
+  }
+}
+
+function buildIngestionSymbolsFromSnapshot(): IngestionSymbol[] {
+  const roleMembers = roleMembersFromSnapshot(INGESTION_ROLE_KEY)
+  const symbols = roleMembers.map((code) => toIngestionSymbol(getSnapshotSymbolByCode(code)))
+  if (symbols.length === 0) {
+    throw new Error('[ingestion-symbols adapter] ingestion symbol list resolved to empty from snapshot')
+  }
+  return symbols
+}
+
+export async function getIngestionSymbolsFromRegistry(): Promise<IngestionSymbol[]> {
+  const symbols = await getSymbolsByRole(INGESTION_ROLE_KEY)
+  const adapted = symbols.map((symbol) => toIngestionSymbol(symbol))
+  if (adapted.length === 0) {
+    throw new Error(`[ingestion-symbols adapter] registry role "${INGESTION_ROLE_KEY}" resolved to empty`)
+  }
+  return adapted
+}
+
+export const INGESTION_SYMBOLS: IngestionSymbol[] = buildIngestionSymbolsFromSnapshot()
+
+export const INGESTION_SYMBOL_CODES = INGESTION_SYMBOLS.map((symbol) => symbol.code)
