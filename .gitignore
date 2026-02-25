@@ -26,6 +26,10 @@ mes_hft_halsey/models/
 mes_hft_halsey/output/
 measured-move/output/
 datasets/autogluon/
+datasets/options-ohlcv/
+datasets/options-ohlcv-raw/
+datasets/options-statistics/
+datasets/options-statistics-raw/
 models/
 .claude/
 .mcp.json
