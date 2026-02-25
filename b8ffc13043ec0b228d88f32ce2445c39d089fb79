@@ -1,0 +1,40 @@
+AGENTS.md
+  f63b6d47c8c3a81e 252-276,281-290
+scripts/ingest-macro-indicators.ts
+  b6983e06f7f29ea3 200-203,205,210,213-214,256-285
+scripts/ingest-mm-signals.ts
+  b6983e06f7f29ea3 144-149,151,155,161-172,176-198,225,252,258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.2",
+  "base_commit_sha": "b8ffc13043ec0b228d88f32ce2445c39d089fb79",
+  "prompts": {
+    "b6983e06f7f29ea3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e6783d7d-0148-440c-88fa-e9be1d6cb81e",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 84,
+      "overriden_lines": 0
+    },
+    "f63b6d47c8c3a81e": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "672fb259-d1d3-437d-b849-b0e51509f587",
+        "model": "copilot/claude-opus-4.6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 35,
+      "total_deletions": 8,
+      "accepted_lines": 35,
+      "overriden_lines": 0
+    }
+  }
+}
