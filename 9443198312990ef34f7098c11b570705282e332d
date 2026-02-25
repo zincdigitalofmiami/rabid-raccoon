@@ -1,0 +1,46 @@
+scripts/aggregate-options.py
+  7c3f645925642637 1-286
+scripts/submit-options-batch.py
+  7c3f645925642637 1-63
+prisma/schema.prisma
+  7c3f645925642637 780-832
+.gitignore
+  f63b6d47c8c3a81e 29-32
+scripts/convert-options-raw.py
+  7c3f645925642637 1-278
+scripts/check-options-jobs.py
+  7c3f645925642637 1-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "9443198312990ef34f7098c11b570705282e332d",
+  "prompts": {
+    "7c3f645925642637": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c9669-005c-7953-80b0-1cb8d287ba13",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 1644,
+      "total_deletions": 0,
+      "accepted_lines": 1644,
+      "overriden_lines": 0
+    },
+    "f63b6d47c8c3a81e": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "672fb259-d1d3-437d-b849-b0e51509f587",
+        "model": "copilot/claude-opus-4.6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 0,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
