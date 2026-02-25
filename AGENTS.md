@@ -218,6 +218,20 @@ Every table must have:
 - Every ingestion run must create an `IngestionRun` record with status, row counts, and timing.
 - Log failures — never silently swallow errors.
 
+### Databento Options Data
+
+Options market data is pulled via the **Databento Python SDK** (`databento` package in `.venv-finance`), NOT the TypeScript REST wrapper. The data volume is too large for streaming.
+
+**15 CME option parents**: ES.OPT, NQ.OPT, OG.OPT, SO.OPT, LO.OPT, OKE.OPT, ON.OPT, OH.OPT, OB.OPT, HXE.OPT, OZN.OPT, OZB.OPT, OZF.OPT, EUU.OPT, JPU.OPT
+
+**Critical knowledge:**
+- `stype_in='parent'` returns ALL child contracts (~3K for ES.OPT = ~288K stat rows/day). Use `batch.submit_job()` or weekly streaming chunks for ES/NQ. Monthly works for the rest.
+- `statistics` schema stat_types: 3=Settlement, 6=Volume, 9=OI, 14=IV, 15=Delta. Filter early to reduce storage.
+- Definition files (strikes, expirations, put/call class) are on disk at the Databento Data Dump: `/Volumes/Satechi Hub/Databento Data Dump/Options/definitions/` (2010–2026, `.dbn.zst` format).
+- Kirk has a Databento subscription — all pulls are $0.
+- Pull scripts: `scripts/pull-options-statistics.py`, `scripts/pull-options-ohlcv.py`
+- Output: `datasets/options-statistics/<SYMBOL>/YYYY-MM.parquet`, `datasets/options-ohlcv/<SYMBOL>/YYYY-MM.parquet`
+
 ## File Organization
 
 ```
@@ -242,6 +256,8 @@ rabid-raccoon/
 ├── indicators/                  ← TradingView Pine Script (Phase 2)
 ├── models/                      ← Trained model artifacts
 ├── datasets/                    ← Built datasets for training
+│   ├── options-statistics/      ← Databento options stats (parquet, by symbol/month)
+│   └── options-ohlcv/           ← Databento options daily OHLCV (parquet, by symbol/month)
 ├── strategies/                  ← Trading strategy definitions
 ├── libraries/                   ← External library integrations
 ├── measured-move/               ← Measured move detection logic

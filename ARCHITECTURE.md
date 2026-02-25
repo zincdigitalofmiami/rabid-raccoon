@@ -158,6 +158,7 @@ All econ domain tables share identical structure: `(seriesId, eventDate)` unique
 | Source | Provider | What It Feeds | Ingestion Path |
 |--------|----------|---------------|----------------|
 | Databento | REST API | MES candles (15m, 1h, 1d), non-MES futures | `ingest-market-prices.ts`, `ingest-market-prices-daily.ts`, `backfill-*.ts` |
+| Databento | Python SDK (batch) | Options statistics (OI, volume, IV, delta, settlement) for 15 CME parents | `pull-options-statistics.py`, `pull-options-ohlcv.py` |
 | FRED | REST API | All `econ_*_1d` tables via `economic_series` | `ingest-fred-complete.ts`, `ingest-macro-indicators.ts` |
 | Yahoo | REST API | Supplemental market data | `ingest-macro-indicators.ts` |
 | Google News | RSS | `news_signals` | `src/lib/news-scrape.ts` |
@@ -196,6 +197,34 @@ ingest-market-prices-daily.ts (or Inngest mkt-equity-indices, mkt-treasuries, et
     ├── Hourly candles → mkt_futures_1h (symbolCode FK)
     └── Daily candles → mkt_futures_1d (symbolCode FK)
 ```
+
+### Options Data Ingestion Flow
+
+Options data is pulled via the **Databento Python SDK** (not the TypeScript REST wrapper) because the data volume is too large for streaming. Uses `batch.submit_job()` for server-side processing.
+
+**15 CME option parents** (indices, metals, energy, treasuries, FX):
+`ES.OPT` · `NQ.OPT` · `OG.OPT` · `SO.OPT` · `LO.OPT` · `OKE.OPT` · `ON.OPT` · `OH.OPT` · `OB.OPT` · `HXE.OPT` · `OZN.OPT` · `OZB.OPT` · `OZF.OPT` · `EUU.OPT` · `JPU.OPT`
+
+Agriculture excluded (OZL, OZS, OZM, OZC, OZW) — Kirk decision 2026-02-25.
+
+```
+Databento Python SDK (batch or streaming with path=)
+    │
+    ▼
+pull-options-statistics.py
+    │
+    ├── statistics schema → filter stat_types 3,6,9,14,15
+    │   (settlement price, cleared volume, OI, implied vol, delta)
+    └── Save monthly parquet → datasets/options-statistics/<SYMBOL>/
+
+pull-options-ohlcv.py
+    │
+    └── ohlcv-1d schema → datasets/options-ohlcv/<SYMBOL>/
+```
+
+**IMPORTANT**: `stype_in='parent'` for ES.OPT returns ~288K stat rows/day (~3,000 active contracts). Use batch jobs or weekly chunks for ES/NQ. Monthly chunks work for smaller symbols.
+
+Definition files (contract specs, strikes, expirations) already on disk: `/Volumes/Satechi Hub/Databento Data Dump/Options/definitions/` (2010–2026).
 
 ### Economic Data Ingestion Flow
 
