@@ -197,38 +197,21 @@ async function processIndicator(job: IndicatorJob, dryRun: boolean): Promise<Ind
   return { processed: rows.length, inserted }
 }
 
-export async function runIngestMacroIndicators(options?: MacroIngestOptions): Promise<MacroIngestSummary> {
-  loadDotEnvFiles()
+interface ResolvedMacroOptions {
+  daysBack: number
+  dryRun: boolean
+}
 
+function resolveMacroOptions(options?: MacroIngestOptions): ResolvedMacroOptions {
   const daysBack = Number.isFinite(options?.daysBack)
     ? Number(options?.daysBack)
     : Number(parseArg('days-back', '730'))
   const dryRun = options?.dryRun ?? parseArg('dry-run', 'false').toLowerCase() === 'true'
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
-  if (!process.env.FRED_API_KEY) throw new Error('FRED_API_KEY is required')
-  if (!Number.isFinite(daysBack) || daysBack <= 0) {
-    throw new Error(`Invalid --days-back '${daysBack}'`)
-  }
+  return { daysBack, dryRun }
+}
 
-  const run = await prisma.ingestionRun.create({
-    data: {
-      job: 'macro-indicators',
-      status: 'RUNNING',
-      details: toJson({ daysBack }),
-    },
-  })
-
-  let rowsInserted = 0
-  let rowsProcessed = 0
-  const indicatorsProcessed: string[] = []
-  const indicatorsFailed: Record<string, string> = {}
-  const now = new Date()
-  const startDate = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10)
-  const endDate = now.toISOString().slice(0, 10)
-
-  const jobs: IndicatorJob[] = [
+function buildIndicatorJobs(startDate: string, endDate: string): IndicatorJob[] {
+  return [
     {
       seriesId: 'VIXCLS',
       displayName: 'CBOE Volatility Index',
@@ -270,6 +253,36 @@ export async function runIngestMacroIndicators(options?: MacroIngestOptions): Pr
       fetcher: () => fetchTenYearYieldCandles(startDate, endDate),
     },
   ]
+}
+
+export async function runIngestMacroIndicators(options?: MacroIngestOptions): Promise<MacroIngestSummary> {
+  loadDotEnvFiles()
+
+  const { daysBack, dryRun } = resolveMacroOptions(options)
+  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!process.env.FRED_API_KEY) throw new Error('FRED_API_KEY is required')
+  if (!Number.isFinite(daysBack) || daysBack <= 0) {
+    throw new Error(`Invalid --days-back '${daysBack}'`)
+  }
+
+  const run = await prisma.ingestionRun.create({
+    data: {
+      job: 'macro-indicators',
+      status: 'RUNNING',
+      details: toJson({ daysBack }),
+    },
+  })
+
+  let rowsInserted = 0
+  let rowsProcessed = 0
+  const indicatorsProcessed: string[] = []
+  const indicatorsFailed: Record<string, string> = {}
+  const now = new Date()
+  const startDate = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10)
+  const endDate = now.toISOString().slice(0, 10)
+  const jobs = buildIndicatorJobs(startDate, endDate)
 
   try {
     if (!dryRun) {

@@ -249,18 +249,45 @@ rabid-raccoon/
 └── templates/                   ← Document/report templates
 ```
 
+## Memory MCP (Mandatory)
+
+All agents MUST use the Memory MCP server to persist and recall project decisions, corrections, and context across sessions.
+
+**Server**: `@modelcontextprotocol/server-memory` (stdio)
+**Memory file**: `.claude/memory.jsonl` (repo-local, shared across all agents)
+
+### Configuration
+
+The Memory MCP is pre-configured for each agent platform:
+
+| Platform | Config file | Key format |
+|----------|-------------|------------|
+| Claude Code / Desktop | `.mcp.json` (repo root) | `mcpServers.memory` |
+| VS Code Copilot | `.vscode/mcp.json` | `servers.memory` |
+| Cline | `.clinerules` + `.mcp.json` | Uses `.mcp.json` |
+| Cursor | `.mcp.json` | Uses `.mcp.json` |
+
+### Rules
+
+1. **Search memory first** — Before starting any task, search memory for keywords from the request + "rabid-raccoon" + "Kirk". This catches past decisions and corrections.
+2. **Store immediately** — When Kirk states a preference, makes a correction, or you learn something project-specific, write it to memory before moving on.
+3. **Never skip memory** — Even if a task seems simple. Past context prevents repeated mistakes.
+4. **Memory is shared** — All agents read/write the same `.claude/memory.jsonl`. Keep entries clean and factual.
+
 ## Agent Workflow
 
 When you receive a task:
 
-1. **Read this file first.** Every time. Don't assume you remember it.
-2. **Identify which domain(s)** the task touches. If it crosses domains, flag it.
-3. **Explore the current state** of the files you'll modify. Don't assume — verify.
-4. **Check the symbol registry** if your task involves any symbol references.
-5. **Check the migration history** if your task involves schema changes.
-6. **Propose before you build** for any structural change. Show the plan, get approval.
-7. **Commit incrementally** with clear messages. Not one giant commit at the end.
-8. **Verify your work.** Run the build. Run the linter. Check for regressions.
+1. **Search memory** for relevant context. Always. No exceptions.
+2. **Read this file first.** Every time. Don't assume you remember it.
+3. **Identify which domain(s)** the task touches. If it crosses domains, flag it.
+4. **Explore the current state** of the files you'll modify. Don't assume — verify.
+5. **Check the symbol registry** if your task involves any symbol references.
+6. **Check the migration history** if your task involves schema changes.
+7. **Propose before you build** for any structural change. Show the plan, get approval.
+8. **Commit incrementally** with clear messages. Not one giant commit at the end.
+9. **Verify your work.** Run the build. Run the linter. Check for regressions.
+10. **Store new decisions/corrections to memory** before ending the session.
 
 ## What NOT to Do
 

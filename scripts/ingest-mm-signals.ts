@@ -141,26 +141,68 @@ async function processSymbolSignals(
   return { processed: rows.length, inserted: inserted.count }
 }
 
-export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): Promise<MmIngestSummary> {
-  loadDotEnvFiles()
+interface ResolvedMmOptions {
+  daysBack: number
+  timeframe: string
+  dryRun: boolean
+  symbolsRequested: string[]
+}
 
+function resolveMmOptions(options?: MmIngestOptions): ResolvedMmOptions {
   const daysBack = Number.isFinite(options?.daysBack)
     ? Number(options?.daysBack)
     : Number(parseArg('days-back', '120'))
-  const rawTimeframe = options?.timeframe ?? parseArg('timeframe', '1h')
-  const timeframe = parseTimeframe(rawTimeframe)
+  const timeframe = parseTimeframe(options?.timeframe ?? parseArg('timeframe', '1h'))
   const dryRun = options?.dryRun ?? parseArg('dry-run', 'false').toLowerCase() === 'true'
   const rawSymbols = options?.symbols?.length ? options.symbols.join(',') : parseArg('symbols', '')
   const symbolsRequested = rawSymbols
-    ? rawSymbols
-        .split(',')
-        .map((s) => s.trim().toUpperCase())
-        .filter(Boolean)
+    ? rawSymbols.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
     : ['MES']
+  return { daysBack, timeframe, dryRun, symbolsRequested }
+}
+
+async function loadAllCandles(symbolsRequested: string[], start: Date): Promise<Map<string, CandleData[]>> {
+  const perSymbol = new Map<string, CandleData[]>()
+
+  if (symbolsRequested.includes('MES')) {
+    const mesCandles = await loadMesCandles(start)
+    if (mesCandles.length > 0) perSymbol.set('MES', mesCandles)
+  }
+
+  const nonMesRequested = symbolsRequested.filter((code) => code !== 'MES')
+  const nonMesMap = await loadNonMesCandles(nonMesRequested, start)
+  for (const [code, candles] of nonMesMap) {
+    perSymbol.set(code, candles)
+  }
+
+  return perSymbol
+}
+
+function finalizeRunUpdate(
+  runId: bigint,
+  status: 'COMPLETED' | 'FAILED',
+  rowsProcessed: number,
+  rowsInserted: number,
+  rowsFailed: number,
+  details: Prisma.InputJsonValue
+) {
+  return prisma.ingestionRun.update({
+    where: { id: runId },
+    data: { status, finishedAt: new Date(), rowsProcessed, rowsInserted, rowsFailed, details },
+  })
+}
+
+export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): Promise<MmIngestSummary> {
+  loadDotEnvFiles()
+
+  const { daysBack, timeframe, dryRun, symbolsRequested } = resolveMmOptions(options)
 
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
   if (!Number.isFinite(daysBack) || daysBack <= 0) {
     throw new Error(`Invalid --days-back '${daysBack}'`)
+  }
+  if (timeframe !== '1h') {
+    throw new Error(`Unsupported timeframe=${timeframe}. MM ingestion currently runs on 1h only.`)
   }
 
   const tfPrisma = timeframeToPrisma(timeframe)
@@ -180,23 +222,7 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
   const symbolsFailed: Record<string, string> = {}
 
   try {
-    if (timeframe !== '1h') {
-      throw new Error(`Unsupported timeframe=${timeframe}. MM ingestion currently runs on 1h only.`)
-    }
-
-    const perSymbol = new Map<string, CandleData[]>()
-
-    if (symbolsRequested.includes('MES')) {
-      const mesCandles = await loadMesCandles(start)
-      if (mesCandles.length > 0) perSymbol.set('MES', mesCandles)
-    }
-
-    const nonMesRequested = symbolsRequested.filter((code) => code !== 'MES')
-    const nonMesMap = await loadNonMesCandles(nonMesRequested, start)
-    for (const [code, candles] of nonMesMap) {
-      perSymbol.set(code, candles)
-    }
-
+    const perSymbol = await loadAllCandles(symbolsRequested, start)
     if (perSymbol.size === 0) {
       throw new Error('No 1h market prices found. Ingest prices before MM signals.')
     }
@@ -219,45 +245,18 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
     const status = Object.keys(symbolsFailed).length === 0 ? 'COMPLETED' : 'FAILED'
     const summary: MmIngestSummary = {
-      timeframe,
-      daysBack,
-      symbolsRequested,
-      symbolsProcessed,
-      symbolsFailed,
-      rowsInserted,
-      rowsProcessed,
-      dryRun,
+      timeframe, daysBack, symbolsRequested, symbolsProcessed,
+      symbolsFailed, rowsInserted, rowsProcessed, dryRun,
     }
 
-    await prisma.ingestionRun.update({
-      where: { id: run.id },
-      data: {
-        status,
-        finishedAt: new Date(),
-        rowsProcessed,
-        rowsInserted,
-        rowsFailed: Object.keys(symbolsFailed).length,
-        details: toJson(summary),
-      },
-    })
+    await finalizeRunUpdate(run.id, status, rowsProcessed, rowsInserted,
+      Object.keys(symbolsFailed).length, toJson(summary))
 
     return summary
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    await prisma.ingestionRun.update({
-      where: { id: run.id },
-      data: {
-        status: 'FAILED',
-        finishedAt: new Date(),
-        rowsProcessed,
-        rowsInserted,
-        rowsFailed: Object.keys(symbolsFailed).length + 1,
-        details: toJson({
-          error: message,
-          symbolsFailed,
-        }),
-      },
-    })
+    await finalizeRunUpdate(run.id, 'FAILED', rowsProcessed, rowsInserted,
+      Object.keys(symbolsFailed).length + 1, toJson({ error: message, symbolsFailed }))
     throw error
   }
 }
