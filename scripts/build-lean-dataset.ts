@@ -8,7 +8,7 @@
  *
  * Design principles:
  *   - Price action first (22 MES technicals)
- *   - Daily macro context that sets the day's tone (27 FRED series)
+ *   - Daily macro context that sets the day's tone (29 FRED series)
  *   - Velocity/regime features (6 derived — VIX percentile, yield velocity, dollar momentum)
  *   - Event flags from econ_calendar (FOMC day, high-impact day)
  *   - NO low-signal macro event levels (GDP, CPI, NFP, trade balance, etc.)
@@ -118,6 +118,9 @@ const FRED_FEATURES: FredSeriesConfig[] = [
 
   // Real yields — TIPS 10Y for proper real rate
   { seriesId: 'DFII10',         column: 'fred_tips10y',          table: 'econ_inflation_1d',   frequency: 'daily' },
+  // Inflation expectations — breakeven curve regime
+  { seriesId: 'T5YIE',          column: 'fred_breakeven_5y',     table: 'econ_inflation_1d',   frequency: 'daily' },
+  { seriesId: 'T10YIE',         column: 'fred_breakeven_10y',    table: 'econ_inflation_1d',   frequency: 'daily' },
 ]
 
 // Feature index helpers
@@ -139,6 +142,8 @@ const IDX_HY_OAS = featureIndex('fred_hy_oas')
 const IDX_FED_ASSETS = featureIndex('fred_fed_assets')
 const IDX_RRP = featureIndex('fred_rrp')
 const IDX_TIPS10Y = featureIndex('fred_tips10y')
+const IDX_BREAKEVEN_5Y = featureIndex('fred_breakeven_5y')
+const IDX_BREAKEVEN_10Y = featureIndex('fred_breakeven_10y')
 const IDX_EPU_DAILY = featureIndex('fred_epu_daily')
 const IDX_EMU_DAILY = featureIndex('fred_emu_daily')
 const IDX_EPU_OVERALL = featureIndex('fred_epu_overall')
@@ -1063,6 +1068,8 @@ async function run(): Promise<void> {
   const rrpArr = buildArr('fred_rrp')
   const claimsArr = buildArr('fred_claims')
   const tips10yArr = buildArr('fred_tips10y')
+  const breakeven5yArr = buildArr('fred_breakeven_5y')
+  const breakeven10yArr = buildArr('fred_breakeven_10y')
   const sofrArr = buildArr('fred_sofr')
   const epuDailyArr = buildArr('fred_epu_daily')
   const emuDailyArr = buildArr('fred_emu_daily')
@@ -1259,12 +1266,12 @@ async function run(): Promise<void> {
     'vol_regime',          // std24 / std120 — short vs long-term vol
     'vol_of_vol',          // rolling std of std24 — volatility of volatility
     // FRED stationary (NO raw levels — all changes, diffs, ratios, z-scores)
-    // Macro context — cross-sectional spreads (4)
-    'yield_curve_slope', 'credit_spread_diff', 'real_rate_10y', 'fed_liquidity',
+    // Macro context — cross-sectional spreads (5)
+    'yield_curve_slope', 'credit_spread_diff', 'real_rate_10y', 'fed_liquidity', 'breakeven_10y_minus_5y',
     // Macro context — levels that are mean-reverting / bounded (2)
     'fed_midpoint',        // fed funds target midpoint (bounded by policy)
     'fred_vix',            // VIX is mean-reverting by construction
-    // Macro velocity — 1d changes (8)
+    // Macro velocity — 1d changes (10)
     'vix_1d_change',       // VIX point change
     'y2y_1d_change',       // 2Y yield change
     'y10y_1d_change',      // 10Y yield change
@@ -1273,6 +1280,8 @@ async function run(): Promise<void> {
     'ig_oas_1d_change',    // IG credit spread change
     'hy_oas_1d_change',    // HY credit spread change
     'tips10y_1d_change',   // TIPS 10Y change
+    'breakeven_5y_1d_change',
+    'breakeven_10y_1d_change',
     // Macro velocity — 5d momentum (6)
     'dgs10_velocity_5d', 'dollar_momentum_5d', 'hy_spread_momentum_5d',
     'eurusd_momentum_5d', 'jpyusd_momentum_5d', 'wti_momentum_5d',
@@ -1441,6 +1450,8 @@ async function run(): Promise<void> {
     const rrp = fredValues[IDX_RRP]
     const fedTargetLower = fredValues[IDX_FED_TARGET_LOWER]
     const fedTargetUpper = fredValues[IDX_FED_TARGET_UPPER]
+    const breakeven5y = fredValues[IDX_BREAKEVEN_5Y]
+    const breakeven10y = fredValues[IDX_BREAKEVEN_10Y]
     const epuDaily = fredValues[IDX_EPU_DAILY]
     const emuDaily = fredValues[IDX_EMU_DAILY]
     const epuOverall = fredValues[IDX_EPU_OVERALL]
@@ -1455,6 +1466,7 @@ async function run(): Promise<void> {
     // Real rate 10y: nominal 10Y minus TIPS 10Y
     const realRate10y = y10y != null && tips10y != null ? y10y - tips10y : null
     const fedLiquidity = fedAssets != null && rrp != null ? fedAssets - rrp * 1000 : null
+    const breakeven10yMinus5y = breakeven10y != null && breakeven5y != null ? breakeven10y - breakeven5y : null
 
     // Derived — velocity/regime features (from FRED arrays) — ALL stationary
     const fedMidpoint = fedTargetLower != null && fedTargetUpper != null
@@ -1468,6 +1480,8 @@ async function run(): Promise<void> {
     const igOas1dChange = deltaBack(igOasArr, i, barsPerDay)
     const hyOas1dChange = deltaBack(hyOasArr, i, barsPerDay)
     const tips10y1dChange = deltaBack(tips10yArr, i, barsPerDay)
+    const breakeven5y1dChange = deltaBack(breakeven5yArr, i, barsPerDay)
+    const breakeven10y1dChange = deltaBack(breakeven10yArr, i, barsPerDay)
     // 5d momentum (pct changes for prices, point deltas for rates)
     const dgs10Velocity5d = deltaBack(y10yArr, i, velocityLookback)
     const dollarMomentum5d = pctDeltaBack(dxyArr, i, velocityLookback)
@@ -1583,13 +1597,14 @@ async function run(): Promise<void> {
       macdLine, macdSignalVal, macdHist, macdHistColor, macdAboveSignal, macdHistRising,
       // Vol acceleration (3)
       volAccel, volRegime, volOfVolVal,
-      // FRED stationary — macro context (4)
-      yieldCurveSlope, creditSpreadDiff, realRate10y, fedLiquidity,
+      // FRED stationary — macro context (5)
+      yieldCurveSlope, creditSpreadDiff, realRate10y, fedLiquidity, breakeven10yMinus5y,
       // FRED stationary — bounded levels (2)
       fedMidpoint, vix,
-      // FRED stationary — 1d changes (8)
+      // FRED stationary — 1d changes (10)
       vix1dChange, y2y1dChange, y10y1dChange, y30y1dChange,
       sofr1dChange, igOas1dChange, hyOas1dChange, tips10y1dChange,
+      breakeven5y1dChange, breakeven10y1dChange,
       // FRED stationary — 5d momentum (6)
       dgs10Velocity5d, dollarMomentum5d, hySpreadMomentum5d,
       eurusdMomentum5d, jpyusdMomentum5d, wtiMomentum5d,
@@ -1717,10 +1732,11 @@ async function run(): Promise<void> {
   console.log(`[lean-dataset] Date range: ${rows[0][1]} → ${rows[rows.length - 1][1]}`)
 
   const derivedCols = [
-    'yield_curve_slope', 'credit_spread_diff', 'real_rate_10y', 'fed_liquidity',
+    'yield_curve_slope', 'credit_spread_diff', 'real_rate_10y', 'fed_liquidity', 'breakeven_10y_minus_5y',
     'fed_midpoint', 'fred_vix',
     'vix_1d_change', 'y2y_1d_change', 'y10y_1d_change', 'y30y_1d_change',
     'sofr_1d_change', 'ig_oas_1d_change', 'hy_oas_1d_change', 'tips10y_1d_change',
+    'breakeven_5y_1d_change', 'breakeven_10y_1d_change',
     'dgs10_velocity_5d', 'dollar_momentum_5d', 'hy_spread_momentum_5d',
     'eurusd_momentum_5d', 'jpyusd_momentum_5d', 'wti_momentum_5d',
     'vix_percentile_20d', 'claims_percentile_20d',
