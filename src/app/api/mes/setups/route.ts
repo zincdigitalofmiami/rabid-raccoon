@@ -39,7 +39,7 @@ export async function GET(): Promise<Response> {
     // 1. Fetch MES 15m candles (last 96 bars = 24 hours)
     const rows = await prisma.mktFuturesMes15m.findMany({
       orderBy: { eventTime: 'desc' },
-      take: 96,
+      take: 200,
     })
 
     if (rows.length < 10) {

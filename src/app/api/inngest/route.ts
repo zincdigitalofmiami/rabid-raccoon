@@ -19,10 +19,11 @@ import {
   ingestEconCommodities,
   ingestEconMoney,
   ingestEconIndexes,
-  // Events / News — 3 functions
+  // Events / News — 4 functions
   ingestEconCalendar,
   ingestNewsSignals,
   ingestAltNews,
+  ingestFredNews,
   // Signals — 1 function
   ingestMeasuredMoves,
   // Backfill — 1 function (event-triggered)
@@ -57,10 +58,11 @@ export const { GET, POST, PUT } = serve({
     ingestEconCommodities,
     ingestEconMoney,
     ingestEconIndexes,
-    // Events / News (15:00–17:00 UTC)
+    // Events / News (15:00–17:15 UTC)
     ingestEconCalendar,
     ingestNewsSignals,
     ingestAltNews,
+    ingestFredNews,    // daily at 17:15 UTC
     // Signals (18:00 UTC)
     ingestMeasuredMoves,
     // Backfill (event-triggered)

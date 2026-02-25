@@ -41,6 +41,29 @@ function asPoint(row: MesRow): MesPricePoint {
   }
 }
 
+/**
+ * CME Globex MES session: Sunday 5 PM CT → Friday 4 PM CT.
+ * Bars outside this window are closed-market artifacts — filter them out.
+ *
+ * CT offsets: CST = UTC-6 (Nov–Mar), CDT = UTC-5 (Mar–Nov).
+ * We use conservative UTC boundaries that work for both DST states.
+ */
+function isWeekendBar(date: Date): boolean {
+  const day = date.getUTCDay()   // 0=Sun, 6=Sat
+  const hour = date.getUTCHours()
+
+  // Saturday: always closed
+  if (day === 6) return true
+
+  // Sunday before 22:00 UTC (covers CDT open at 22:00 and CST open at 23:00)
+  if (day === 0 && hour < 22) return true
+
+  // Friday after 22:00 UTC (covers CST close at 22:00 and CDT close at 21:00)
+  if (day === 5 && hour >= 22) return true
+
+  return false
+}
+
 function rowFingerprint(row: MesRow): string {
   return [
     row.eventTime.getTime(),
@@ -56,7 +79,7 @@ export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url)
   const backfill = Number(url.searchParams.get('backfill') || '96')
   const backfillCount = Number.isFinite(backfill)
-    ? Math.max(20, Math.min(500, Math.trunc(backfill)))
+    ? Math.max(20, Math.min(1000, Math.trunc(backfill)))
     : 96
 
   const stream = new ReadableStream<Uint8Array>({
@@ -72,8 +95,8 @@ export async function GET(request: Request): Promise<Response> {
       }
 
       try {
-        await refreshMes15mFromDatabento({ force: true })
-
+        // Serve DB data immediately — don't block on Databento refresh
+        // Background refresh runs on first poll interval (60s)
         const initial = await prisma.mktFuturesMes15m.findMany({
           orderBy: { eventTime: 'desc' },
           take: backfillCount,
@@ -86,7 +109,7 @@ export async function GET(request: Request): Promise<Response> {
           return
         }
 
-        const sorted = [...initial].reverse()
+        const sorted = [...initial].reverse().filter((r) => !isWeekendBar(r.eventTime))
         for (const row of sorted) {
           knownRows.set(row.eventTime.getTime(), rowFingerprint(row))
         }
@@ -118,7 +141,7 @@ export async function GET(request: Request): Promise<Response> {
             return
           }
 
-          const sorted = [...latest].reverse()
+          const sorted = [...latest].reverse().filter((r) => !isWeekendBar(r.eventTime))
           const changed = sorted.filter((row) => {
             const key = row.eventTime.getTime()
             const next = rowFingerprint(row)

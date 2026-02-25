@@ -8,6 +8,7 @@ import {
   IChartApi,
   ISeriesApi,
   LineStyle,
+  TickMarkType,
   Time,
   UTCTimestamp,
 } from 'lightweight-charts'
@@ -35,6 +36,64 @@ const BAR_INTERVAL_SEC = 900 // 15m
 const GO_RECENT_BARS = 32
 const MAX_TOUCH_MARKERS = 1
 const MAX_HOOK_MARKERS = 1
+
+// ─── Gap-Free Time Mapping ──────────────────────────────────────────────────
+// TradingView removes session gaps (weekends, maintenance breaks) so bars
+// render continuously. Lightweight Charts positions bars by timestamp,
+// creating visible gaps. We remap to sequential times and use tickMarkFormatter
+// to display real CT timestamps on the axis.
+
+interface TimeMap {
+  realToGf: Map<number, number>
+  gfToReal: Map<number, number>
+  baseTime: number
+}
+
+function buildGapFreeMapping(points: MesPoint[]): {
+  gfPoints: MesPoint[]
+  map: TimeMap
+} {
+  if (points.length === 0) {
+    return { gfPoints: [], map: { realToGf: new Map(), gfToReal: new Map(), baseTime: 0 } }
+  }
+
+  const baseTime = points[0].time
+  const realToGf = new Map<number, number>()
+  const gfToReal = new Map<number, number>()
+
+  const gfPoints = points.map((p, i) => {
+    const gfTime = baseTime + i * BAR_INTERVAL_SEC
+    realToGf.set(p.time, gfTime)
+    gfToReal.set(gfTime, p.time)
+    return { ...p, time: gfTime }
+  })
+
+  return { gfPoints, map: { realToGf, gfToReal, baseTime } }
+}
+
+/** Format a real UTC timestamp for the time axis (Central Time) */
+function formatRealTime(realTimeSec: number, tickMarkType: TickMarkType): string {
+  const d = new Date(realTimeSec * 1000)
+  switch (tickMarkType) {
+    case TickMarkType.Year:
+      return d.toLocaleDateString('en-US', { year: 'numeric', timeZone: 'America/Chicago' })
+    case TickMarkType.Month:
+      return d.toLocaleDateString('en-US', { month: 'short', timeZone: 'America/Chicago' })
+    case TickMarkType.DayOfMonth:
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })
+    case TickMarkType.Time:
+    case TickMarkType.TimeWithSeconds:
+    default:
+      return d.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'America/Chicago',
+      })
+  }
+}
+
+// ─── Chart Helpers ──────────────────────────────────────────────────────────
 
 function toChartPoint(point: MesPoint) {
   return {
@@ -128,7 +187,13 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null)
   const primitiveRef = useRef<ForecastTargetsPrimitive | null>(null)
   const bhgPrimitiveRef = useRef<BhgMarkersPrimitive | null>(null)
+
+  // Gap-free points (sequential times for chart rendering)
   const pointsRef = useRef<MesPoint[]>([])
+  // Original real-time points (for fib calc, session stats, BHG time lookup)
+  const realPointsRef = useRef<MesPoint[]>([])
+  // Bidirectional time mapping: real ↔ gap-free
+  const timeMapRef = useRef<TimeMap>({ realToGf: new Map(), gfToReal: new Map(), baseTime: 0 })
 
   const [status, setStatus] = useState<StreamStatus>('connecting')
   const [error, setError] = useState<string | null>(null)
@@ -137,6 +202,17 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
   const [sessionHigh, setSessionHigh] = useState<number | null>(null)
   const [sessionLow, setSessionLow] = useState<number | null>(null)
 
+  /** Look up gap-free time for a real timestamp, snapping to nearest 15m bar */
+  const realToGapFree = (realTime: number | null | undefined): number | undefined => {
+    if (realTime == null) return undefined
+    const { realToGf } = timeMapRef.current
+    const exact = realToGf.get(realTime)
+    if (exact != null) return exact
+    // Snap to nearest 15m boundary
+    const snapped = Math.round(realTime / BAR_INTERVAL_SEC) * BAR_INTERVAL_SEC
+    return realToGf.get(snapped)
+  }
+
   // Get the best active measured move from the forecast
   const activeMove = useMemo<MeasuredMove | null>(() => {
     if (!forecast?.measuredMoves) return null
@@ -144,8 +220,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
     return active.length > 0 ? active[0] : null
   }, [forecast])
 
+  // Use real (original) last time for setup selection — setup times are real timestamps
   const chartSetups = useMemo(
-    () => selectSetupsForChart(setups ?? [], pointsRef.current[pointsRef.current.length - 1]?.time ?? null),
+    () => selectSetupsForChart(setups ?? [], realPointsRef.current[realPointsRef.current.length - 1]?.time ?? null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- lastPrice triggers recalc when pointsRef updates
     [setups, lastPrice]
   )
@@ -187,12 +264,34 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
       },
       timeScale: {
         borderColor: 'transparent',
-        timeVisible: false,
+        timeVisible: true,
         fixLeftEdge: false,
         fixRightEdge: false,
         rightOffset: 16,
-        barSpacing: 8,
-        minBarSpacing: 4,
+        barSpacing: 14,
+        minBarSpacing: 6,
+        // Map gap-free sequential times → real CT timestamps for axis labels
+        tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) => {
+          const realTime = timeMapRef.current.gfToReal.get(time as number)
+          if (realTime == null) return ''
+          return formatRealTime(realTime, tickMarkType)
+        },
+      },
+      localization: {
+        // Crosshair tooltip — show real CT date/time
+        timeFormatter: (time: Time) => {
+          const realTime = timeMapRef.current.gfToReal.get(time as number)
+          if (realTime == null) return ''
+          const d = new Date(realTime * 1000)
+          return d.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+            timeZone: 'America/Chicago',
+          })
+        },
       },
       crosshair: {
         vertLine: {
@@ -269,7 +368,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
 
   // --- SSE stream ---
   useEffect(() => {
-    const eventSource = new EventSource('/api/live/mes15m?backfill=384')
+    const eventSource = new EventSource('/api/live/mes15m?backfill=672')
 
     const updateSessionStats = (points: MesPoint[]) => {
       if (points.length === 0) return
@@ -297,27 +396,38 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
       try {
         const data = JSON.parse(event.data) as { points: MesPoint[] }
         if (!seriesRef.current) return
-        const points = data.points || []
-        if (points.length === 0) return
+        const rawPoints = data.points || []
+        if (rawPoints.length === 0) return
 
-        pointsRef.current = points
+        // Store original real-time points (for fib calc, stats, setup selection)
+        realPointsRef.current = rawPoints
 
-        // Add whitespace for future target zones
-        const lastTime = points[points.length - 1].time
-        const whitespace = ensureFutureWhitespace(lastTime, BAR_INTERVAL_SEC, 8)
-        const chartData = [...points.map(toChartPoint), ...whitespace]
+        // Build gap-free mapping: sequential times, no session gaps
+        const { gfPoints, map } = buildGapFreeMapping(rawPoints)
+        timeMapRef.current = map
+        pointsRef.current = gfPoints
+
+        // Add whitespace for future target zones (extends gap-free sequence)
+        const lastGfTime = gfPoints[gfPoints.length - 1].time
+        const lastRealTime = rawPoints[rawPoints.length - 1].time
+        const whitespace = ensureFutureWhitespace(lastGfTime, BAR_INTERVAL_SEC, 16)
+
+        // Register whitespace times in the map so axis labels render correctly
+        for (let i = 0; i < whitespace.length; i++) {
+          const wsGfTime = whitespace[i].time as number
+          const wsRealTime = lastRealTime + BAR_INTERVAL_SEC * (i + 1)
+          map.gfToReal.set(wsGfTime, wsRealTime)
+          map.realToGf.set(wsRealTime, wsGfTime)
+        }
+
+        const chartData = [...gfPoints.map(toChartPoint), ...whitespace]
         seriesRef.current.setData(chartData)
 
-        updateSessionStats(points)
+        updateSessionStats(rawPoints)
 
-        // V15 spec: show last 150 bars initially, scrollable to see more
-        const totalBars = points.length
-        const INITIAL_VISIBLE_BARS = 150
-        const RIGHT_PADDING_BARS = 16
-        chartRef.current?.timeScale().setVisibleLogicalRange({
-          from: Math.max(0, totalBars - INITIAL_VISIBLE_BARS),
-          to: totalBars - 1 + RIGHT_PADDING_BARS,
-        })
+        // Scroll to right edge with configured barSpacing preserved (no compression)
+        // scrollToPosition(offset, false) = scroll so the right edge has `offset` bars of whitespace
+        chartRef.current?.timeScale().scrollToPosition(16, false)
 
         setStatus('live')
         setError(null)
@@ -334,13 +444,38 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
         const updates = data.points || []
         if (updates.length === 0) return
 
-        const byTime = new Map(pointsRef.current.map((p) => [p.time, p] as const))
+        // Merge updates into existing real points
+        const realByTime = new Map(realPointsRef.current.map((p) => [p.time, p] as const))
         for (const point of updates) {
-          byTime.set(point.time, point)
-          seriesRef.current.update(toChartPoint(point))
+          realByTime.set(point.time, point)
         }
-        pointsRef.current = [...byTime.values()].sort((a, b) => a.time - b.time)
-        updateSessionStats(pointsRef.current)
+        const newRealPoints = [...realByTime.values()].sort((a, b) => a.time - b.time)
+        realPointsRef.current = newRealPoints
+
+        // Rebuild gap-free mapping from scratch (avoids whitespace conflict with update())
+        const { gfPoints, map } = buildGapFreeMapping(newRealPoints)
+        timeMapRef.current = map
+        pointsRef.current = gfPoints
+
+        // Rebuild whitespace for future target zones
+        const lastGfTime = gfPoints[gfPoints.length - 1].time
+        const lastRealTime = newRealPoints[newRealPoints.length - 1].time
+        const whitespace = ensureFutureWhitespace(lastGfTime, BAR_INTERVAL_SEC, 16)
+        for (let i = 0; i < whitespace.length; i++) {
+          const wsGfTime = whitespace[i].time as number
+          const wsRealTime = lastRealTime + BAR_INTERVAL_SEC * (i + 1)
+          map.gfToReal.set(wsGfTime, wsRealTime)
+          map.realToGf.set(wsRealTime, wsGfTime)
+        }
+
+        // Preserve scroll position across setData
+        const range = chartRef.current?.timeScale().getVisibleLogicalRange()
+        seriesRef.current.setData([...gfPoints.map(toChartPoint), ...whitespace])
+        if (range) {
+          chartRef.current?.timeScale().setVisibleLogicalRange(range)
+        }
+
+        updateSessionStats(newRealPoints)
         setStatus('live')
         setError(null)
       } catch (e) {
@@ -374,18 +509,19 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
       return
     }
 
-    const points = pointsRef.current
-    const lastTime = points[points.length - 1].time
-    const futureEnd = lastTime + BAR_INTERVAL_SEC * 8
+    // Gap-free times for chart positioning
+    const gfPoints = pointsRef.current
+    const lastGfTime = gfPoints[gfPoints.length - 1].time
+    const futureEnd = lastGfTime + BAR_INTERVAL_SEC * 16
 
-    // Run fib calculation on candle data for snap-blend alignment (multi-period confluence)
-    const candles = points.map(toCandle)
+    // Fib calculation uses real candle data (not gap-free)
+    const candles = realPointsRef.current.map(toCandle)
     const fib = calculateFibonacciMultiPeriod(candles)
 
     const targets = mapMeasuredMoveAndCoreToTargets(
       activeMove,
       fib,
-      lastTime,
+      lastGfTime,
       futureEnd
     )
 
@@ -401,14 +537,23 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
       return
     }
 
-    const lastTime = pointsRef.current[pointsRef.current.length - 1].time
+    const lastGfTime = pointsRef.current[pointsRef.current.length - 1].time
+
+    // Map setup real times → gap-free times for chart rendering
+    const mappedSetups = chartSetups.map((s) => ({
+      ...s,
+      touchTime: s.touchTime != null ? (realToGapFree(s.touchTime) ?? s.touchTime) : s.touchTime,
+      hookTime: s.hookTime != null ? (realToGapFree(s.hookTime) ?? s.hookTime) : s.hookTime,
+      goTime: s.goTime != null ? (realToGapFree(s.goTime) ?? s.goTime) : s.goTime,
+    }))
 
     bhgPrimitiveRef.current.setMarkers({
-      setups: chartSetups,
-      lastTime,
-      futureBars: 8,
+      setups: mappedSetups,
+      lastTime: lastGfTime,
+      futureBars: 16,
       barInterval: BAR_INTERVAL_SEC,
     })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartSetups, lastPrice])
 
   const changeColor = priceChange >= 0 ? TV.bull.bright : TV.bear.bright

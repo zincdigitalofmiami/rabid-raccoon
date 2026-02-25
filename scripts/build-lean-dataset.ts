@@ -1194,7 +1194,7 @@ async function run(): Promise<void> {
   // Forward target horizons depend on timeframe
   const targetHorizons = timeframe === '15m'
     ? { '15m': 1, '1h': 4, '4h': 16 }
-    : { '1h': 1, '4h': 4 }
+    : { '1h': 1, '4h': 4, '1d': 24, '1w': 120 }
   const targetCols = Object.keys(targetHorizons).map(h => `target_ret_${h}`)
   // Directional classification targets (1=up, 0=down/flat)
   const targetDirCols = Object.keys(targetHorizons).map(h => `target_dir_${h}`)

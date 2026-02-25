@@ -62,6 +62,14 @@ function hardFail(message: string): never {
   throw new Error(`FULL_2Y_REQUIRED_VIOLATION: ${message}`)
 }
 
+const VALID_DRY_RUN_VALUES = ['true', 'false', '1', '0']
+
+function validateDryRunValue(raw: string): void {
+  if (!VALID_DRY_RUN_VALUES.includes(raw.toLowerCase())) {
+    hardFail(`Invalid --dry-run value (${raw}). Use true/false.`)
+  }
+}
+
 function assertNoForbiddenOverrides(): boolean {
   const args = process.argv.slice(2)
   for (let i = 0; i < args.length; i++) {
@@ -69,19 +77,13 @@ function assertNoForbiddenOverrides(): boolean {
     if (arg === '--dry-run') {
       const next = args[i + 1]
       if (next && !next.startsWith('--')) {
-        const normalized = next.toLowerCase()
-        if (!['true', 'false', '1', '0'].includes(normalized)) {
-          hardFail(`Invalid --dry-run value (${next}). Use true/false.`)
-        }
+        validateDryRunValue(next)
         i += 1
       }
       continue
     }
     if (arg.startsWith('--dry-run=')) {
-      const value = arg.slice('--dry-run='.length).toLowerCase()
-      if (!['true', 'false', '1', '0'].includes(value)) {
-        hardFail(`Invalid --dry-run value (${value}). Use true/false.`)
-      }
+      validateDryRunValue(arg.slice('--dry-run='.length))
       continue
     }
     hardFail(`No overrides allowed (${arg}). No shortcuts allowed, reloading aborted.`)
@@ -158,25 +160,49 @@ function sanitizeCandles(candles: ReturnType<typeof toCandles>): ReturnType<type
 }
 
 function hasInvalidRealData(candles: ReturnType<typeof toCandles>): boolean {
-  return candles.some(
-    (row) =>
-      !Number.isFinite(row.open) ||
-      !Number.isFinite(row.high) ||
-      !Number.isFinite(row.low) ||
-      !Number.isFinite(row.close) ||
-      row.open <= 0 ||
-      row.high <= 0 ||
-      row.low <= 0 ||
-      row.close <= 0 ||
-      !Number.isFinite(row.volume || NaN) ||
-      (row.volume || 0) <= 0
-  )
+  return candles.some(isInvalidCandle)
 }
 
 function hashPriceRow(symbolCode: string, eventTime: Date, close: number): string {
   return createHash('sha256')
     .update(`${symbolCode}|${eventTime.toISOString()}|${close}`)
     .digest('hex')
+}
+
+function isInvalidCandle(row: ReturnType<typeof toCandles>[number]): boolean {
+  if (!Number.isFinite(row.open) || !Number.isFinite(row.high) || !Number.isFinite(row.low) || !Number.isFinite(row.close)) return true
+  if (row.open <= 0 || row.high <= 0 || row.low <= 0 || row.close <= 0) return true
+  return !Number.isFinite(row.volume || NaN) || (row.volume || 0) <= 0
+}
+
+function buildMesPriceRow(candle: ReturnType<typeof toCandles>[number], dataset: string, sourceSchema: string): Prisma.MktFuturesMes1hCreateManyInput {
+  const eventTime = asUtcDateFromUnixSeconds(candle.time)
+  return {
+    eventTime, open: candle.open, high: candle.high, low: candle.low, close: candle.close,
+    volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
+    source: 'DATABENTO', sourceDataset: dataset, sourceSchema,
+    rowHash: hashPriceRow('MES', eventTime, candle.close),
+  }
+}
+
+function buildNonMesPriceRow(symbolCode: string, candle: ReturnType<typeof toCandles>[number], dataset: string, sourceSchema: string): Prisma.MktFutures1dCreateManyInput {
+  const eventTime = asUtcDateFromUnixSeconds(candle.time)
+  return {
+    symbolCode, eventDate: startOfUtcDay(eventTime),
+    open: candle.open, high: candle.high, low: candle.low, close: candle.close,
+    volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
+    source: 'DATABENTO', sourceDataset: dataset, sourceSchema,
+    rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
+  }
+}
+
+async function batchInsertMany<T>(rows: T[], writer: (batch: T[]) => Promise<{ count: number }>): Promise<number> {
+  let inserted = 0
+  for (let i = 0; i < rows.length; i += INGEST_CONFIG.INSERT_BATCH_SIZE) {
+    const result = await writer(rows.slice(i, i + INGEST_CONFIG.INSERT_BATCH_SIZE))
+    inserted += result.count
+  }
+  return inserted
 }
 
 async function upsertDataSourceRegistry(): Promise<void> {
@@ -285,65 +311,21 @@ async function insertCandlesForSymbol(
   candles: ReturnType<typeof aggregateCandles>,
   dryRun: boolean
 ): Promise<{ processed: number; inserted: number }> {
-  let inserted = 0
   const processed = candles.length
-  if (dryRun || processed === 0) return { processed, inserted }
+  if (dryRun || processed === 0) return { processed, inserted: 0 }
 
   if (symbolCode === 'MES') {
-    const rows: Prisma.MktFuturesMes1hCreateManyInput[] = candles.map((candle) => {
-      const eventTime = asUtcDateFromUnixSeconds(candle.time)
-      return {
-        eventTime,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
-        source: 'DATABENTO',
-        sourceDataset: dataset,
-        sourceSchema,
-        rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
-      }
-    })
-
-    for (let i = 0; i < rows.length; i += INGEST_CONFIG.INSERT_BATCH_SIZE) {
-      const batch = rows.slice(i, i + INGEST_CONFIG.INSERT_BATCH_SIZE)
-      const result = await prisma.mktFuturesMes1h.createMany({
-        data: batch,
-        skipDuplicates: true,
-      })
-      inserted += result.count
-    }
+    const rows = candles.map((c) => buildMesPriceRow(c, dataset, sourceSchema))
+    const inserted = await batchInsertMany(rows, (batch) =>
+      prisma.mktFuturesMes1h.createMany({ data: batch, skipDuplicates: true })
+    )
     return { processed, inserted }
   }
 
-  const rows: Prisma.MktFutures1dCreateManyInput[] = candles.map((candle) => {
-    const eventTime = asUtcDateFromUnixSeconds(candle.time)
-    const eventDate = startOfUtcDay(eventTime)
-    return {
-      symbolCode,
-      eventDate,
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-      volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
-      source: 'DATABENTO',
-      sourceDataset: dataset,
-      sourceSchema,
-      rowHash: hashPriceRow(symbolCode, eventTime, candle.close),
-    }
-  })
-
-  for (let i = 0; i < rows.length; i += INGEST_CONFIG.INSERT_BATCH_SIZE) {
-    const batch = rows.slice(i, i + INGEST_CONFIG.INSERT_BATCH_SIZE)
-    const result = await prisma.mktFutures1d.createMany({
-      data: batch,
-      skipDuplicates: true,
-    })
-    inserted += result.count
-  }
-
+  const rows = candles.map((c) => buildNonMesPriceRow(symbolCode, c, dataset, sourceSchema))
+  const inserted = await batchInsertMany(rows, (batch) =>
+    prisma.mktFutures1d.createMany({ data: batch, skipDuplicates: true })
+  )
   return { processed, inserted }
 }
 

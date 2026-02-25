@@ -145,6 +145,57 @@ async function insertDomainRows(
   return 0
 }
 
+interface IndicatorJob {
+  seriesId: string
+  displayName: string
+  domain: MacroDomain
+  source: MacroSource
+  sourceSymbol: string
+  frequency: string
+  units: string
+  fetcher: () => Promise<CandleData[]>
+}
+
+interface IndicatorResult {
+  processed: number
+  inserted: number
+}
+
+async function processIndicator(job: IndicatorJob, dryRun: boolean): Promise<IndicatorResult> {
+  console.log(`[macro] ingesting ${job.seriesId}`)
+  const candles = await job.fetcher()
+  const rows = candlesToValueRows(job.seriesId, candles, job.source)
+
+  if (dryRun) return { processed: rows.length, inserted: 0 }
+
+  await prisma.economicSeries.upsert({
+    where: { seriesId: job.seriesId },
+    create: {
+      seriesId: job.seriesId,
+      displayName: job.displayName,
+      category: seriesCategoryForDomain(job.domain),
+      source: job.source,
+      sourceSymbol: job.sourceSymbol,
+      frequency: job.frequency,
+      units: job.units,
+      isActive: true,
+      metadata: toJson({ providerSymbol: job.sourceSymbol, domainTable: job.domain }),
+    },
+    update: {
+      displayName: job.displayName,
+      category: seriesCategoryForDomain(job.domain),
+      source: job.source,
+      sourceSymbol: job.sourceSymbol,
+      frequency: job.frequency,
+      units: job.units,
+      isActive: true,
+      metadata: toJson({ providerSymbol: job.sourceSymbol, domainTable: job.domain }),
+    },
+  })
+
+  const inserted = await insertDomainRows(job.domain, job.sourceSymbol, rows)
+  return { processed: rows.length, inserted }
+}
 
 export async function runIngestMacroIndicators(options?: MacroIngestOptions): Promise<MacroIngestSummary> {
   loadDotEnvFiles()
@@ -177,16 +228,7 @@ export async function runIngestMacroIndicators(options?: MacroIngestOptions): Pr
     .slice(0, 10)
   const endDate = now.toISOString().slice(0, 10)
 
-  const jobs: Array<{
-    seriesId: string
-    displayName: string
-    domain: MacroDomain
-    source: MacroSource
-    sourceSymbol: string
-    frequency: string
-    units: string
-    fetcher: () => Promise<CandleData[]>
-  }> = [
+  const jobs: IndicatorJob[] = [
     {
       seriesId: 'VIXCLS',
       displayName: 'CBOE Volatility Index',
@@ -236,38 +278,9 @@ export async function runIngestMacroIndicators(options?: MacroIngestOptions): Pr
 
     for (const job of jobs) {
       try {
-        console.log(`[macro] ingesting ${job.seriesId}`)
-        const candles = await job.fetcher()
-        const rows = candlesToValueRows(job.seriesId, candles, job.source)
-        rowsProcessed += rows.length
-        if (!dryRun) {
-          await prisma.economicSeries.upsert({
-            where: { seriesId: job.seriesId },
-            create: {
-              seriesId: job.seriesId,
-              displayName: job.displayName,
-              category: seriesCategoryForDomain(job.domain),
-              source: job.source,
-              sourceSymbol: job.sourceSymbol,
-              frequency: job.frequency,
-              units: job.units,
-              isActive: true,
-              metadata: toJson({ providerSymbol: job.sourceSymbol, domainTable: job.domain }),
-            },
-            update: {
-              displayName: job.displayName,
-              category: seriesCategoryForDomain(job.domain),
-              source: job.source,
-              sourceSymbol: job.sourceSymbol,
-              frequency: job.frequency,
-              units: job.units,
-              isActive: true,
-              metadata: toJson({ providerSymbol: job.sourceSymbol, domainTable: job.domain }),
-            },
-          })
-
-          rowsInserted += await insertDomainRows(job.domain, job.sourceSymbol, rows)
-        }
+        const result = await processIndicator(job, dryRun)
+        rowsProcessed += result.processed
+        rowsInserted += result.inserted
         indicatorsProcessed.push(job.seriesId)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

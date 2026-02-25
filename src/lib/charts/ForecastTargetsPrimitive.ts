@@ -219,26 +219,9 @@ export class ForecastTargetsPrimitive implements ISeriesPrimitive<Time> {
   }
 
   autoscaleInfo(): AutoscaleInfo | null {
-    if (this._targets.length === 0) return null
-
-    let min = Infinity
-    let max = -Infinity
-
-    for (const t of this._targets) {
-      const lo = t.price - t.bandHalfWidth
-      const hi = t.price + t.bandHalfWidth
-      if (lo < min) min = lo
-      if (hi > max) max = hi
-    }
-
-    if (min === Infinity) return null
-
-    return {
-      priceRange: {
-        minValue: min,
-        maxValue: max,
-      },
-    }
+    // V15 pattern: autoscale follows candle data, not overlay indicators.
+    // Target levels are shown on the price-axis labels and future lines only.
+    return null
   }
 }
 

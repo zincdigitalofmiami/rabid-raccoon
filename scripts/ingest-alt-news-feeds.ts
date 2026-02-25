@@ -341,6 +341,92 @@ async function upsertRegistry(): Promise<void> {
   })
 }
 
+function buildEconRow(feed: FeedConfig, item: ParsedItem, eventDate: Date, rowHash: string, tags: string[]): Prisma.EconNews1dCreateManyInput {
+  return {
+    articleId: item.articleId, eventDate, publishedAt: item.publishedAt,
+    headline: item.title, summary: item.summary || item.content, content: item.content || item.summary,
+    source: feed.source, author: item.author, url: item.link,
+    topics: item.categories, subjects: [], tags, rowHash,
+    rawPayload: toJson({ importedFrom: feed.url, feedId: feed.id }),
+  }
+}
+
+function buildPolicyRow(feed: FeedConfig, item: ParsedItem, eventDate: Date, rowHash: string, tags: string[]): Prisma.PolicyNews1dCreateManyInput {
+  return {
+    eventDate, publishedAt: item.publishedAt, headline: item.title,
+    summary: item.summary || item.content, source: feed.source,
+    region: feed.country === 'EU' ? 'Europe' : 'United States',
+    country: feed.country || null, url: item.link, tags, rowHash,
+    rawPayload: toJson({ importedFrom: feed.url, feedId: feed.id }),
+  }
+}
+
+function buildReportRow(feed: FeedConfig, item: ParsedItem, eventDate: Date): Prisma.MacroReport1dCreateManyInput {
+  return {
+    reportCode: `${feed.id}-${shortHash(item.title)}`.slice(0, 50),
+    reportName: item.title.slice(0, 200),
+    category: inferReportCategory(item.title),
+    eventDate, releaseTime: item.publishedAt,
+    periodLabel: null, actual: null, forecast: null, previous: null,
+    revised: null, surprise: null, surprisePct: null, unit: null,
+    source: feed.source, country: feed.country || null,
+    rowHash: hashKey(`report|${feed.id}|${item.title}|${eventDate.toISOString().slice(0, 10)}`),
+    rawPayload: toJson({ importedFrom: feed.url, feedId: feed.id, articleId: item.articleId, url: item.link }),
+  }
+}
+
+async function processAltNewsFeed(feed: FeedConfig): Promise<FeedStats> {
+  const feedStats: FeedStats = { fetchedItems: 0, parsedItems: 0, econInserted: 0, policyInserted: 0, reportInserted: 0, errors: [] }
+
+  try {
+    const xml = await fetchFeedXml(feed.url)
+    const parsedItems = parseRssLikeItems(xml)
+    feedStats.fetchedItems = parsedItems.length
+    feedStats.parsedItems = parsedItems.length
+
+    const econRows: Prisma.EconNews1dCreateManyInput[] = []
+    const policyRows: Prisma.PolicyNews1dCreateManyInput[] = []
+    const reportRows: Prisma.MacroReport1dCreateManyInput[] = []
+
+    for (const item of parsedItems) {
+      const eventDate = normalizeDateOnly(item.publishedAt || new Date())
+      const rowHash = buildRowHash(feed.id, item, eventDate)
+      const tags = [...new Set([...feed.tags, ...item.categories, `source_feed:${feed.id}`])]
+
+      if (feed.kind === 'econ') {
+        econRows.push(buildEconRow(feed, item, eventDate, rowHash, tags))
+      } else {
+        policyRows.push(buildPolicyRow(feed, item, eventDate, rowHash, tags))
+      }
+
+      if (feed.writeMacroReport) {
+        reportRows.push(buildReportRow(feed, item, eventDate))
+      }
+    }
+
+    if (econRows.length > 0) {
+      feedStats.econInserted = await createManyBatched(econRows, async (batch) =>
+        (await prisma.econNews1d.createMany({ data: batch, skipDuplicates: true })).count
+      )
+    }
+    if (policyRows.length > 0) {
+      feedStats.policyInserted = await createManyBatched(policyRows, async (batch) =>
+        (await prisma.policyNews1d.createMany({ data: batch, skipDuplicates: true })).count
+      )
+    }
+    if (reportRows.length > 0) {
+      feedStats.reportInserted = await createManyBatched(reportRows, async (batch) =>
+        (await prisma.macroReport1d.createMany({ data: batch, skipDuplicates: true })).count
+      )
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    feedStats.errors.push(message.slice(0, 400))
+  }
+
+  return feedStats
+}
+
 export async function runIngestAltNewsFeeds(): Promise<RunStats> {
   loadDotEnvFiles()
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
@@ -351,141 +437,18 @@ export async function runIngestAltNewsFeeds(): Promise<RunStats> {
     data: {
       job: 'alt-news-rss-sync',
       status: 'RUNNING',
-      details: toJson({
-        feedCount: FEEDS.length,
-        feedIds: FEEDS.map((f) => f.id),
-      }),
+      details: toJson({ feedCount: FEEDS.length, feedIds: FEEDS.map((f) => f.id) }),
     },
   })
 
   const stats: RunStats = {
     feeds: {},
-    totals: {
-      fetchedItems: 0,
-      parsedItems: 0,
-      econInserted: 0,
-      policyInserted: 0,
-      reportInserted: 0,
-    },
+    totals: { fetchedItems: 0, parsedItems: 0, econInserted: 0, policyInserted: 0, reportInserted: 0 },
   }
 
   try {
     for (const feed of FEEDS) {
-      const feedStats: FeedStats = {
-        fetchedItems: 0,
-        parsedItems: 0,
-        econInserted: 0,
-        policyInserted: 0,
-        reportInserted: 0,
-        errors: [],
-      }
-
-      try {
-        const xml = await fetchFeedXml(feed.url)
-        const parsedItems = parseRssLikeItems(xml)
-        feedStats.fetchedItems = parsedItems.length
-        feedStats.parsedItems = parsedItems.length
-
-        const econRows: Prisma.EconNews1dCreateManyInput[] = []
-        const policyRows: Prisma.PolicyNews1dCreateManyInput[] = []
-        const reportRows: Prisma.MacroReport1dCreateManyInput[] = []
-
-        for (const item of parsedItems) {
-          const publishedAt = item.publishedAt
-          const eventDate = normalizeDateOnly(publishedAt || new Date())
-          const rowHash = buildRowHash(feed.id, item, eventDate)
-          const tags = [...new Set([...feed.tags, ...item.categories, `source_feed:${feed.id}`])]
-
-          if (feed.kind === 'econ') {
-            econRows.push({
-              articleId: item.articleId,
-              eventDate,
-              publishedAt,
-              headline: item.title,
-              summary: item.summary || item.content,
-              content: item.content || item.summary,
-              source: feed.source,
-              author: item.author,
-              url: item.link,
-              topics: item.categories,
-              subjects: [],
-              tags,
-              rowHash,
-              rawPayload: toJson({
-                importedFrom: feed.url,
-                feedId: feed.id,
-              }),
-            })
-          } else {
-            policyRows.push({
-              eventDate,
-              publishedAt,
-              headline: item.title,
-              summary: item.summary || item.content,
-              source: feed.source,
-              region: feed.country === 'EU' ? 'Europe' : 'United States',
-              country: feed.country || null,
-              url: item.link,
-              tags,
-              rowHash,
-              rawPayload: toJson({
-                importedFrom: feed.url,
-                feedId: feed.id,
-              }),
-            })
-          }
-
-          if (feed.writeMacroReport) {
-            const reportCode = `${feed.id}-${shortHash(item.title)}`.slice(0, 50)
-            reportRows.push({
-              reportCode,
-              reportName: item.title.slice(0, 200),
-              category: inferReportCategory(item.title),
-              eventDate,
-              releaseTime: publishedAt,
-              periodLabel: null,
-              actual: null,
-              forecast: null,
-              previous: null,
-              revised: null,
-              surprise: null,
-              surprisePct: null,
-              unit: null,
-              source: feed.source,
-              country: feed.country || null,
-              rowHash: hashKey(`report|${feed.id}|${item.title}|${eventDate.toISOString().slice(0, 10)}`),
-              rawPayload: toJson({
-                importedFrom: feed.url,
-                feedId: feed.id,
-                articleId: item.articleId,
-                url: item.link,
-              }),
-            })
-          }
-        }
-
-        if (econRows.length > 0) {
-          feedStats.econInserted = await createManyBatched(econRows, async (batch) =>
-            (await prisma.econNews1d.createMany({ data: batch, skipDuplicates: true })).count
-          )
-        }
-
-        if (policyRows.length > 0) {
-          feedStats.policyInserted = await createManyBatched(policyRows, async (batch) =>
-            (await prisma.policyNews1d.createMany({ data: batch, skipDuplicates: true })).count
-          )
-        }
-
-        if (reportRows.length > 0) {
-          feedStats.reportInserted = await createManyBatched(reportRows, async (batch) =>
-            (await prisma.macroReport1d.createMany({ data: batch, skipDuplicates: true })).count
-          )
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        feedStats.errors.push(message.slice(0, 400))
-      }
-
+      const feedStats = await processAltNewsFeed(feed)
       stats.feeds[feed.id] = feedStats
       stats.totals.fetchedItems += feedStats.fetchedItems
       stats.totals.parsedItems += feedStats.parsedItems

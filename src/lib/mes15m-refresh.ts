@@ -139,41 +139,45 @@ export async function refreshMes15mFromDatabento(options?: {
       }
     }
 
+    // Batch upserts in chunked transactions (Accelerate has 5s timeout per tx)
+    const BATCH_SIZE = 40
     let rowsUpserted = 0
-    for (const candle of candles15m) {
-      const eventTime = asUtcDateFromUnixSeconds(candle.time)
-      const payload: Prisma.MktFuturesMes15mCreateInput = {
-        eventTime,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
-        source: 'DATABENTO',
-        sourceDataset: MES_DATASET,
-        sourceSchema: `${SOURCE_SCHEMA}->15m`,
-        rowHash: hashPriceRow(eventTime, candle.close),
-      }
-
-      await prisma.mktFuturesMes15m.upsert({
-        where: { eventTime },
-        create: payload,
-        update: {
-          open: payload.open,
-          high: payload.high,
-          low: payload.low,
-          close: payload.close,
-          volume: payload.volume,
-          source: payload.source,
-          sourceDataset: payload.sourceDataset,
-          sourceSchema: payload.sourceSchema,
-          rowHash: payload.rowHash,
-          ingestedAt: new Date(),
-          knowledgeTime: new Date(),
-        },
+    for (let i = 0; i < candles15m.length; i += BATCH_SIZE) {
+      const batch = candles15m.slice(i, i + BATCH_SIZE)
+      const ops = batch.map((candle) => {
+        const eventTime = asUtcDateFromUnixSeconds(candle.time)
+        const payload: Prisma.MktFuturesMes15mCreateInput = {
+          eventTime,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
+          source: 'DATABENTO',
+          sourceDataset: MES_DATASET,
+          sourceSchema: `${SOURCE_SCHEMA}->15m`,
+          rowHash: hashPriceRow(eventTime, candle.close),
+        }
+        return prisma.mktFuturesMes15m.upsert({
+          where: { eventTime },
+          create: payload,
+          update: {
+            open: payload.open,
+            high: payload.high,
+            low: payload.low,
+            close: payload.close,
+            volume: payload.volume,
+            source: payload.source,
+            sourceDataset: payload.sourceDataset,
+            sourceSchema: payload.sourceSchema,
+            rowHash: payload.rowHash,
+            ingestedAt: new Date(),
+            knowledgeTime: new Date(),
+          },
+        })
       })
-
-      rowsUpserted += 1
+      await prisma.$transaction(ops)
+      rowsUpserted += ops.length
     }
 
     return {

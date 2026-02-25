@@ -42,6 +42,105 @@ function directionToPrisma(direction: string): SignalDirection {
   return direction === 'BEARISH' ? SignalDirection.BEARISH : SignalDirection.BULLISH
 }
 
+function dbRowToCandle(row: { eventTime: Date; open: Parameters<typeof toNum>[0]; high: Parameters<typeof toNum>[0]; low: Parameters<typeof toNum>[0]; close: Parameters<typeof toNum>[0]; volume: bigint | null }): CandleData {
+  return {
+    time: Math.floor(row.eventTime.getTime() / 1000),
+    open: toNum(row.open),
+    high: toNum(row.high),
+    low: toNum(row.low),
+    close: toNum(row.close),
+    volume: row.volume ? Number(row.volume) : 0,
+  }
+}
+
+async function loadMesCandles(start: Date): Promise<CandleData[]> {
+  const rows = await prisma.mktFuturesMes1h.findMany({
+    where: { eventTime: { gte: start } },
+    orderBy: { eventTime: 'asc' },
+    select: { eventTime: true, open: true, high: true, low: true, close: true, volume: true },
+  })
+  return rows.map(dbRowToCandle)
+}
+
+async function loadNonMesCandles(symbolCodes: string[], start: Date): Promise<Map<string, CandleData[]>> {
+  const perSymbol = new Map<string, CandleData[]>()
+  if (symbolCodes.length === 0) return perSymbol
+
+  const rows = await prisma.mktFutures1h.findMany({
+    where: { eventTime: { gte: start }, symbolCode: { in: symbolCodes } },
+    orderBy: [{ symbolCode: 'asc' }, { eventTime: 'asc' }],
+    select: { symbolCode: true, eventTime: true, open: true, high: true, low: true, close: true, volume: true },
+  })
+
+  for (const row of rows) {
+    const list = perSymbol.get(row.symbolCode) || []
+    list.push(dbRowToCandle(row))
+    perSymbol.set(row.symbolCode, list)
+  }
+  return perSymbol
+}
+
+function buildSignalRow(
+  symbolCode: string,
+  tfPrisma: ReturnType<typeof timeframeToPrisma>,
+  move: ReturnType<typeof detectMeasuredMoves>[number]
+): Prisma.MeasuredMoveSignalCreateManyInput {
+  const impulse = Math.abs(move.pointB.price - move.pointA.price)
+  const target1236 = move.direction === 'BULLISH'
+    ? move.pointC.price + impulse * 1.236
+    : move.pointC.price - impulse * 1.236
+
+  return {
+    symbolCode,
+    timeframe: tfPrisma,
+    timestamp: new Date(move.pointC.time * 1000),
+    direction: directionToPrisma(move.direction),
+    status: statusToPrisma(move.status),
+    pointA: move.pointA.price,
+    pointB: move.pointB.price,
+    pointC: move.pointC.price,
+    entry: move.entry,
+    stop: move.stop,
+    target100: move.target,
+    target1236,
+    retracementRatio: move.retracementRatio,
+    quality: move.quality,
+    source: 'halsey',
+  }
+}
+
+interface SymbolSignalResult {
+  processed: number
+  inserted: number
+  error?: string
+}
+
+async function processSymbolSignals(
+  symbolCode: string,
+  candles: CandleData[],
+  tfPrisma: ReturnType<typeof timeframeToPrisma>,
+  dryRun: boolean
+): Promise<SymbolSignalResult> {
+  if (candles.length < 30) {
+    return { processed: 0, inserted: 0, error: `Not enough candles (${candles.length})` }
+  }
+
+  const { highs, lows } = detectSwings(candles)
+  const currentPrice = candles[candles.length - 1].close
+  const moves = detectMeasuredMoves(highs, lows, currentPrice)
+  const rows = moves.map((move) => buildSignalRow(symbolCode, tfPrisma, move))
+
+  if (dryRun || rows.length === 0) {
+    return { processed: rows.length, inserted: 0 }
+  }
+
+  const inserted = await prisma.measuredMoveSignal.createMany({
+    data: rows,
+    skipDuplicates: true,
+  })
+  return { processed: rows.length, inserted: inserted.count }
+}
+
 export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): Promise<MmIngestSummary> {
   loadDotEnvFiles()
 
@@ -87,65 +186,15 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
     const perSymbol = new Map<string, CandleData[]>()
 
-    const includeMes = symbolsRequested.includes('MES')
-    if (includeMes) {
-      const mesCandles = await prisma.mktFuturesMes1h.findMany({
-        where: { eventTime: { gte: start } },
-        orderBy: { eventTime: 'asc' },
-        select: {
-          eventTime: true,
-          open: true,
-          high: true,
-          low: true,
-          close: true,
-          volume: true,
-        },
-      })
-      if (mesCandles.length > 0) {
-        perSymbol.set(
-          'MES',
-          mesCandles.map((row) => ({
-            time: Math.floor(row.eventTime.getTime() / 1000),
-            open: toNum(row.open),
-            high: toNum(row.high),
-            low: toNum(row.low),
-            close: toNum(row.close),
-            volume: row.volume ? Number(row.volume) : 0,
-          }))
-        )
-      }
+    if (symbolsRequested.includes('MES')) {
+      const mesCandles = await loadMesCandles(start)
+      if (mesCandles.length > 0) perSymbol.set('MES', mesCandles)
     }
 
     const nonMesRequested = symbolsRequested.filter((code) => code !== 'MES')
-    if (nonMesRequested.length > 0) {
-      const futuresRows = await prisma.mktFutures1h.findMany({
-        where: {
-          eventTime: { gte: start },
-          symbolCode: { in: nonMesRequested },
-        },
-        orderBy: [{ symbolCode: 'asc' }, { eventTime: 'asc' }],
-        select: {
-          symbolCode: true,
-          eventTime: true,
-          open: true,
-          high: true,
-          low: true,
-          close: true,
-          volume: true,
-        },
-      })
-      for (const row of futuresRows) {
-        const list = perSymbol.get(row.symbolCode) || []
-        list.push({
-          time: Math.floor(row.eventTime.getTime() / 1000),
-          open: toNum(row.open),
-          high: toNum(row.high),
-          low: toNum(row.low),
-          close: toNum(row.close),
-          volume: row.volume ? Number(row.volume) : 0,
-        })
-        perSymbol.set(row.symbolCode, list)
-      }
+    const nonMesMap = await loadNonMesCandles(nonMesRequested, start)
+    for (const [code, candles] of nonMesMap) {
+      perSymbol.set(code, candles)
     }
 
     if (perSymbol.size === 0) {
@@ -154,48 +203,13 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
     for (const [symbolCode, candles] of perSymbol.entries()) {
       try {
-        if (candles.length < 30) {
-          symbolsFailed[symbolCode] = `Not enough candles (${candles.length})`
+        const result = await processSymbolSignals(symbolCode, candles, tfPrisma, dryRun)
+        if (result.error) {
+          symbolsFailed[symbolCode] = result.error
           continue
         }
-
-        const { highs, lows } = detectSwings(candles)
-        const currentPrice = candles[candles.length - 1].close
-        const moves = detectMeasuredMoves(highs, lows, currentPrice)
-
-        const rows: Prisma.MeasuredMoveSignalCreateManyInput[] = moves.map((move) => {
-          const impulse = Math.abs(move.pointB.price - move.pointA.price)
-          const target1236 =
-            move.direction === 'BULLISH'
-              ? move.pointC.price + impulse * 1.236
-              : move.pointC.price - impulse * 1.236
-          return {
-            symbolCode,
-            timeframe: tfPrisma,
-            timestamp: new Date(move.pointC.time * 1000),
-            direction: directionToPrisma(move.direction),
-            status: statusToPrisma(move.status),
-            pointA: move.pointA.price,
-            pointB: move.pointB.price,
-            pointC: move.pointC.price,
-            entry: move.entry,
-            stop: move.stop,
-            target100: move.target,
-            target1236,
-            retracementRatio: move.retracementRatio,
-            quality: move.quality,
-            source: 'halsey',
-          }
-        })
-
-        rowsProcessed += rows.length
-        if (!dryRun && rows.length > 0) {
-          const inserted = await prisma.measuredMoveSignal.createMany({
-            data: rows,
-            skipDuplicates: true,
-          })
-          rowsInserted += inserted.count
-        }
+        rowsProcessed += result.processed
+        rowsInserted += result.inserted
         symbolsProcessed.push(symbolCode)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

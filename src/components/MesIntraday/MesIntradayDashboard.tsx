@@ -7,7 +7,7 @@ import StatusTile from './StatusTile'
 import CorrelationTile from './CorrelationTile'
 import SignalTile from './SignalTile'
 import RiskTile from './RiskTile'
-import SetupLog from './SetupLog'
+import MLForecastTile from './MLForecastTile'
 
 export default function MesIntradayDashboard() {
   const chartRef = useRef<LiveMesChartHandle>(null)
@@ -30,15 +30,24 @@ export default function MesIntradayDashboard() {
 
   return (
     <div className="min-h-screen bg-[#0d1117]">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {error && (
-          <div className="mb-4 p-3 rounded-lg border border-red-500/20 bg-red-500/5">
-            <p className="text-sm text-red-400">{error}</p>
-          </div>
-        )}
+      {error && (
+        <div className="mx-4 lg:mx-6 mt-2 p-3 rounded-lg border border-red-500/20 bg-red-500/5">
+          <p className="text-sm text-red-400">{error}</p>
+        </div>
+      )}
 
-        {/* Top Row: 4 Status Tiles */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      {/* Chart — flush at top, full width, no sidebar */}
+      <div className="px-4 lg:px-6 pt-3">
+        <LiveMesChart ref={chartRef} setups={setupsData?.setups} />
+      </div>
+
+      {/* Dashboard below chart */}
+      <div className="px-4 lg:px-6 py-6 space-y-6">
+        {/* ML Forecast — full width */}
+        <MLForecastTile setupsData={setupsData} />
+
+        {/* Market Pressure tiles */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <StatusTile
             activeCount={activeCount}
             currentPrice={setupsData?.currentPrice ?? null}
@@ -46,14 +55,6 @@ export default function MesIntradayDashboard() {
           <CorrelationTile />
           <SignalTile leadSetup={leadSetup} />
           <RiskTile leadSetup={leadSetup} />
-        </div>
-
-        {/* Main: Hero Chart + Right Rail */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
-          <div>
-            <LiveMesChart ref={chartRef} setups={setupsData?.setups} />
-          </div>
-          <SetupLog setups={setupsData?.setups ?? []} />
         </div>
       </div>
     </div>

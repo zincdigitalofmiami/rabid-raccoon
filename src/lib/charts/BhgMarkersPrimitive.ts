@@ -191,7 +191,9 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
       levels.push({ price: setup.tp2, color: COLORS.tp2, label: 'TP2' })
     }
 
-    const startX = this._timeToX!(setup.goTime! as unknown as Time)
+    // V15 pattern: level lines render in the future whitespace only,
+    // starting at lastTime — never backwards over candles.
+    const startX = this._timeToX!(lastTime as unknown as Time)
     const endX = this._timeToX!(futureEnd as unknown as Time)
 
     for (const lvl of levels) {
@@ -359,29 +361,10 @@ export class BhgMarkersPrimitive implements ISeriesPrimitive<Time> {
   }
 
   autoscaleInfo(): AutoscaleInfo | null {
-    if (!this._data) return null
-
-    let min = Infinity
-    let max = -Infinity
-
-    for (const setup of this._data.setups) {
-      if (setup.phase !== 'TRIGGERED') continue
-      for (const price of [setup.entry, setup.stopLoss, setup.tp1, setup.tp2]) {
-        if (price != null) {
-          if (price < min) min = price
-          if (price > max) max = price
-        }
-      }
-    }
-
-    if (min === Infinity) return null
-
-    return {
-      priceRange: {
-        minValue: min,
-        maxValue: max,
-      },
-    }
+    // V15 pattern: don't force the chart scale to include TP/SL targets.
+    // Let the candle data drive the autoscale. Target prices are shown
+    // on the price-axis labels and future whitespace lines only.
+    return null
   }
 }
 

@@ -26,7 +26,7 @@ import { FIB_COLORS } from './colors'
 
 const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
 const FIB_EXTENSIONS = [1.236, 1.618]
-const FIB_LOOKBACKS = [8, 13, 21, 34, 55] as const
+const FIB_LOOKBACKS = [21, 34, 55, 89, 144] as const
 
 /** Confluence tolerance: levels within this fraction of range are "the same" */
 const CONFLUENCE_TOLERANCE = 0.001 // 0.1 %
