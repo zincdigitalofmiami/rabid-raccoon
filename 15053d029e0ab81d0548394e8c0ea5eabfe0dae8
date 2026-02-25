@@ -1,0 +1,23 @@
+docs/plans/2026-02-23-trade-intelligence-engine.md
+  95c7c025e986619f 1-1347
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "15053d029e0ab81d0548394e8c0ea5eabfe0dae8",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 1347,
+      "total_deletions": 0,
+      "accepted_lines": 1347,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,36 @@
+docs/plans/2026-02-23-prisma-connection-cleanup.md
+  95c7c025e986619f 1,5,7,9,11,13-17,21,24,26,28,30-42,45-49,51,54,59-63,71,73,76-81,83,87,90-91,98,101-108,114,117,119,121,123,125,127-130,132-135,137,139-143,148-152,156-158,161-165,167,169,171-174,176-179,181-185,187-189,191-193,195-199,201-203,205-208,210-211,213-219,221-222,224,226-227,229,231-232,234,237-242,247,250-251,255,266,268,274,278-279,287-290,295,297,299,301,303,305,307-311,313-317,319,322-324,327,329,332-334,337,339-341,351-352,354-355,357-358,361,363,365,367,369,375,380,382,385,390,397-401,406,408-421
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "2b9d56243f72d6b7b416e54ac65c46714a7b9beb",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 246,
+      "total_deletions": 132,
+      "accepted_lines": 245,
+      "overriden_lines": 0
+    },
+    "cd56fdfa798a9f44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9e2316-e5bb-4d5f-b3ca-91b9236547d3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 132,
+      "overriden_lines": 0
+    }
+  }
+}

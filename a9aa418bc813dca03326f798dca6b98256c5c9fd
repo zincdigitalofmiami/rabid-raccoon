@@ -1,0 +1,27 @@
+src/data/regime-lookup.json
+  95c7c025e986619f 1-18
+src/lib/ml-baseline.ts
+  95c7c025e986619f 1-196
+scripts/build-regime-lookup.ts
+  95c7c025e986619f 1-209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "a9aa418bc813dca03326f798dca6b98256c5c9fd",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 423,
+      "total_deletions": 0,
+      "accepted_lines": 423,
+      "overriden_lines": 0
+    }
+  }
+}

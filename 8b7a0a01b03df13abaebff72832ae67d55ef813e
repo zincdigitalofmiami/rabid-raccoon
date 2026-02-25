@@ -1,0 +1,35 @@
+src/components/LiveMesChart.tsx
+  95c7c025e986619f 269
+src/app/api/inngest/route.ts
+  95c7c025e986619f 4-5,39-41
+src/inngest/functions/index.ts
+  95c7c025e986619f 4-5,15
+src/inngest/index.ts
+  95c7c025e986619f 4-5,13
+src/inngest/functions/mkt-mes-15m.ts
+  95c7c025e986619f 1-21
+src/lib/mes15m-refresh.ts
+  95c7c025e986619f 12
+src/app/api/live/mes15m/route.ts
+  95c7c025e986619f 105,153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "8b7a0a01b03df13abaebff72832ae67d55ef813e",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 36,
+      "total_deletions": 11,
+      "accepted_lines": 36,
+      "overriden_lines": 0
+    }
+  }
+}

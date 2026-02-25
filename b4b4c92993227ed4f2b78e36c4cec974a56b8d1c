@@ -1,0 +1,36 @@
+docs/plans/2026-02-23-prisma-connection-cleanup-design.md
+  95c7c025e986619f 1-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "b4b4c92993227ed4f2b78e36c4cec974a56b8d1c",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 102,
+      "total_deletions": 0,
+      "accepted_lines": 102,
+      "overriden_lines": 0
+    },
+    "cd56fdfa798a9f44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa9e2316-e5bb-4d5f-b3ca-91b9236547d3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 141,
+      "total_deletions": 9,
+      "accepted_lines": 134,
+      "overriden_lines": 0
+    }
+  }
+}

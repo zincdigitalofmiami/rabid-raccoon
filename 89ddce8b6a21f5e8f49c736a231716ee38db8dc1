@@ -1,0 +1,25 @@
+src/app/layout.tsx
+  95c7c025e986619f 2,14-16
+src/components/Header.tsx
+  95c7c025e986619f 4-5,10,39-43,46-47,49-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.4",
+  "base_commit_sha": "89ddce8b6a21f5e8f49c736a231716ee38db8dc1",
+  "prompts": {
+    "95c7c025e986619f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74717563-58a4-4280-bead-ce72c60743ce",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "rabidraccoon <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 33,
+      "total_deletions": 31,
+      "accepted_lines": 30,
+      "overriden_lines": 0
+    }
+  }
+}
