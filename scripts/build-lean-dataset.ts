@@ -8,7 +8,7 @@
  *
  * Design principles:
  *   - Price action first (22 MES technicals)
- *   - Daily macro context that sets the day's tone (29 FRED series)
+ *   - Daily macro context that sets the day's tone (31 FRED series)
  *   - Velocity/regime features (6 derived — VIX percentile, yield velocity, dollar momentum)
  *   - Event flags from econ_calendar (FOMC day, high-impact day)
  *   - NO low-signal macro event levels (GDP, CPI, NFP, trade balance, etc.)
@@ -102,6 +102,8 @@ const FRED_FEATURES: FredSeriesConfig[] = [
 
   // Labor — weekly pulse
   { seriesId: 'ICSA',          column: 'fred_claims',           table: 'econ_labor_1d',       frequency: 'weekly' },
+  { seriesId: 'PAYEMS',        column: 'fred_nfp',              table: 'econ_labor_1d',       frequency: 'monthly' },
+  { seriesId: 'UNRATE',        column: 'fred_unrate',           table: 'econ_labor_1d',       frequency: 'monthly' },
 
   // Credit — risk appetite
   { seriesId: 'BAMLC0A0CM',    column: 'fred_ig_oas',           table: 'econ_vol_indices_1d', frequency: 'daily' },
@@ -279,6 +281,26 @@ function rollingStd(values: number[], window: number): (number | null)[] {
     let sumSq = 0
     for (let j = i - window + 1; j <= i; j++) sumSq += (values[j] - mean) ** 2
     result[i] = Math.sqrt(sumSq / window)
+  }
+  return result
+}
+
+function rollingMeanNullable(
+  values: (number | null)[],
+  window: number,
+  minValid = Math.ceil(window / 2)
+): (number | null)[] {
+  const result: (number | null)[] = new Array(values.length).fill(null)
+  for (let i = window - 1; i < values.length; i++) {
+    let sum = 0
+    let valid = 0
+    for (let j = i - window + 1; j <= i; j++) {
+      const v = values[j]
+      if (v == null) continue
+      sum += v
+      valid++
+    }
+    if (valid >= minValid) result[i] = sum / valid
   }
   return result
 }
@@ -1067,6 +1089,8 @@ async function run(): Promise<void> {
   const fedAssetsArr = buildArr('fred_fed_assets')
   const rrpArr = buildArr('fred_rrp')
   const claimsArr = buildArr('fred_claims')
+  const nfpArr = buildArr('fred_nfp')
+  const unrateArr = buildArr('fred_unrate')
   const tips10yArr = buildArr('fred_tips10y')
   const breakeven5yArr = buildArr('fred_breakeven_5y')
   const breakeven10yArr = buildArr('fred_breakeven_10y')
@@ -1075,6 +1099,7 @@ async function run(): Promise<void> {
   const emuDailyArr = buildArr('fred_emu_daily')
   const epuOverallArr = buildArr('fred_epu_overall')
   const emvOverallArr = buildArr('fred_emv_overall')
+  const claims4wkAvgArr = rollingMeanNullable(claimsArr, 28, 14)
 
   console.log(`[lean-dataset] Built ${FRED_FEATURES.length} FRED arrays for velocity/stationary features`)
 
@@ -1292,6 +1317,11 @@ async function run(): Promise<void> {
     'fed_assets_change_1w', // weekly fed balance sheet change (billions)
     'rrp_change_1d',        // daily reverse repo change
     'claims_change_1w',     // weekly jobless claims change
+    // Labor trend / slack (4)
+    'claims_4wk_avg',
+    'claims_minus_4wk_avg',
+    'unrate_3m_change',
+    'nfp_3m_change',
     // Policy uncertainty / EMV regime (8)
     'epu_overall', 'epu_fiscal', 'epu_monetary', 'epu_trade',
     'emv_overall', 'emv_macro', 'epu_daily', 'emv_equity_daily',
@@ -1496,6 +1526,10 @@ async function run(): Promise<void> {
     const fedAssetsChange1w = deltaBack(fedAssetsArr, i, 7 * barsPerDay)
     const rrpChange1d = deltaBack(rrpArr, i, barsPerDay)
     const claimsChange1w = deltaBack(claimsArr, i, 7 * barsPerDay)
+    const claims4wkAvg = claims4wkAvgArr[i]
+    const claimsMinus4wkAvg = claimsArr[i] != null && claims4wkAvg != null ? claimsArr[i]! - claims4wkAvg : null
+    const unrate3mChange = deltaBack(unrateArr, i, 63 * barsPerDay)
+    const nfp3mChange = deltaBack(nfpArr, i, 63 * barsPerDay)
     // Policy uncertainty / EMV dynamics (mix of daily and monthly series)
     const epuDaily1dChange = deltaBack(epuDailyArr, i, barsPerDay)
     const emvEquity1dChange = deltaBack(emuDailyArr, i, barsPerDay)
@@ -1612,6 +1646,8 @@ async function run(): Promise<void> {
       vixPercentile20d, claimsPercentile20d,
       // FRED stationary — flow changes (3)
       fedAssetsChange1w, rrpChange1d, claimsChange1w,
+      // Labor trend / slack (4)
+      claims4wkAvg, claimsMinus4wkAvg, unrate3mChange, nfp3mChange,
       // Policy uncertainty / EMV regime (8)
       epuOverall, epuFiscal, epuMonetary, epuTrade,
       emvOverall, emvMacro, epuDaily, emuDaily,
@@ -1741,6 +1777,7 @@ async function run(): Promise<void> {
     'eurusd_momentum_5d', 'jpyusd_momentum_5d', 'wti_momentum_5d',
     'vix_percentile_20d', 'claims_percentile_20d',
     'fed_assets_change_1w', 'rrp_change_1d', 'claims_change_1w',
+    'claims_4wk_avg', 'claims_minus_4wk_avg', 'unrate_3m_change', 'nfp_3m_change',
     'epu_overall', 'epu_fiscal', 'epu_monetary', 'epu_trade',
     'emv_overall', 'emv_macro', 'epu_daily', 'emv_equity_daily',
     'epu_daily_1d_change', 'emv_equity_1d_change',
