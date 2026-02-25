@@ -1,0 +1,23 @@
+src/app/globals.css
+  e81b12663d0f4c96 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "6e9a2164a3dfad7c93fdd2357eb95fce7946ee52",
+  "prompts": {
+    "e81b12663d0f4c96": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0d58906-7a7b-482c-8eba-aac62c55d78b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 3,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
