@@ -22,11 +22,14 @@ CHANGES FROM v2 (AUC=0.506 → targeting 0.52+):
   Run:    cd "/Volumes/Satechi Hub/rabid-raccoon"
           source .venv-autogluon/bin/activate
           python scripts/train-final.py
+          python scripts/train-final.py --preflight-only
+          python scripts/train-final.py --dataset datasets/autogluon/mes_lean_fred_indexes_2020plus.csv --preflight-only
 
   Time:   ~20 hours on Apple Silicon (5 folds x 4 horizons x 3600s)
 """
 
 import sys, os, warnings, shutil, json, hashlib, random, pickle
+import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -44,7 +47,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
 ROOT = Path(__file__).resolve().parent.parent
-DATASET = ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
+DATASET_DEFAULT = ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
 MODEL_DIR = ROOT / "models" / "core_forecaster"
 OOF_OUTPUT = ROOT / "datasets" / "autogluon" / "core_oof_1h.csv"
 REPORT_DIR = ROOT / "models" / "reports"
@@ -71,6 +74,26 @@ MIN_COVERAGE = 0.50            # drop features with <50% non-null
 MAX_FEATURES = 50              # IC screening: keep top N per fold
 CORR_THRESHOLD = 0.90          # hierarchical cluster dedup threshold
 FEATURE_MAX_LOOKBACK = 24      # longest rolling window in feature engineering (24h)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="MES Directional Classifier (Production v2.1)")
+    parser.add_argument(
+        "--dataset",
+        default=str(DATASET_DEFAULT),
+        help="CSV dataset path (default: datasets/autogluon/mes_lean_1h.csv)",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Delete existing fold directories before training.",
+    )
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Run dataset/env checks and exit before any model training.",
+    )
+    return parser.parse_args()
 
 # Identity + target columns — NEVER used as features
 DROP_COLS = {
@@ -532,7 +555,11 @@ def generate_validation_report(report_path, results, fold_metrics_by_horizon,
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    args = parse_args()
     set_all_seeds(SEED)
+    dataset_path = Path(args.dataset).expanduser()
+    if not dataset_path.is_absolute():
+        dataset_path = (ROOT / dataset_path).resolve()
 
     # ── Logging ──
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -547,26 +574,17 @@ def main():
         from autogluon.tabular import TabularPredictor
     except ImportError:
         print("ERROR: AutoGluon not installed.")
-        print("  source .venv-autogluon/bin/activate")
+        print("  source .venv-autogluon/bin/activate  # or .venv-finance if installed there")
         print("  pip install 'autogluon.tabular>=1.5'")
         sys.exit(1)
 
-    # ── Clean old folds ──
-    for h in HORIZONS:
-        for i in range(N_FOLDS):
-            fold_dir = MODEL_DIR / h / f"fold_{i}"
-            if fold_dir.exists():
-                shutil.rmtree(fold_dir)
-                print(f"  [clean] Removed {fold_dir.relative_to(ROOT)}")
-    print()
-
     # ── Load dataset ──
-    if not DATASET.exists():
-        print(f"ERROR: {DATASET} not found. Run: npx tsx scripts/build-lean-dataset.ts")
+    if not dataset_path.exists():
+        print(f"ERROR: {dataset_path} not found. Run: npx tsx scripts/build-lean-dataset.ts")
         sys.exit(1)
 
-    print(f"Loading: {DATASET.name}")
-    df = pd.read_csv(DATASET)
+    print(f"Loading: {dataset_path.name}")
+    df = pd.read_csv(dataset_path)
     df = df.sort_values("timestamp").reset_index(drop=True)
     ds_hash_val = dataset_hash(df)
     print(f"  Rows: {len(df):,}  Columns: {len(df.columns)}")
@@ -664,6 +682,22 @@ def main():
     est_hrs = TIME_LIMIT * N_FOLDS * len(HORIZONS) / 3600
     print(f"  Est. total: {est_hrs:.1f} hours")
     print()
+
+    if args.preflight_only:
+        print("  Preflight-only mode: checks passed, no training started.")
+        log_file.close()
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        return
+
+    if args.clean:
+        for h in HORIZONS:
+            for i in range(N_FOLDS):
+                fold_dir = MODEL_DIR / h / f"fold_{i}"
+                if fold_dir.exists():
+                    shutil.rmtree(fold_dir)
+                    print(f"  [clean] Removed {fold_dir.relative_to(ROOT)}")
+        print()
 
     # ── OOF storage ──
     oof_df = df[["timestamp"]].copy()
@@ -1051,7 +1085,7 @@ def main():
     print(f"\n{'=' * 70}")
     print(f"  FINAL SUMMARY — MES Directional Classifier (Production v2.1)")
     print(f"{'=' * 70}")
-    print(f"  Dataset:     {DATASET.name} ({len(df):,} rows x {len(df.columns)} cols)")
+    print(f"  Dataset:     {dataset_path.name} ({len(df):,} rows x {len(df.columns)} cols)")
     print(f"  DS Hash:     {ds_hash_val}")
     print(f"  Features:    {len(feature_cols)} available, top {MAX_FEATURES} used per fold (IC screened)")
     print(f"  Corr dedup:  hierarchical clustering, |r| > {CORR_THRESHOLD}")
