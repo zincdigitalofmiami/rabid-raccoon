@@ -8,7 +8,7 @@
  *
  * Design principles:
  *   - Price action first (22 MES technicals)
- *   - Daily macro context that sets the day's tone (31 FRED series)
+ *   - Daily macro context that sets the day's tone (34 FRED series)
  *   - Velocity/regime features (6 derived — VIX percentile, yield velocity, dollar momentum)
  *   - Event flags from econ_calendar (FOMC day, high-impact day)
  *   - NO low-signal macro event levels (GDP, CPI, NFP, trade balance, etc.)
@@ -91,6 +91,11 @@ const FRED_FEATURES: FredSeriesConfig[] = [
   { seriesId: 'DTWEXBGS',      column: 'fred_dxy',              table: 'econ_fx_1d',          frequency: 'daily' },
   { seriesId: 'DEXUSEU',       column: 'fred_eurusd',           table: 'econ_fx_1d',          frequency: 'daily' },
   { seriesId: 'DEXJPUS',       column: 'fred_jpyusd',           table: 'econ_fx_1d',          frequency: 'daily' },
+
+  // Equity benchmarks — broad risk regime
+  { seriesId: 'SP500',         column: 'fred_sp500',            table: 'econ_indexes_1d',     frequency: 'daily' },
+  { seriesId: 'NASDAQCOM',     column: 'fred_nasdaq',           table: 'econ_indexes_1d',     frequency: 'daily' },
+  { seriesId: 'DJIA',          column: 'fred_djia',             table: 'econ_indexes_1d',     frequency: 'daily' },
 
   // Commodities — energy shock proxy
   { seriesId: 'DCOILWTICO',    column: 'fred_wti',              table: 'econ_commodities_1d', frequency: 'daily' },
@@ -1080,6 +1085,9 @@ async function run(): Promise<void> {
   const y2yArr = buildArr('fred_y2y')
   const y30yArr = buildArr('fred_y30y')
   const dxyArr = buildArr('fred_dxy')
+  const sp500Arr = buildArr('fred_sp500')
+  const nasdaqArr = buildArr('fred_nasdaq')
+  const djiaArr = buildArr('fred_djia')
   const hyOasArr = buildArr('fred_hy_oas')
   const igOasArr = buildArr('fred_ig_oas')
   const eurusdArr = buildArr('fred_eurusd')
@@ -1100,6 +1108,7 @@ async function run(): Promise<void> {
   const epuOverallArr = buildArr('fred_epu_overall')
   const emvOverallArr = buildArr('fred_emv_overall')
   const claims4wkAvgArr = rollingMeanNullable(claimsArr, 28, 14)
+  const sp500Ma20Arr = rollingMeanNullable(sp500Arr, 20 * barsPerDay, 10 * barsPerDay)
 
   console.log(`[lean-dataset] Built ${FRED_FEATURES.length} FRED arrays for velocity/stationary features`)
 
@@ -1317,6 +1326,12 @@ async function run(): Promise<void> {
     'fed_assets_change_1w', // weekly fed balance sheet change (billions)
     'rrp_change_1d',        // daily reverse repo change
     'claims_change_1w',     // weekly jobless claims change
+    // Equity benchmark context (5)
+    'sp500_ret_1d',
+    'sp500_dist_ma20',
+    'nasdaq_ret_1d',
+    'djia_ret_1d',
+    'sp500_nasdaq_spread',
     // Labor trend / slack (4)
     'claims_4wk_avg',
     'claims_minus_4wk_avg',
@@ -1526,6 +1541,14 @@ async function run(): Promise<void> {
     const fedAssetsChange1w = deltaBack(fedAssetsArr, i, 7 * barsPerDay)
     const rrpChange1d = deltaBack(rrpArr, i, barsPerDay)
     const claimsChange1w = deltaBack(claimsArr, i, 7 * barsPerDay)
+    const sp500Ret1d = pctDeltaBack(sp500Arr, i, barsPerDay)
+    const nasdaqRet1d = pctDeltaBack(nasdaqArr, i, barsPerDay)
+    const djiaRet1d = pctDeltaBack(djiaArr, i, barsPerDay)
+    const sp500Ma20 = sp500Ma20Arr[i]
+    const sp500DistMa20 = sp500Arr[i] != null && sp500Ma20 != null && sp500Ma20 !== 0
+      ? (sp500Arr[i]! - sp500Ma20) / Math.abs(sp500Ma20)
+      : null
+    const sp500NasdaqSpread = sp500Ret1d != null && nasdaqRet1d != null ? sp500Ret1d - nasdaqRet1d : null
     const claims4wkAvg = claims4wkAvgArr[i]
     const claimsMinus4wkAvg = claimsArr[i] != null && claims4wkAvg != null ? claimsArr[i]! - claims4wkAvg : null
     const unrate3mChange = deltaBack(unrateArr, i, 63 * barsPerDay)
@@ -1646,6 +1669,8 @@ async function run(): Promise<void> {
       vixPercentile20d, claimsPercentile20d,
       // FRED stationary — flow changes (3)
       fedAssetsChange1w, rrpChange1d, claimsChange1w,
+      // Equity benchmark context (5)
+      sp500Ret1d, sp500DistMa20, nasdaqRet1d, djiaRet1d, sp500NasdaqSpread,
       // Labor trend / slack (4)
       claims4wkAvg, claimsMinus4wkAvg, unrate3mChange, nfp3mChange,
       // Policy uncertainty / EMV regime (8)
@@ -1777,6 +1802,7 @@ async function run(): Promise<void> {
     'eurusd_momentum_5d', 'jpyusd_momentum_5d', 'wti_momentum_5d',
     'vix_percentile_20d', 'claims_percentile_20d',
     'fed_assets_change_1w', 'rrp_change_1d', 'claims_change_1w',
+    'sp500_ret_1d', 'sp500_dist_ma20', 'nasdaq_ret_1d', 'djia_ret_1d', 'sp500_nasdaq_spread',
     'claims_4wk_avg', 'claims_minus_4wk_avg', 'unrate_3m_change', 'nfp_3m_change',
     'epu_overall', 'epu_fiscal', 'epu_monetary', 'epu_trade',
     'emv_overall', 'emv_macro', 'epu_daily', 'emv_equity_daily',
