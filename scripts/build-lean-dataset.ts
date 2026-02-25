@@ -8,10 +8,10 @@
  *
  * Design principles:
  *   - Price action first (22 MES technicals)
- *   - Daily macro context that sets the day's tone (27 FRED series)
+ *   - Daily macro context that sets the day's tone (19 FRED series)
  *   - Velocity/regime features (6 derived — VIX percentile, yield velocity, dollar momentum)
  *   - Event flags from econ_calendar (FOMC day, high-impact day)
- *   - NO low-signal macro event levels (GDP, CPI, NFP, trade balance, etc.)
+ *   - NO monthly/quarterly stale data (GDP, CPI, NFP, trade balance, etc.)
  *   - NO redundant series (no VVIX when we have VIX, no Brent when we have WTI)
  *
  * Supports both 1h and 15m timeframes via --timeframe flag.
@@ -106,15 +106,6 @@ const FRED_FEATURES: FredSeriesConfig[] = [
   // Credit — risk appetite
   { seriesId: 'BAMLC0A0CM',    column: 'fred_ig_oas',           table: 'econ_vol_indices_1d', frequency: 'daily' },
   { seriesId: 'BAMLH0A0HYM2',  column: 'fred_hy_oas',           table: 'econ_vol_indices_1d', frequency: 'daily' },
-  // Policy uncertainty / EMV regime signals
-  { seriesId: 'USEPUINDXD',    column: 'fred_epu_daily',        table: 'econ_vol_indices_1d', frequency: 'daily' },
-  { seriesId: 'WLEMUINDXD',    column: 'fred_emu_daily',        table: 'econ_vol_indices_1d', frequency: 'daily' },
-  { seriesId: 'USEPUINDXM',    column: 'fred_epu_overall',      table: 'econ_vol_indices_1d', frequency: 'monthly' },
-  { seriesId: 'EPUFISCAL',     column: 'fred_epu_fiscal',       table: 'econ_vol_indices_1d', frequency: 'monthly' },
-  { seriesId: 'EPUMONETARY',   column: 'fred_epu_monetary',     table: 'econ_vol_indices_1d', frequency: 'monthly' },
-  { seriesId: 'EPUTRADE',      column: 'fred_epu_trade',        table: 'econ_vol_indices_1d', frequency: 'monthly' },
-  { seriesId: 'EMVOVERALLEMV', column: 'fred_emv_overall',      table: 'econ_vol_indices_1d', frequency: 'monthly' },
-  { seriesId: 'EMVMACRONEWS',  column: 'fred_emv_macro',        table: 'econ_vol_indices_1d', frequency: 'monthly' },
 
   // Real yields — TIPS 10Y for proper real rate
   { seriesId: 'DFII10',         column: 'fred_tips10y',          table: 'econ_inflation_1d',   frequency: 'daily' },
@@ -139,14 +130,6 @@ const IDX_HY_OAS = featureIndex('fred_hy_oas')
 const IDX_FED_ASSETS = featureIndex('fred_fed_assets')
 const IDX_RRP = featureIndex('fred_rrp')
 const IDX_TIPS10Y = featureIndex('fred_tips10y')
-const IDX_EPU_DAILY = featureIndex('fred_epu_daily')
-const IDX_EMU_DAILY = featureIndex('fred_emu_daily')
-const IDX_EPU_OVERALL = featureIndex('fred_epu_overall')
-const IDX_EPU_FISCAL = featureIndex('fred_epu_fiscal')
-const IDX_EPU_MONETARY = featureIndex('fred_epu_monetary')
-const IDX_EPU_TRADE = featureIndex('fred_epu_trade')
-const IDX_EMV_OVERALL = featureIndex('fred_emv_overall')
-const IDX_EMV_MACRO = featureIndex('fred_emv_macro')
 
 const FRED_LAG_BY_COLUMN = new Map(
   FRED_FEATURES.map((f) => [f.column, conservativeLagDaysForFrequency(f.frequency)])
@@ -1064,12 +1047,8 @@ async function run(): Promise<void> {
   const claimsArr = buildArr('fred_claims')
   const tips10yArr = buildArr('fred_tips10y')
   const sofrArr = buildArr('fred_sofr')
-  const epuDailyArr = buildArr('fred_epu_daily')
-  const emuDailyArr = buildArr('fred_emu_daily')
-  const epuOverallArr = buildArr('fred_epu_overall')
-  const emvOverallArr = buildArr('fred_emv_overall')
 
-  console.log(`[lean-dataset] Built ${FRED_FEATURES.length} FRED arrays for velocity/stationary features`)
+  console.log('[lean-dataset] Built 16 FRED arrays for velocity/stationary features')
 
   // ── 7. Precompute MES technical indicators ──
   console.log('[lean-dataset] Computing technical indicators...')
@@ -1283,14 +1262,6 @@ async function run(): Promise<void> {
     'fed_assets_change_1w', // weekly fed balance sheet change (billions)
     'rrp_change_1d',        // daily reverse repo change
     'claims_change_1w',     // weekly jobless claims change
-    // Policy uncertainty / EMV regime (8)
-    'epu_overall', 'epu_fiscal', 'epu_monetary', 'epu_trade',
-    'emv_overall', 'emv_macro', 'epu_daily', 'emv_equity_daily',
-    // Policy uncertainty / EMV dynamics (8)
-    'epu_daily_1d_change', 'emv_equity_1d_change',
-    'epu_overall_3m_change', 'emv_overall_3m_change',
-    'epu_trade_minus_monetary', 'epu_fiscal_minus_overall',
-    'emv_macro_minus_overall', 'epu_overall_percentile_6m',
     // Calendar + event timing (6)
     'is_fomc_day', 'is_high_impact_day', 'is_cpi_day', 'is_nfp_day',
     'events_this_week_count', 'hours_to_next_high_impact',
@@ -1441,14 +1412,6 @@ async function run(): Promise<void> {
     const rrp = fredValues[IDX_RRP]
     const fedTargetLower = fredValues[IDX_FED_TARGET_LOWER]
     const fedTargetUpper = fredValues[IDX_FED_TARGET_UPPER]
-    const epuDaily = fredValues[IDX_EPU_DAILY]
-    const emuDaily = fredValues[IDX_EMU_DAILY]
-    const epuOverall = fredValues[IDX_EPU_OVERALL]
-    const epuFiscal = fredValues[IDX_EPU_FISCAL]
-    const epuMonetary = fredValues[IDX_EPU_MONETARY]
-    const epuTrade = fredValues[IDX_EPU_TRADE]
-    const emvOverall = fredValues[IDX_EMV_OVERALL]
-    const emvMacro = fredValues[IDX_EMV_MACRO]
 
     const yieldCurveSlope = y10y != null && y2y != null ? y10y - y2y : null
     const creditSpreadDiff = hyOas != null && igOas != null ? hyOas - igOas : null
@@ -1482,15 +1445,6 @@ async function run(): Promise<void> {
     const fedAssetsChange1w = deltaBack(fedAssetsArr, i, 7 * barsPerDay)
     const rrpChange1d = deltaBack(rrpArr, i, barsPerDay)
     const claimsChange1w = deltaBack(claimsArr, i, 7 * barsPerDay)
-    // Policy uncertainty / EMV dynamics (mix of daily and monthly series)
-    const epuDaily1dChange = deltaBack(epuDailyArr, i, barsPerDay)
-    const emvEquity1dChange = deltaBack(emuDailyArr, i, barsPerDay)
-    const epuOverall3mChange = deltaBack(epuOverallArr, i, 63 * barsPerDay)
-    const emvOverall3mChange = deltaBack(emvOverallArr, i, 63 * barsPerDay)
-    const epuTradeMinusMonetary = epuTrade != null && epuMonetary != null ? epuTrade - epuMonetary : null
-    const epuFiscalMinusOverall = epuFiscal != null && epuOverall != null ? epuFiscal - epuOverall : null
-    const emvMacroMinusOverall = emvMacro != null && emvOverall != null ? emvMacro - emvOverall : null
-    const epuOverallPercentile6m = rollingPercentile(epuOverallArr, i, 126 * barsPerDay)
 
     // Calendar + event timing
     const todayKey = dateKeyUtc(ts)
@@ -1597,14 +1551,6 @@ async function run(): Promise<void> {
       vixPercentile20d, claimsPercentile20d,
       // FRED stationary — flow changes (3)
       fedAssetsChange1w, rrpChange1d, claimsChange1w,
-      // Policy uncertainty / EMV regime (8)
-      epuOverall, epuFiscal, epuMonetary, epuTrade,
-      emvOverall, emvMacro, epuDaily, emuDaily,
-      // Policy uncertainty / EMV dynamics (8)
-      epuDaily1dChange, emvEquity1dChange,
-      epuOverall3mChange, emvOverall3mChange,
-      epuTradeMinusMonetary, epuFiscalMinusOverall,
-      emvMacroMinusOverall, epuOverallPercentile6m,
       // Calendar + event timing (6)
       isFomcDay, isHighImpactDay, isCpiDay, isNfpDay,
       eventsThisWeekCount, hoursToNextHighImpact,
@@ -1725,12 +1671,6 @@ async function run(): Promise<void> {
     'eurusd_momentum_5d', 'jpyusd_momentum_5d', 'wti_momentum_5d',
     'vix_percentile_20d', 'claims_percentile_20d',
     'fed_assets_change_1w', 'rrp_change_1d', 'claims_change_1w',
-    'epu_overall', 'epu_fiscal', 'epu_monetary', 'epu_trade',
-    'emv_overall', 'emv_macro', 'epu_daily', 'emv_equity_daily',
-    'epu_daily_1d_change', 'emv_equity_1d_change',
-    'epu_overall_3m_change', 'emv_overall_3m_change',
-    'epu_trade_minus_monetary', 'epu_fiscal_minus_overall',
-    'emv_macro_minus_overall', 'epu_overall_percentile_6m',
     'is_fomc_day', 'is_high_impact_day', 'is_cpi_day', 'is_nfp_day',
     'events_this_week_count', 'hours_to_next_high_impact',
     'nfp_release_z', 'cpi_release_z', 'retail_sales_release_z', 'ppi_release_z',
