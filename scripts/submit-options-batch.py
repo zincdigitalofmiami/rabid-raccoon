@@ -12,11 +12,9 @@ if not API_KEY:
 
 c = db.Historical(API_KEY)
 
-SYMBOLS = [
-    "ES.OPT", "NQ.OPT", "OG.OPT", "SO.OPT", "LO.OPT",
-    "OKE.OPT", "ON.OPT", "OH.OPT", "OB.OPT", "HXE.OPT",
-    "OZN.OPT", "OZB.OPT", "OZF.OPT", "EUU.OPT", "JPU.OPT",
-]
+# CME option parents — loaded from symbol registry (AGENTS.md Rule #1)
+from lib.registry import get_symbols_by_role
+SYMBOLS = get_symbols_by_role("OPTIONS_PARENT")
 
 START = "2020-01-01"
 END = "2026-02-25"

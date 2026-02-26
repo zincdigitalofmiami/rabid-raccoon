@@ -32,12 +32,9 @@ import time
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 
-# 15 CME option parents (per AGENTS.md)
-SYMBOLS = [
-    "ES.OPT", "NQ.OPT", "OG.OPT", "SO.OPT", "LO.OPT",
-    "OKE.OPT", "ON.OPT", "OH.OPT", "OB.OPT", "HXE.OPT",
-    "OZN.OPT", "OZB.OPT", "OZF.OPT", "EUU.OPT", "JPU.OPT",
-]
+# 15 CME option parents — loaded from symbol registry (AGENTS.md Rule #1)
+from lib.registry import get_symbols_by_role
+SYMBOLS = get_symbols_by_role("OPTIONS_PARENT")
 
 # Stat types to keep for statistics schema
 KEEP_STAT_TYPES = {3, 6, 9, 14, 15}
@@ -106,6 +103,10 @@ def process_file(dbn_path: Path, schema_type: str, out_base: Path) -> dict:
     print(f"  Reading {dbn_path.name} ...")
     store = db.DBNStore.from_file(str(dbn_path))
     df = store.to_df()
+
+    # DBNStore.to_df() puts ts_event as the index — reset it to a column
+    if df.index.name == "ts_event" or df.index.name is not None:
+        df = df.reset_index()
 
     if df.empty:
         print(f"    (empty — skipping)")
@@ -224,8 +225,8 @@ def process_raw_dir(raw_dir: Path, schema_type: str, out_base: Path) -> list[dic
     return all_stats
 
 
-def print_summary(ohlcv_stats: list[dict], stats_stats: list[dict]):
-    """Print final summary of conversion."""
+def print_summary(ohlcv_stats: list[dict], stats_stats: list[dict]) -> None:
+    """Print per-schema row counts and parent breakdowns after conversion."""
     print(f"\n{'='*70}")
     print("CONVERSION SUMMARY")
     print(f"{'='*70}")
@@ -249,7 +250,8 @@ def print_summary(ohlcv_stats: list[dict], stats_stats: list[dict]):
             print(f"    Errors:          {errors}")
 
 
-def main():
+def main() -> None:
+    """CLI entrypoint — convert raw .dbn.zst downloads to per-parent parquet files."""
     t0 = time.time()
 
     do_stats = "--stats-only" in sys.argv or ("--ohlcv-only" not in sys.argv)

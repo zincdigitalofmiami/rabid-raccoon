@@ -8,6 +8,7 @@ import type { RegistryProviderMapping, RegistryRoleMember, RegistrySymbol, Symbo
 
 const PRIMARY_SYMBOL_ROLE = 'INNGEST_MES_ONLY'
 const OUTPUT_PATH = path.resolve(process.cwd(), 'src/lib/symbol-registry/snapshot.ts')
+const JSON_OUTPUT_PATH = path.resolve(process.cwd(), 'src/lib/symbol-registry/snapshot.json')
 
 type DbRoleMemberRow = {
   role_key: string
@@ -140,11 +141,13 @@ async function main(): Promise<void> {
   const contents = renderSnapshotTs(snapshot)
   fs.mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true })
   fs.writeFileSync(OUTPUT_PATH, contents, 'utf8')
+  fs.writeFileSync(JSON_OUTPUT_PATH, JSON.stringify(snapshot, null, 2), 'utf8')
 
   console.log(
     `[registry:snapshot] wrote ${OUTPUT_PATH} with ${snapshot.symbols.length} symbols, ` +
       `${snapshot.roleMembers.length} role memberships, ${snapshot.providerMappings.length} provider mappings`,
   )
+  console.log(`[registry:snapshot] wrote ${JSON_OUTPUT_PATH} (JSON for Python scripts)`)
 }
 
 main()
