@@ -1,13 +1,9 @@
 'use client'
 
-import { useRef, useMemo } from 'react'
+import { useRef } from 'react'
 import LiveMesChart, { LiveMesChartHandle } from './LiveMesChart'
 import { useUpcomingTrades, ScoredTrade } from '@/hooks/useUpcomingTrades'
 import { useMesSetups } from '@/hooks/useMesSetups'
-import StatusTile from './MesIntraday/StatusTile'
-import CorrelationTile from './MesIntraday/CorrelationTile'
-import SignalTile from './MesIntraday/SignalTile'
-import RiskTile from './MesIntraday/RiskTile'
 
 // ─────────────────────────────────────────────
 // Human-readable labels
@@ -205,22 +201,6 @@ export default function TradeDashboard() {
   const tradeCount = tradesData.trades.length
   const currentPrice = tradesData.currentPrice
 
-  // Pressure card data (same pattern as MesIntradayDashboard)
-  const leadSetup = useMemo(() => {
-    if (!setupsData?.setups) return null
-    return setupsData.setups.find((s) => s.phase === 'TRIGGERED') ?? null
-  }, [setupsData])
-
-  const activeCount = useMemo(() => {
-    if (!setupsData?.setups) return { touched: 0, hooked: 0, goFired: 0 }
-    const setups = setupsData.setups
-    return {
-      touched: setups.filter((s) => s.phase === 'CONTACT').length,
-      hooked: setups.filter((s) => s.phase === 'CONFIRMED').length,
-      goFired: setups.filter((s) => s.phase === 'TRIGGERED').length,
-    }
-  }, [setupsData])
-
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
 
@@ -237,20 +217,6 @@ export default function TradeDashboard() {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 lg:px-10 py-8">
-
-        {/* Market Pressure Cards */}
-        <div className="mb-8">
-          <SectionHeader title="Market Pressure" />
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatusTile
-              activeCount={activeCount}
-              currentPrice={setupsData?.currentPrice ?? null}
-            />
-            <CorrelationTile />
-            <SignalTile leadSetup={leadSetup} />
-            <RiskTile leadSetup={leadSetup} />
-          </div>
-        </div>
 
         {/* Active Trades Section */}
         <div className="mb-10">

@@ -16,6 +16,11 @@ export const ingestMktMes15m = inngest.createFunction(
         lookbackMinutes: 24 * 60, // 24h lookback to fill any gaps
       })
     )
-    return { ranAt: new Date().toISOString(), result }
+
+    if (result.rowsUpserted === 0) {
+      console.warn(`[WARN] MES 15m refresh returned 0 rows (reason: ${result.reason ?? 'unknown'}, attempted: ${result.attempted})`)
+    }
+
+    return { ranAt: new Date().toISOString(), result, zeroRows: result.rowsUpserted === 0 }
   }
 )

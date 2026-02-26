@@ -22,6 +22,21 @@ import type {
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
 import type { ForecastTarget } from './types'
 
+// --- Styling constants ---
+
+const STYLES = {
+  lineWidth: 1,
+  bandDash: [4, 4] as readonly number[],
+  lineDash: [6, 3] as readonly number[],
+  bandFillAlpha: 0.15,
+  bandBorderAlpha: 0.5,
+  centerLineAlpha: 0.7,
+  labelFont: '11px -apple-system, BlinkMacSystemFont, sans-serif',
+  labelAlpha: 0.9,
+  labelOffsetX: 6,
+  labelOffsetY: -3,
+} as const
+
 // --- Renderer: draws zones + labels on the main pane ---
 
 class ForecastTargetsRenderer implements IPrimitivePaneRenderer {
@@ -50,7 +65,8 @@ class ForecastTargetsRenderer implements IPrimitivePaneRenderer {
 
         if (centerY == null) continue
 
-        // Clamp X to chart bounds
+        // Skip if start/end times are off-screen — never fall back to full-width
+        if (startX == null && endX == null) continue
         const x0 = startX != null ? Math.max(0, startX) : 0
         const x1 = endX != null ? Math.min(mediaSize.width, endX) : mediaSize.width
 
@@ -65,12 +81,12 @@ class ForecastTargetsRenderer implements IPrimitivePaneRenderer {
           const y0 = Math.min(topY, botY)
           const h = Math.abs(botY - topY)
 
-          ctx.fillStyle = hexToRgba(t.color, 0.15)
+          ctx.fillStyle = hexToRgba(t.color, STYLES.bandFillAlpha)
           ctx.fillRect(x0, y0, x1 - x0, h)
 
           // Border lines
-          ctx.strokeStyle = hexToRgba(t.color, 0.5)
-          ctx.lineWidth = 1
+          ctx.strokeStyle = hexToRgba(t.color, STYLES.bandBorderAlpha)
+          ctx.lineWidth = STYLES.lineWidth
           ctx.setLineDash([])
           ctx.beginPath()
           ctx.moveTo(x0, y0)
@@ -80,8 +96,8 @@ class ForecastTargetsRenderer implements IPrimitivePaneRenderer {
           ctx.stroke()
 
           // Center dashed line
-          ctx.strokeStyle = hexToRgba(t.color, 0.7)
-          ctx.setLineDash([4, 4])
+          ctx.strokeStyle = hexToRgba(t.color, STYLES.centerLineAlpha)
+          ctx.setLineDash([...STYLES.bandDash])
           ctx.beginPath()
           ctx.moveTo(x0, centerY)
           ctx.lineTo(x1, centerY)
@@ -89,9 +105,9 @@ class ForecastTargetsRenderer implements IPrimitivePaneRenderer {
           ctx.setLineDash([])
         } else {
           // Dashed horizontal line only
-          ctx.strokeStyle = hexToRgba(t.color, 0.7)
-          ctx.lineWidth = 1
-          ctx.setLineDash([6, 3])
+          ctx.strokeStyle = hexToRgba(t.color, STYLES.centerLineAlpha)
+          ctx.lineWidth = STYLES.lineWidth
+          ctx.setLineDash([...STYLES.lineDash])
           ctx.beginPath()
           ctx.moveTo(x0, centerY)
           ctx.lineTo(x1, centerY)
@@ -100,10 +116,10 @@ class ForecastTargetsRenderer implements IPrimitivePaneRenderer {
         }
 
         // In-zone text label
-        ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif'
-        ctx.fillStyle = hexToRgba(t.color, 0.9)
+        ctx.font = STYLES.labelFont
+        ctx.fillStyle = hexToRgba(t.color, STYLES.labelAlpha)
         ctx.textBaseline = 'bottom'
-        ctx.fillText(t.label, x0 + 6, centerY - 3)
+        ctx.fillText(t.label, x0 + STYLES.labelOffsetX, centerY + STYLES.labelOffsetY)
       }
     })
   }

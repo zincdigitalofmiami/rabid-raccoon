@@ -26,6 +26,8 @@ import {
   ingestFredNews,
   // Signals — 1 function
   ingestMeasuredMoves,
+  // Coverage audit — 1 function (weekly)
+  checkSymbolCoverage,
   // Backfill — 1 function (event-triggered)
   backfillMesAllTimeframes,
 } from '@/inngest'
@@ -65,6 +67,8 @@ export const { GET, POST, PUT } = serve({
     ingestFredNews,    // daily at 17:15 UTC
     // Signals (18:00 UTC)
     ingestMeasuredMoves,
+    // Coverage audit (weekly Sun 06:00 UTC)
+    checkSymbolCoverage,
     // Backfill (event-triggered)
     backfillMesAllTimeframes,
   ],

@@ -51,6 +51,25 @@ const COLORS = {
 } as const
 const PRICE_BUCKET = 0.25
 
+// ─── Marker Styling Constants ─────────────────────────────────────────────────
+
+const MARKER_STYLES = {
+  touchRadius: 3,
+  touchFillAlpha: 0.6,
+  touchStrokeAlpha: 0.9,
+  hookSize: 5,
+  hookFillAlpha: 0.7,
+  hookStrokeAlpha: 1,
+  goSize: 6,
+  goFont: 'bold 9px -apple-system, BlinkMacSystemFont, sans-serif',
+  goLabelAlpha: 0.9,
+  goLabelGap: 2,
+  levelLineAlpha: 0.6,
+  lineWidth: 1,
+  slDash: [4, 3] as readonly number[],
+  levelDash: [6, 3] as readonly number[],
+} as const
+
 // ─── Renderer ────────────────────────────────────────────────────────────────
 
 class BhgMarkersRenderer implements IPrimitivePaneRenderer {
@@ -102,11 +121,11 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
     if (x == null || y == null) return
 
     ctx.beginPath()
-    ctx.arc(x, y, 3, 0, Math.PI * 2)
-    ctx.fillStyle = hexToRgba(COLORS.touch, 0.6)
+    ctx.arc(x, y, MARKER_STYLES.touchRadius, 0, Math.PI * 2)
+    ctx.fillStyle = hexToRgba(COLORS.touch, MARKER_STYLES.touchFillAlpha)
     ctx.fill()
-    ctx.strokeStyle = hexToRgba(COLORS.touch, 0.9)
-    ctx.lineWidth = 1
+    ctx.strokeStyle = hexToRgba(COLORS.touch, MARKER_STYLES.touchStrokeAlpha)
+    ctx.lineWidth = MARKER_STYLES.lineWidth
     ctx.stroke()
   }
 
@@ -118,7 +137,7 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
 
     const isBullish = setup.direction === 'BULLISH'
     const color = COLORS.hook
-    const size = 5
+    const size = MARKER_STYLES.hookSize
 
     // Triangle pointing in rejection direction
     ctx.beginPath()
@@ -134,10 +153,10 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
       ctx.lineTo(x + size, y - size)
     }
     ctx.closePath()
-    ctx.fillStyle = hexToRgba(color, 0.7)
+    ctx.fillStyle = hexToRgba(color, MARKER_STYLES.hookFillAlpha)
     ctx.fill()
-    ctx.strokeStyle = hexToRgba(color, 1)
-    ctx.lineWidth = 1
+    ctx.strokeStyle = hexToRgba(color, MARKER_STYLES.hookStrokeAlpha)
+    ctx.lineWidth = MARKER_STYLES.lineWidth
     ctx.stroke()
   }
 
@@ -147,7 +166,7 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
     if (x == null || y == null) return
 
     const color = setup.direction === 'BULLISH' ? COLORS.bullish : COLORS.bearish
-    const size = 6
+    const size = MARKER_STYLES.goSize
 
     // Filled diamond at GO bar
     ctx.beginPath()
@@ -160,11 +179,11 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
     ctx.fill()
 
     // GO label
-    ctx.font = 'bold 9px -apple-system, BlinkMacSystemFont, sans-serif'
-    ctx.fillStyle = hexToRgba(color, 0.9)
+    ctx.font = MARKER_STYLES.goFont
+    ctx.fillStyle = hexToRgba(color, MARKER_STYLES.goLabelAlpha)
     ctx.textBaseline = 'bottom'
     ctx.textAlign = 'center'
-    ctx.fillText('GO', x, y - size - 2)
+    ctx.fillText('GO', x, y - size - MARKER_STYLES.goLabelGap)
     ctx.textAlign = 'start'
   }
 
@@ -204,15 +223,17 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
       const y = this._priceToY!(lvl.price)
       if (y == null) continue
 
+      // Skip if start/end times are off-screen — never fall back to full-width
+      if (startX == null && endX == null) continue
       const x0 = startX != null ? Math.max(0, startX) : 0
       const x1 = endX != null ? Math.min(chartWidth, endX) : chartWidth
 
       if (x1 <= x0) continue
 
       // Dashed line
-      ctx.strokeStyle = hexToRgba(lvl.color, 0.6)
-      ctx.lineWidth = 1
-      ctx.setLineDash(lvl.label === 'SL' ? [4, 3] : [6, 3])
+      ctx.strokeStyle = hexToRgba(lvl.color, MARKER_STYLES.levelLineAlpha)
+      ctx.lineWidth = MARKER_STYLES.lineWidth
+      ctx.setLineDash([...(lvl.label === 'SL' ? MARKER_STYLES.slDash : MARKER_STYLES.levelDash)])
       ctx.beginPath()
       ctx.moveTo(x0, y)
       ctx.lineTo(x1, y)

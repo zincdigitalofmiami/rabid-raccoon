@@ -36,7 +36,7 @@ Output JSON format:
     ],
     "meta": {
       "model_dir": "models/core_forecaster",
-      "dataset": "datasets/autogluon/mes_lean_1h.csv",
+      "dataset": "datasets/autogluon/mes_lean_fred_indexes_2020plus.csv",
       "folds_loaded": {"1h": 5, "4h": 5, "1d": 5, "1w": 5},
       "calibrated": {"1h": true, "4h": true, "1d": true, "1w": true},
       "generated_at": "2026-02-24T18:30:00Z"
@@ -59,7 +59,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_DIR = ROOT / "models" / "core_forecaster"
-DEFAULT_DATASET = ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
+DEFAULT_DATASET = ROOT / "datasets" / "autogluon" / "mes_lean_fred_indexes_2020plus.csv"
 
 # Identity + target columns — never used as features
 DROP_COLS = {

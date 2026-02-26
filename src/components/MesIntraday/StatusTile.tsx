@@ -10,43 +10,57 @@ export default function StatusTile({ activeCount, currentPrice }: StatusTileProp
   const hasActivity = total > 0
 
   return (
-    <div className="rounded-xl border border-white/5 bg-[#131722] p-4">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+    <div className="rounded-xl border border-white/[0.07] bg-[#0d1117] p-5 flex flex-col">
+      {/* Label row */}
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-[11px] font-mono uppercase tracking-widest text-amber-500/60">
           Status
         </span>
         <span
           className={`w-2 h-2 rounded-full ${
-            hasActivity ? 'bg-emerald-400 animate-pulse' : 'bg-white/10'
+            hasActivity ? 'bg-emerald-400 animate-pulse' : 'bg-white/[0.12]'
           }`}
         />
       </div>
 
-      {currentPrice != null && (
-        <div className="text-2xl font-semibold text-white mb-3 tabular-nums">
+      {/* Price — big */}
+      {currentPrice != null ? (
+        <div className="text-3xl font-bold font-mono tabular-nums text-white mb-5 tracking-tight">
           {currentPrice.toFixed(2)}
         </div>
+      ) : (
+        <div className="text-3xl font-bold font-mono text-white/10 mb-5">——</div>
       )}
 
-      <div className="flex gap-3 text-xs">
-        {activeCount.goFired > 0 && (
-          <span className="text-emerald-400 font-medium">
-            {activeCount.goFired} GO
-          </span>
-        )}
-        {activeCount.hooked > 0 && (
-          <span className="text-amber-400">
-            {activeCount.hooked} HOOK
-          </span>
-        )}
-        {activeCount.touched > 0 && (
-          <span className="text-white/40">
-            {activeCount.touched} TOUCH
-          </span>
-        )}
-        {total === 0 && (
-          <span className="text-white/20">No active setups</span>
-        )}
+      {/* Phase badges */}
+      <div className="flex gap-2 flex-wrap mt-auto">
+        <span
+          className={`text-xs font-mono px-2.5 py-1 rounded border ${
+            activeCount.goFired > 0
+              ? 'text-emerald-400 border-emerald-400/25 bg-emerald-400/[0.06]'
+              : 'text-white/15 border-white/[0.06]'
+          }`}
+        >
+          {activeCount.goFired} GO
+        </span>
+        <span
+          className={`text-xs font-mono px-2.5 py-1 rounded border ${
+            activeCount.hooked > 0
+              ? 'text-amber-400 border-amber-400/25 bg-amber-400/[0.06]'
+              : 'text-white/15 border-white/[0.06]'
+          }`}
+        >
+          {activeCount.hooked} HOOK
+        </span>
+        <span
+          className={`text-xs font-mono px-2.5 py-1 rounded border ${
+            activeCount.touched > 0
+              ? 'text-blue-400 border-blue-400/25 bg-blue-400/[0.06]'
+              : 'text-white/15 border-white/[0.06]'
+          }`}
+        >
+          {activeCount.touched} TOUCH
+        </span>
       </div>
     </div>
   )

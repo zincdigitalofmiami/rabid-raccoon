@@ -138,67 +138,31 @@ def aggregate_statistics(parent_name: str, df: pd.DataFrame) -> pd.DataFrame:
 def aggregate_ohlcv(parent_name: str, df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate per-contract OHLCV into daily parent-level summary.
 
-    Output columns: eventDate, totalVolume, contractCount, avgClose, maxHigh, minLow
+    Straight aggregation of raw fields — no derived calculations.
     """
     if df.empty:
         return pd.DataFrame()
 
-    # Determine date column
-    date_col = None
-    for col in ["ts_event"]:
-        if col in df.columns:
-            date_col = col
-            break
-
+    date_col = "ts_event" if "ts_event" in df.columns else None
     if date_col is None:
         print(f"    WARNING: No timestamp column found for {parent_name}")
         return pd.DataFrame()
 
     df["eventDate"] = pd.to_datetime(df[date_col]).dt.date
 
+    count_col = "instrument_id" if "instrument_id" in df.columns else (
+        "symbol" if "symbol" in df.columns else None
+    )
+
     results = []
     for date, day_df in df.groupby("eventDate"):
         row = {"eventDate": date, "parentSymbol": parent_name.replace("_", ".")}
-
-        # Total volume
-        if "volume" in day_df.columns:
-            row["totalVolume"] = int(day_df["volume"].sum())
-        else:
-            row["totalVolume"] = None
-
-        # Contract count
-        if "instrument_id" in day_df.columns:
-            row["contractCount"] = int(day_df["instrument_id"].nunique())
-        elif "symbol" in day_df.columns:
-            row["contractCount"] = int(day_df["symbol"].nunique())
-        else:
-            row["contractCount"] = None
-
-        # Volume-weighted average close (premium)
-        if "close" in day_df.columns and "volume" in day_df.columns:
-            valid = day_df.dropna(subset=["close", "volume"])
-            valid = valid[valid["volume"] > 0]
-            if len(valid) > 0:
-                row["avgClose"] = float(np.average(valid["close"], weights=valid["volume"]))
-            else:
-                row["avgClose"] = float(day_df["close"].mean()) if len(day_df) > 0 else None
-        elif "close" in day_df.columns:
-            row["avgClose"] = float(day_df["close"].mean())
-        else:
-            row["avgClose"] = None
-
-        # Max high, min low across all contracts
-        if "high" in day_df.columns:
-            row["maxHigh"] = float(day_df["high"].max())
-        else:
-            row["maxHigh"] = None
-
-        if "low" in day_df.columns:
-            non_zero_lows = day_df[day_df["low"] > 0]["low"] if "low" in day_df.columns else pd.Series()
-            row["minLow"] = float(non_zero_lows.min()) if len(non_zero_lows) > 0 else None
-        else:
-            row["minLow"] = None
-
+        row["volume"] = int(day_df["volume"].sum()) if "volume" in day_df.columns else None
+        row["open"] = float(day_df["open"].mean()) if "open" in day_df.columns else None
+        row["high"] = float(day_df["high"].max()) if "high" in day_df.columns else None
+        row["low"] = float(day_df["low"].min()) if "low" in day_df.columns else None
+        row["close"] = float(day_df["close"].mean()) if "close" in day_df.columns else None
+        row["contractCount"] = int(day_df[count_col].nunique()) if count_col else None
         results.append(row)
 
     return pd.DataFrame(results)

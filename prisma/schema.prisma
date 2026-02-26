@@ -778,6 +778,28 @@ model MesModelRegistry {
   @@map("mes_model_registry")
 }
 
+// ─── Coverage Check Log ──────────────────────────────────────────────────
+
+model CoverageCheckLog {
+  id               BigInt   @id @default(autoincrement())
+  symbolCode       String   @map("symbol_code") @db.VarChar(16)
+  checkedAt        DateTime @default(now()) @map("checked_at") @db.Timestamptz(6)
+  historyDays      Int      @map("history_days")
+  expectedBars     Int      @map("expected_bars")
+  actualBars       Int      @map("actual_bars")
+  coveragePct      Decimal  @map("coverage_pct") @db.Decimal(8, 4)
+  passesThreshold  Boolean  @map("passes_threshold")
+  thresholdPct     Decimal  @map("threshold_pct") @db.Decimal(8, 4)
+  wasActivated     Boolean  @default(false) @map("was_activated")
+  error            String?
+  metadata         Json?
+
+  @@index([symbolCode, checkedAt], map: "coverage_check_log_symbol_checked_idx")
+  @@index([checkedAt], map: "coverage_check_log_checked_at_idx")
+  @@index([passesThreshold, checkedAt], map: "coverage_check_log_passes_idx")
+  @@map("coverage_check_log")
+}
+
 // ─── Options Data ─────────────────────────────────────────────────────────
 
 /// Daily aggregated options metrics per parent symbol.

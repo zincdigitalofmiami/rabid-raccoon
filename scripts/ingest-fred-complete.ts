@@ -301,6 +301,7 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
   let inserted = 0
 
   // Batch insert — 50 rows per statement to stay well under param limits
+  const UPSERT_FIELDS_PER_ROW = 6 // seriesId, eventDate, value, rowHash, ingestedAt, metadata
   const BATCH = 50
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH)
@@ -310,7 +311,7 @@ async function insertDomain(domain: EconDomain, rows: ValueRow[]): Promise<numbe
     const ingestedAt = new Date().toISOString()
     for (let j = 0; j < batch.length; j++) {
       const r = batch[j]
-      const offset = j * 6
+      const offset = j * UPSERT_FIELDS_PER_ROW
       placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, 'FRED', $${offset + 4}, $${offset + 5}, $${offset + 6}::jsonb)`)
       values.push(r.seriesId, r.eventDate, r.value, r.rowHash, ingestedAt, r.metadata)
     }
@@ -465,21 +466,35 @@ async function run() {
     }
   }
 
-  // Record ingestion run
+  // Record ingestion run — wrapped in try/catch because the data ingestion itself
+  // already succeeded. If only the audit record fails, we log it but don't fail the run.
   const db = getPool()
-  await db.query(
-    `INSERT INTO ingestion_runs (job, status, "finishedAt", "rowsProcessed", "rowsInserted", "rowsFailed", details)
-     VALUES ($1, $2, NOW(), $3, $4, $5, $6::jsonb)`,
-    [
-      'fred-complete',
-      Object.keys(failed).length === 0 ? 'COMPLETED' : 'FAILED',
-      totalFetched,
-      totalInserted,
-      Object.keys(failed).length,
-      JSON.stringify({ daysBack, domainCounts, failed }),
-    ]
-  )
+  try {
+    await db.query(
+      `INSERT INTO ingestion_runs (job, status, "finishedAt", "rowsProcessed", "rowsInserted", "rowsFailed", details)
+       VALUES ($1, $2, NOW(), $3, $4, $5, $6::jsonb)`,
+      [
+        'fred-complete',
+        Object.keys(failed).length === 0 ? 'COMPLETED' : 'FAILED',
+        totalFetched,
+        totalInserted,
+        Object.keys(failed).length,
+        JSON.stringify({ daysBack, domainCounts, failed }),
+      ]
+    )
+  } catch (err) {
+    console.error(`[fred-complete] Failed to write IngestionRun record at ${new Date().toISOString()}:`, err instanceof Error ? err.message : err)
+  }
 
+  await upsertDataSourceRegistry(db, FRED_SERIES.length)
+
+  await db.end()
+}
+
+async function upsertDataSourceRegistry(
+  db: pg.Pool,
+  seriesCount: number
+): Promise<void> {
   const now = new Date().toISOString()
   await db.query(
     `INSERT INTO data_source_registry ("sourceId", "sourceName", description, "targetTable", "apiProvider", "updateFrequency", "authEnvVar", "ingestionScript", "isActive", "createdAt", "updatedAt")
@@ -488,7 +503,7 @@ async function run() {
     [
       'fred-complete',
       'FRED Complete Economic Dataset',
-      `${FRED_SERIES.length} FRED series across 10 econ domains (direct pg, no Accelerate).`,
+      `${seriesCount} FRED series across 10 econ domains (direct pg, no Accelerate).`,
       'econ_*_1d',
       'fred',
       'daily',
@@ -497,8 +512,6 @@ async function run() {
       now,
     ]
   )
-
-  await db.end()
 }
 
 function sleep(ms: number): Promise<void> {

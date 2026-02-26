@@ -93,7 +93,7 @@ args = parser.parse_args()
 
 TIMEFRAME = args.timeframe  # compatibility; always "1h"
 
-DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
+DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_fred_indexes_2020plus.csv"
 MODEL_DIR = PROJECT_ROOT / "models" / "core_forecaster"
 OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_1h.csv"
 

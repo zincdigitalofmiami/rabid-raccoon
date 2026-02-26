@@ -215,10 +215,11 @@ export const backfillMesAllTimeframes = inngest.createFunction(
 
     // Log final ingestion run
     await step.run('log-ingestion-run', async () => {
+      const allChunksFailed = totals.errors > 0 && totals.errors === chunks.length
       await prisma.ingestionRun.create({
         data: {
           job: 'backfill-mes-all-timeframes',
-          status: totals.errors > 0 ? 'COMPLETED' : 'COMPLETED',
+          status: allChunksFailed ? 'FAILED' : 'COMPLETED',
           finishedAt: new Date(),
           rowsProcessed: totals.m15 + totals.h1 + totals.d1,
           rowsInserted: totals.m15 + totals.h1 + totals.d1,
@@ -232,6 +233,7 @@ export const backfillMesAllTimeframes = inngest.createFunction(
             inserted15m: totals.m15,
             inserted1h: totals.h1,
             inserted1d: totals.d1,
+            ...(totals.errors > 0 && totals.errors < chunks.length ? { partialFailure: true } : {}),
           },
         },
       })

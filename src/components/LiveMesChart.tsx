@@ -7,6 +7,7 @@ import {
   createChart,
   IChartApi,
   ISeriesApi,
+  LastPriceAnimationMode,
   LineStyle,
   TickMarkType,
   Time,
@@ -268,7 +269,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
         fixLeftEdge: false,
         fixRightEdge: false,
         rightOffset: 16,
-        barSpacing: 14,
+        barSpacing: 12,
         minBarSpacing: 6,
         // Map gap-free sequential times → real CT timestamps for axis labels
         tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) => {
@@ -328,7 +329,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
       borderDownColor: 'transparent',
       wickUpColor: '#FFFFFF',
       wickDownColor: 'rgba(178,181,190,0.83)',
-      priceLineVisible: true,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      lastPriceAnimation: LastPriceAnimationMode.Disabled,
       priceFormat: {
         type: 'price',
         precision: 2,
@@ -425,8 +428,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
 
         updateSessionStats(rawPoints)
 
-        // Scroll to right edge with configured barSpacing preserved (no compression)
-        // scrollToPosition(offset, false) = scroll so the right edge has `offset` bars of whitespace
+        // Force barSpacing after setData — LWC auto-fits all bars on first load, overriding spacing
+        chartRef.current?.timeScale().applyOptions({ barSpacing: 12 })
+        // Scroll to right edge with whitespace
         chartRef.current?.timeScale().scrollToPosition(16, false)
 
         setStatus('live')

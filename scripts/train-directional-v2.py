@@ -43,7 +43,7 @@ args = parser.parse_args()
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
+DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_fred_indexes_2020plus.csv"
 MODEL_DIR = PROJECT_ROOT / "models" / "directional_v2"
 OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "directional_v2_oof.csv"
 

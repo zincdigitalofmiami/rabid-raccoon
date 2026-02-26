@@ -92,7 +92,7 @@ LEAN_FEATURES = [
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
+DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "mes_lean_fred_indexes_2020plus.csv"
 MODEL_DIR = PROJECT_ROOT / "models" / "lean_directional"
 OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "lean_oof_1h.csv"
 
@@ -162,4 +162,3 @@ def main():
     if missing:
         print(f"  WARNING: {len(missing)} features missing: {missing}")
     print(f"  Using {len(available)} of {len(LEAN_FEATURES)} lean features")
-

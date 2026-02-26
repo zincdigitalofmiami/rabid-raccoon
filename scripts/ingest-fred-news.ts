@@ -280,6 +280,35 @@ async function processFeed(feed: FeedConfig): Promise<FeedStats> {
   return feedStats
 }
 
+// ── Ingestion run finalization ───────────────────────────────────
+
+async function finalizeFredNewsRun(
+  runId: bigint,
+  stats: RunStats,
+  feedCount: number
+): Promise<void> {
+  const feedsFailed = Object.values(stats.feeds).reduce((acc, f) => acc + (f.errors.length ? 1 : 0), 0)
+
+  await prisma.ingestionRun.update({
+    where: { id: runId },
+    data: {
+      status: feedsFailed === feedCount ? 'FAILED' : 'COMPLETED',
+      finishedAt: new Date(),
+      rowsProcessed: stats.totals.parsedItems,
+      rowsInserted: stats.totals.inserted,
+      rowsFailed: feedsFailed,
+      details: toJson({
+        ...stats,
+        ...(feedsFailed > 0 && feedsFailed < feedCount ? {
+          failedFeeds: Object.entries(stats.feeds)
+            .filter(([, f]) => f.errors.length > 0)
+            .map(([id, f]) => ({ id, errors: f.errors })),
+        } : {}),
+      }),
+    },
+  })
+}
+
 // ── Main ───────────────────────────────────────────────────────────
 
 export async function runIngestFredNews(): Promise<RunStats> {
@@ -310,18 +339,7 @@ export async function runIngestFredNews(): Promise<RunStats> {
       stats.totals.inserted += feedStats.inserted
     }
 
-    await prisma.ingestionRun.update({
-      where: { id: run.id },
-      data: {
-        status: 'COMPLETED',
-        finishedAt: new Date(),
-        rowsProcessed: stats.totals.parsedItems,
-        rowsInserted: stats.totals.inserted,
-        rowsFailed: Object.values(stats.feeds).reduce((acc, f) => acc + (f.errors.length ? 1 : 0), 0),
-        details: toJson(stats),
-      },
-    })
-
+    await finalizeFredNewsRun(run.id, stats, FEEDS.length)
     return stats
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

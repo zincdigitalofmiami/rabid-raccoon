@@ -21,7 +21,7 @@
  *   npx tsx scripts/build-lean-dataset.ts --timeframe=15m
  *   npx tsx scripts/build-lean-dataset.ts --start-date=2022-01-01
  *   npx tsx scripts/build-lean-dataset.ts --days-back=365
- *   npx tsx scripts/build-lean-dataset.ts --out=datasets/autogluon/mes_lean_1h.csv
+ *   npx tsx scripts/build-lean-dataset.ts --out=datasets/autogluon/mes_lean_fred_indexes_2020plus.csv
  */
 
 import { prisma } from '../src/lib/prisma'
@@ -783,7 +783,7 @@ async function run(): Promise<void> {
   const daysBackArg = parseArg('days-back', '')
   const defaultOut = timeframe === '15m'
     ? 'datasets/autogluon/mes_lean_15m.csv'
-    : 'datasets/autogluon/mes_lean_1h.csv'
+    : 'datasets/autogluon/mes_lean_fred_indexes_2020plus.csv'
   const outFile = parseArg('out', defaultOut)
   // --days-back overrides --start-date if provided; otherwise default to 2020-01-01
   const start = daysBackArg

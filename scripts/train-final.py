@@ -12,7 +12,7 @@ CHANGES FROM v2 (AUC=0.506 → targeting 0.52+):
   8. Auto-generated validation report (models/reports/v2_validation.md)
   9. Dataset quality gates (preflight) — abort on missing feature groups
 
-  Input:  datasets/autogluon/mes_lean_1h.csv
+  Input:  datasets/autogluon/mes_lean_fred_indexes_2020plus.csv
   Output: models/core_forecaster/{1h,4h,1d,1w}/fold_N/   (AutoGluon artifacts)
           datasets/autogluon/core_oof_1h.csv               (OOF predictions)
           models/reports/feature_importance.md              (TradingView setup guide)
@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
 ROOT = Path(__file__).resolve().parent.parent
-DATASET_DEFAULT = ROOT / "datasets" / "autogluon" / "mes_lean_1h.csv"
+DATASET_DEFAULT = ROOT / "datasets" / "autogluon" / "mes_lean_fred_indexes_2020plus.csv"
 MODEL_DIR = ROOT / "models" / "core_forecaster"
 OOF_OUTPUT = ROOT / "datasets" / "autogluon" / "core_oof_1h.csv"
 REPORT_DIR = ROOT / "models" / "reports"
@@ -81,7 +81,24 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         default=str(DATASET_DEFAULT),
-        help="CSV dataset path (default: datasets/autogluon/mes_lean_1h.csv)",
+        help="CSV dataset path (default: datasets/autogluon/mes_lean_fred_indexes_2020plus.csv)",
+    )
+    parser.add_argument(
+        "--horizons",
+        default=None,
+        help="Comma-separated horizons to train (subset of: 1h,4h,1d,1w). Default: all.",
+    )
+    parser.add_argument(
+        "--time-limit",
+        type=int,
+        default=None,
+        help="Override time limit in seconds per fold (default: 3600).",
+    )
+    parser.add_argument(
+        "--n-folds",
+        type=int,
+        default=None,
+        help="Override number of walk-forward folds (default: 5).",
     )
     parser.add_argument(
         "--clean",
@@ -344,6 +361,8 @@ def walk_forward_splits(n, n_folds, purge, embargo):
 # ─── Log Tee ──────────────────────────────────────────────────────────────────
 
 class _Tee:
+    """Multiplex writes to several streams (stdout + log file)."""
+
     def __init__(self, *streams):
         self.streams = streams
     def write(self, data):
@@ -467,7 +486,7 @@ def generate_tv_report(importance_by_horizon, report_path):
 
 def generate_validation_report(report_path, results, fold_metrics_by_horizon,
                                 calibration_info, feature_stability_by_horizon,
-                                ds_hash, n_rows, n_cols):
+                                ds_hash, n_rows, n_cols, n_folds, time_limit, presets):
     """Auto-generate models/reports/v2_validation.md with full diagnostics."""
     lines = [
         "# MES Directional Classifier — v2.1 Validation Report",
@@ -477,7 +496,7 @@ def generate_validation_report(report_path, results, fold_metrics_by_horizon,
         f"- Dataset hash: `{ds_hash}`",
         f"- Rows: {n_rows:,} | Columns: {n_cols}",
         f"- Seed: {SEED}",
-        f"- Folds: {N_FOLDS} | Time/fold: {TIME_LIMIT}s | Presets: {PRESETS}",
+        f"- Folds: {n_folds} | Time/fold: {time_limit}s | Presets: {presets}",
         "",
     ]
 
@@ -557,6 +576,28 @@ def generate_validation_report(report_path, results, fold_metrics_by_horizon,
 def main():
     args = parse_args()
     set_all_seeds(SEED)
+    active_horizons = dict(HORIZONS)
+    if args.horizons:
+        requested = [h.strip() for h in args.horizons.split(",") if h.strip()]
+        invalid = [h for h in requested if h not in HORIZONS]
+        if invalid:
+            print(f"ERROR: Invalid horizons: {', '.join(invalid)}")
+            print(f"Valid horizons: {', '.join(HORIZONS.keys())}")
+            sys.exit(1)
+        if not requested:
+            print("ERROR: --horizons provided but empty after parsing.")
+            sys.exit(1)
+        active_horizons = {h: HORIZONS[h] for h in requested}
+
+    n_folds = args.n_folds if args.n_folds is not None else N_FOLDS
+    time_limit = args.time_limit if args.time_limit is not None else TIME_LIMIT
+    if n_folds < 1:
+        print("ERROR: --n-folds must be >= 1")
+        sys.exit(1)
+    if time_limit < 1:
+        print("ERROR: --time-limit must be >= 1")
+        sys.exit(1)
+
     dataset_path = Path(args.dataset).expanduser()
     if not dataset_path.is_absolute():
         dataset_path = (ROOT / dataset_path).resolve()
@@ -607,7 +648,7 @@ def main():
     print()
 
     # ── Create 1d and 1w targets if missing ──
-    for h_name, h_cfg in HORIZONS.items():
+    for h_name, h_cfg in active_horizons.items():
         target_col = h_cfg["target"]
         horizon_bars = h_cfg["horizon_bars"]
         dir_col = f"target_dir_{h_name}"
@@ -662,7 +703,7 @@ def main():
     # ── Global hierarchical correlation dedup ──
     # Use first available target for IC computation during dedup
     dedup_target = None
-    for h_cfg in HORIZONS.values():
+    for h_cfg in active_horizons.values():
         if h_cfg["target"] in df.columns:
             dedup_target = h_cfg["target"]
             break
@@ -672,14 +713,14 @@ def main():
         print("  WARNING: No target column found for dedup, skipping")
 
     print(f"\n  Features after cleanup: {len(feature_cols)}")
-    print(f"  Horizons: {list(HORIZONS.keys())}")
-    print(f"  Folds: {N_FOLDS}  |  Time/fold: {TIME_LIMIT}s  |  Presets: {PRESETS}")
+    print(f"  Horizons: {list(active_horizons.keys())}")
+    print(f"  Folds: {n_folds}  |  Time/fold: {time_limit}s  |  Presets: {PRESETS}")
     print(f"  Bagging: {NUM_BAG_FOLDS}  |  Stack: {NUM_STACK_LEVELS}  |  Metric: {EVAL_METRIC}")
     print(f"  IC screening: top {MAX_FEATURES} features per fold")
     print(f"  Correlation dedup: hierarchical clustering, |r| > {CORR_THRESHOLD}")
     print(f"  Purge/embargo: label-overlap + {FEATURE_MAX_LOOKBACK}h lookback")
     print(f"  Excluded models: {EXCLUDED}")
-    est_hrs = TIME_LIMIT * N_FOLDS * len(HORIZONS) / 3600
+    est_hrs = time_limit * n_folds * len(active_horizons) / 3600
     print(f"  Est. total: {est_hrs:.1f} hours")
     print()
 
@@ -691,8 +732,8 @@ def main():
         return
 
     if args.clean:
-        for h in HORIZONS:
-            for i in range(N_FOLDS):
+        for h in active_horizons:
+            for i in range(n_folds):
                 fold_dir = MODEL_DIR / h / f"fold_{i}"
                 if fold_dir.exists():
                     shutil.rmtree(fold_dir)
@@ -712,7 +753,7 @@ def main():
     #  TRAINING LOOP — per horizon, per fold
     # ══════════════════════════════════════════════════════════════════════════
 
-    for h_name, h_cfg in HORIZONS.items():
+    for h_name, h_cfg in active_horizons.items():
         target_col = h_cfg["target"]
         horizon_bars = h_cfg["horizon_bars"]
         purge, embargo = compute_purge_embargo(horizon_bars, FEATURE_MAX_LOOKBACK)
@@ -736,7 +777,7 @@ def main():
         if abs(base_rate - 0.5) > 0.05:
             print(f"  WARNING: imbalanced classes — consider sample_weight")
 
-        splits = walk_forward_splits(len(h_df), N_FOLDS, purge, embargo)
+        splits = walk_forward_splits(len(h_df), n_folds, purge, embargo)
         print(f"  Walk-forward folds: {len(splits)}")
 
         for fi, (tr_idx, va_idx) in enumerate(splits):
@@ -787,7 +828,7 @@ def main():
 
             predictor.fit(
                 train_data=train_subset,
-                time_limit=TIME_LIMIT,
+                time_limit=time_limit,
                 presets=PRESETS,
                 num_gpus=0,
                 excluded_model_types=EXCLUDED,
@@ -1077,7 +1118,7 @@ def main():
         REPORT_DIR / "v2_validation.md",
         results, fold_metrics_by_horizon,
         calibration_info, feature_stability_by_horizon,
-        ds_hash_val, len(df), len(df.columns),
+        ds_hash_val, len(df), len(df.columns), n_folds, time_limit, PRESETS,
     )
 
     # ── Final Summary ─────────────────────────────────────────────────────────
@@ -1089,7 +1130,7 @@ def main():
     print(f"  DS Hash:     {ds_hash_val}")
     print(f"  Features:    {len(feature_cols)} available, top {MAX_FEATURES} used per fold (IC screened)")
     print(f"  Corr dedup:  hierarchical clustering, |r| > {CORR_THRESHOLD}")
-    print(f"  Config:      {PRESETS} | {N_FOLDS} folds | {TIME_LIMIT}s/fold")
+    print(f"  Config:      {PRESETS} | {n_folds} folds | {time_limit}s/fold")
     print(f"  Models:      GBM + CAT + XGB + XT -> WeightedEnsemble")
     print(f"  Bagging:     {NUM_BAG_FOLDS}-fold | Stack: {NUM_STACK_LEVELS} level")
     print(f"  Calibration: Nested selection (isotonic vs Platt) on OOF")
@@ -1109,7 +1150,8 @@ def main():
         print(f"  VHC = Very-High-Confidence (p > 0.58 or p < 0.42) <- TRADING FILTER")
         print()
         for h, r in results.items():
-            purge, embargo = compute_purge_embargo(HORIZONS[h]["horizon_bars"], FEATURE_MAX_LOOKBACK)
+            h_cfg = active_horizons.get(h, HORIZONS[h])
+            purge, embargo = compute_purge_embargo(h_cfg["horizon_bars"], FEATURE_MAX_LOOKBACK)
             print(f"  {h}  HC: {r['HC_n']:,} rows ({r['HC_pct']:.0f}%)  "
                   f"VHC: {r['VHC_n']:,} rows ({r['VHC_pct']:.0f}%)  "
                   f"purge={purge} embargo={embargo}")
