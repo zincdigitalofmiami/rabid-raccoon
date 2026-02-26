@@ -1,0 +1,75 @@
+scripts/generate-symbol-registry-snapshot.ts
+  38237f2e1025a170 11,144,150
+scripts/lib/registry.py
+  38237f2e1025a170 1-29
+prisma/migrations/20260226140000_add_options_parent_symbols/migration.sql
+  38237f2e1025a170 1-48
+src/lib/ingest/econ-calendar.ts
+  38237f2e1025a170 39,41-43
+scripts/submit-options-batch.py
+  38237f2e1025a170 15-17
+src/lib/ingest/fomc-dates.json
+  38237f2e1025a170 1-19
+scripts/convert-options-raw.py
+  7c3f645925642637 107-110
+  38237f2e1025a170 35-37,228-229,253-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "d100454384a5d9eedc9e029a8d46990e22bae4be",
+  "prompts": {
+    "38237f2e1025a170": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eaa4882f-4c72-4fe4-a1f6-9d162f656427",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 262,
+      "total_deletions": 128,
+      "accepted_lines": 220,
+      "overriden_lines": 0
+    },
+    "7b2d3b151b1de3ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4913899b-3205-4522-bb5d-2ddb69de9f90",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 286,
+      "total_deletions": 290,
+      "accepted_lines": 243,
+      "overriden_lines": 0
+    },
+    "7b7379bf5583c26c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c96f2-9c1b-7c40-89f0-d19a0089109e",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    },
+    "98c4da333fabb825": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5ba254f-6dc3-46bc-ab45-adfc8dab5d15",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 779,
+      "total_deletions": 219,
+      "accepted_lines": 673,
+      "overriden_lines": 0
+    }
+  }
+}
