@@ -1,0 +1,73 @@
+scripts/aggregate-options.py
+  5ebcacbc4a632f5f 141,146,153-155,160-165
+scripts/ingest-alt-news-feeds.ts
+  98c4da333fabb825 444-446,448-453
+  38237f2e1025a170 430-440,447,455-456,487
+src/inngest/functions/econ-fx.ts
+  98c4da333fabb825 2,18-28,30-31,33-35,37-38,40-41,46-73
+scripts/ingest-fred-complete.ts
+  98c4da333fabb825 469-470,472,474-475,484-487
+  38237f2e1025a170 304,314,489,491-497,506
+src/inngest/functions/econ-vol-indices.ts
+  98c4da333fabb825 2,18-28,30-31,33-35,37-38,40-41,46-73
+src/inngest/functions/mkt-mes-15m.ts
+  98c4da333fabb825 19-24
+src/inngest/functions/econ-indexes.ts
+  98c4da333fabb825 2,19-29,31-33,47-74
+prisma/schema.prisma
+  98c4da333fabb825 781-801
+scripts/train-final.py
+  38237f2e1025a170 364-365
+src/inngest/functions/econ-money.ts
+  98c4da333fabb825 2,18-28,30-31,33-35,37-38,40-41,46-73
+src/inngest/functions/econ-activity.ts
+  98c4da333fabb825 2,18-28,30-31,33-35,37-38,40-41,46-73
+src/inngest/functions/econ-yields.ts
+  98c4da333fabb825 2,18-28,30-31,33-35,37-38,40-41,46-73
+src/inngest/functions/econ-labor.ts
+  98c4da333fabb825 2,18-28,30-31,33-35,37-38,40-41,46-73
+src/inngest/backfill-mes.ts
+  98c4da333fabb825 218,222,236
+src/components/MesIntraday/RiskTile.tsx
+  7b2d3b151b1de3ee 14-15,17-19,25-27,30-31,35-41,43-45,49-50
+src/app/api/inngest/route.ts
+  98c4da333fabb825 29-30,70-71
+src/inngest/functions/econ-rates.ts
+  98c4da333fabb825 2,19-29,31-33,47-74
+src/components/MesIntraday/MLForecastTile.tsx
+  7b2d3b151b1de3ee 46-49,53-58,60-62,64-66,68-79,81-82,116-117,119-120,134,156-160,164,169,174,176-177,181,184,186-187,193-198,201-205,207-220,222-224,226,229-244,246,248-250,252,254-257
+src/components/MesIntraday/StatusTile.tsx
+  7b2d3b151b1de3ee 13-16,21,26-28,31-32,35-36,38-42,45,47-51,54,56-60,62-63
+src/inngest/index.ts
+  98c4da333fabb825 4,9,42-44
+src/lib/charts/ForecastTargetsPrimitive.ts
+  7b2d3b151b1de3ee 68-69
+  38237f2e1025a170 25-39,84,88-89,99-100,108-110,119-120,122
+src/inngest/functions/econ-inflation.ts
+  98c4da333fabb825 2,18-28,30-31,33-35,37-38,40-41,46-73
+src/lib/charts/BhgMarkersPrimitive.ts
+  38237f2e1025a170 54-72,124-125,127-128,140,156,158-159,169,182-183,186,234-236
+  7b2d3b151b1de3ee 226-227
+src/components/MesIntraday/CorrelationTile.tsx
+  7b2d3b151b1de3ee 42,49-51,56,68-75,79-92,95,97-98,104-105
+src/components/LiveMesChart.tsx
+  7b2d3b151b1de3ee 10,272,332-334,431-433
+src/components/MesIntraday/SignalTile.tsx
+  7b2d3b151b1de3ee 12-13,15-17,25-31,33-35,39-40,48,50,53-72
+src/inngest/functions/econ-commodities.ts
+  98c4da333fabb825 2,18-28,30-31,33-35,37-38,40-41,46-73
+src/inngest/functions/news-signals.ts
+  98c4da333fabb825 2,16-25,27-28,30-35,37-61
+scripts/ingest-fred-news.ts
+  98c4da333fabb825 299-301,303-308
+  38237f2e1025a170 283-295,302,310-311,342
+src/inngest/functions/econ-calendar.ts
+  38237f2e1025a170 112
+  98c4da333fabb825 2,28-34,43-44,46,49-58,63-69,73-75,78-79,84-91,99-108,110-111,113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "848c9927a4428d9a7782758faf3662faf98ba3cd",
+  "prompts": {}
+}
