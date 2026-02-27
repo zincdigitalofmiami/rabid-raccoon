@@ -29,13 +29,6 @@ import {
 } from './feature-availability'
 import {
   buildFredArray,
-  rollingPercentile,
-  rollingCorrelation,
-  rollingStdNullable,
-  rollingMinNullable,
-  deltaBack,
-  pctDeltaBack,
-  shockFlag,
 } from './feature-utils'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -144,29 +137,29 @@ const IDX_VVIX = featureIndex('fred_vvix')
 const IDX_FED_ASSETS = featureIndex('fred_fed_assets')
 const IDX_RRP = featureIndex('fred_rrp')
 // Phase 2: Additional feature indices for derived features
-const IDX_Y5Y = featureIndex('fred_y5y')
-const IDX_OVX = featureIndex('fred_ovx')
-const IDX_DFF = featureIndex('fred_dff')
-const IDX_SOFR = featureIndex('fred_sofr')
-const IDX_FED_TARGET_LOWER = featureIndex('fred_fed_target_lower')
-const IDX_FED_TARGET_UPPER = featureIndex('fred_fed_target_upper')
-const IDX_INFL5Y = featureIndex('fred_infl5y')
-const IDX_INFL10Y = featureIndex('fred_infl10y')
-const IDX_INFL5Y5Y = featureIndex('fred_infl5y5y')
-const IDX_DXY = featureIndex('fred_dxy')
-const IDX_JPYUSD = featureIndex('fred_jpyusd')
-const IDX_CNYUSD = featureIndex('fred_cnyusd')
-const IDX_CLAIMS = featureIndex('fred_claims')
-const IDX_CCSA = featureIndex('fred_continuing_claims')
-const IDX_UNEMPLOYMENT = featureIndex('fred_unemployment')
-const IDX_CONSUMER_SENT = featureIndex('fred_consumer_sent')
-const IDX_IND_PRODUCTION = featureIndex('fred_ind_production')
-const IDX_TRADE_BALANCE = featureIndex('fred_trade_balance')
-const IDX_WTI = featureIndex('fred_wti')
-const IDX_BRENT = featureIndex('fred_brent')
-const IDX_M2 = featureIndex('fred_m2')
-const IDX_EPU = featureIndex('fred_epu')
-const IDX_NFCI = featureIndex('fred_nfci')
+const _IDX_Y5Y = featureIndex('fred_y5y')
+const _IDX_OVX = featureIndex('fred_ovx')
+const _IDX_DFF = featureIndex('fred_dff')
+const _IDX_SOFR = featureIndex('fred_sofr')
+const _IDX_FED_TARGET_LOWER = featureIndex('fred_fed_target_lower')
+const _IDX_FED_TARGET_UPPER = featureIndex('fred_fed_target_upper')
+const _IDX_INFL5Y = featureIndex('fred_infl5y')
+const _IDX_INFL10Y = featureIndex('fred_infl10y')
+const _IDX_INFL5Y5Y = featureIndex('fred_infl5y5y')
+const _IDX_DXY = featureIndex('fred_dxy')
+const _IDX_JPYUSD = featureIndex('fred_jpyusd')
+const _IDX_CNYUSD = featureIndex('fred_cnyusd')
+const _IDX_CLAIMS = featureIndex('fred_claims')
+const _IDX_CCSA = featureIndex('fred_continuing_claims')
+const _IDX_UNEMPLOYMENT = featureIndex('fred_unemployment')
+const _IDX_CONSUMER_SENT = featureIndex('fred_consumer_sent')
+const _IDX_IND_PRODUCTION = featureIndex('fred_ind_production')
+const _IDX_TRADE_BALANCE = featureIndex('fred_trade_balance')
+const _IDX_WTI = featureIndex('fred_wti')
+const _IDX_BRENT = featureIndex('fred_brent')
+const _IDX_M2 = featureIndex('fred_m2')
+const _IDX_EPU = featureIndex('fred_epu')
+const _IDX_NFCI = featureIndex('fred_nfci')
 
 const FRED_LAG_BY_COLUMN = new Map(
   FRED_FEATURES.map((f) => [f.column, conservativeLagDaysForFrequency(f.frequency)])
@@ -174,8 +167,8 @@ const FRED_LAG_BY_COLUMN = new Map(
 
 // Phase 2: Lookback constants for 1h builder
 const BARS_PER_DAY = 24
-const VELOCITY_LOOKBACK = 5 * BARS_PER_DAY        // 5 trading days = 120 bars
-const MOMENTUM_20D_LOOKBACK = 20 * BARS_PER_DAY   // 20 trading days = 480 bars
+const _VELOCITY_LOOKBACK = 5 * BARS_PER_DAY        // 5 trading days = 120 bars
+const _MOMENTUM_20D_LOOKBACK = 20 * BARS_PER_DAY   // 20 trading days = 480 bars
 
 // ─── TYPES ────────────────────────────────────────────────────────────────
 
@@ -406,26 +399,26 @@ async function run(): Promise<void> {
   }
 
   // Arrays needed for velocity/momentum/percentile features
-  const vixArr = buildArr('fred_vix')
-  const hyOasArr = buildArr('fred_hy_oas')
-  const y10yArr = buildArr('fred_y10y')
-  const y2yArr = buildArr('fred_y2y')
-  const infl10yArr = buildArr('fred_infl10y')
-  const dxyArr = buildArr('fred_dxy')
-  const jpyArr = buildArr('fred_jpyusd')
-  const cnyArr = buildArr('fred_cnyusd')
-  const claimsArr = buildArr('fred_claims')
-  const ccsaArr = buildArr('fred_continuing_claims')
-  const unemploymentArr = buildArr('fred_unemployment')
-  const consumerSentArr = buildArr('fred_consumer_sent')
-  const indProArr = buildArr('fred_ind_production')
-  const tradeBalArr = buildArr('fred_trade_balance')
-  const wtiArr = buildArr('fred_wti')
-  const walclArr = buildArr('fred_fed_assets')
-  const rrpArr = buildArr('fred_rrp')
-  const m2Arr = buildArr('fred_m2')
-  const epuArr = buildArr('fred_epu')
-  const nfciArr = buildArr('fred_nfci')
+  const _vixArr = buildArr('fred_vix')
+  const _hyOasArr = buildArr('fred_hy_oas')
+  const _y10yArr = buildArr('fred_y10y')
+  const _y2yArr = buildArr('fred_y2y')
+  const _infl10yArr = buildArr('fred_infl10y')
+  const _dxyArr = buildArr('fred_dxy')
+  const _jpyArr = buildArr('fred_jpyusd')
+  const _cnyArr = buildArr('fred_cnyusd')
+  const _claimsArr = buildArr('fred_claims')
+  const _ccsaArr = buildArr('fred_continuing_claims')
+  const _unemploymentArr = buildArr('fred_unemployment')
+  const _consumerSentArr = buildArr('fred_consumer_sent')
+  const _indProArr = buildArr('fred_ind_production')
+  const _tradeBalArr = buildArr('fred_trade_balance')
+  const _wtiArr = buildArr('fred_wti')
+  const _walclArr = buildArr('fred_fed_assets')
+  const _rrpArr = buildArr('fred_rrp')
+  const _m2Arr = buildArr('fred_m2')
+  const _epuArr = buildArr('fred_epu')
+  const _nfciArr = buildArr('fred_nfci')
 
   console.log('[dataset] FRED arrays built for 20 series')
 
@@ -433,8 +426,8 @@ async function run(): Promise<void> {
   console.log('[dataset] Computing technical indicators...')
 
   const closes = candles.map((c) => c.close)
-  const highs = candles.map((c) => c.high)
-  const lows = candles.map((c) => c.low)
+  const _highs = candles.map((c) => c.high)
+  const _lows = candles.map((c) => c.low)
   const volumes = candles.map((c) => Number(c.volume ?? 0))
 
   const edss14 = computeEDSSComplete(closes)

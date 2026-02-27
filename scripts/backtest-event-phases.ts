@@ -421,7 +421,7 @@ function printBucketTable(stats: BucketStats[]): void {
 function deriveThresholds(
   preStats: BucketStats[],
   postStats: BucketStats[],
-  baselineTp1Rate: number
+  _baselineTp1Rate: number
 ): void {
   // APPROACHING: starts where hit rate drops >10% vs baseline (pre-event)
   // Walk from the farthest bucket inward until we find a significant drop

@@ -16,7 +16,7 @@ const MES_HOURLY_SCHEMA = 'ohlcv-1h'
 const NON_MES_DAILY_SCHEMA = 'ohlcv-1d'
 const NON_MES_HOURLY_SCHEMA = 'ohlcv-1h'
 /** @deprecated kept for log/audit compatibility */
-const NON_MES_RAW_SCHEMA = NON_MES_DAILY_SCHEMA
+const _NON_MES_RAW_SCHEMA = NON_MES_DAILY_SCHEMA
 
 interface DailyIngestOptions {
   dryRun?: boolean

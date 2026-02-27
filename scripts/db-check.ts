@@ -8,13 +8,13 @@ async function run() {
   try {
     const bhg = await prisma.bhgSetup.count()
     console.log("bhg_setups:", bhg)
-  } catch(e) { console.log("bhg_setups: TABLE NOT FOUND") }
+  } catch { console.log("bhg_setups: TABLE NOT FOUND") }
 
-  // News signals  
+  // News signals
   try {
     const ns = await prisma.newsSignal.count()
     console.log("news_signals:", ns)
-  } catch(e) { console.log("news_signals: TABLE NOT FOUND") }
+  } catch { console.log("news_signals: TABLE NOT FOUND") }
 
   // Calendar
   const cal = await prisma.econCalendar.count()

@@ -28,6 +28,7 @@ measured-move/output/
 datasets/autogluon/
 datasets/options-ohlcv/
 datasets/options-ohlcv-raw/
+datasets/options-agg/
 datasets/options-statistics/
 datasets/options-statistics-raw/
 models/

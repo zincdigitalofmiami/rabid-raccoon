@@ -54,7 +54,6 @@ function HorizonBar({
   label,
   prob,
   direction,
-  isBull,
 }: {
   label: string
   prob: number | null

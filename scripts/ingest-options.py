@@ -107,12 +107,13 @@ def load_env() -> dict[str, str]:
 
 
 def get_engine():
-    """Create SQLAlchemy engine from DIRECT_URL."""
+    """Create SQLAlchemy engine. Uses LOCAL_DATABASE_URL when available
+    (local dev, zero Accelerate cost), falls back to DIRECT_URL (production)."""
     from sqlalchemy import create_engine
     env = load_env()
-    url = env.get("DIRECT_URL")
+    url = env.get("LOCAL_DATABASE_URL") or env.get("DIRECT_URL")
     if not url:
-        raise RuntimeError("DIRECT_URL not found in .env.local")
+        raise RuntimeError("Neither LOCAL_DATABASE_URL nor DIRECT_URL found in .env.local")
     # SQLAlchemy requires postgresql:// not postgres://
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]

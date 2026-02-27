@@ -165,7 +165,7 @@ function TradeCard({ trade }: { trade: ScoredTrade }) {
 // Event Phase Card
 // ─────────────────────────────────────────────
 
-function EventCard({ phase, label }: { phase: string; label: string }) {
+function _EventCard({ phase, label }: { phase: string; label: string }) {
   const colors: Record<string, { bg: string; text: string; border: string; dot: string }> = {
     CLEAR: { bg: 'bg-emerald-500/5', text: 'text-emerald-400', border: 'border-emerald-500/10', dot: 'bg-emerald-400' },
     APPROACHING: { bg: 'bg-yellow-500/5', text: 'text-yellow-400', border: 'border-yellow-500/10', dot: 'bg-yellow-400' },
@@ -199,7 +199,7 @@ export default function TradeDashboard() {
   const { data: setupsData } = useMesSetups()
 
   const tradeCount = tradesData.trades.length
-  const currentPrice = tradesData.currentPrice
+  const _currentPrice = tradesData.currentPrice
 
   return (
     <div className="min-h-screen bg-[#0a0a0f]">

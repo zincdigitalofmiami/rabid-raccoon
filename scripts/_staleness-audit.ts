@@ -84,8 +84,9 @@ async function queryTable(
         `  rows: ${r?.count ?? 0} | from: ${r?.min_date?.toISOString().slice(0, 10) ?? 'N/A'} | to: ${r?.max_date?.toISOString().slice(0, 10) ?? 'N/A'} | days stale: ${daysStale}`
       )
     }
-  } catch (e: any) {
-    console.log(`\n=== ${table} === ERROR: ${e.message?.slice(0, 120)}`)
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : String(e)
+    console.log(`\n=== ${table} === ERROR: ${errMsg.slice(0, 120)}`)
   }
 }
 
@@ -155,8 +156,9 @@ async function main() {
         rowsInserted: r.rows_inserted,
       }))
     )
-  } catch (e: any) {
-    console.log(`  ERROR: ${e.message?.slice(0, 120)}`)
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : String(e)
+    console.log(`  ERROR: ${errMsg.slice(0, 120)}`)
   }
 
   // ── Summary ──

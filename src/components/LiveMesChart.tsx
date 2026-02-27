@@ -7,7 +7,6 @@ import {
   createChart,
   IChartApi,
   ISeriesApi,
-  LastPriceAnimationMode,
   LineStyle,
   TickMarkType,
   Time,
@@ -331,7 +330,6 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
       wickDownColor: 'rgba(178,181,190,0.83)',
       priceLineVisible: false,
       lastValueVisible: false,
-      lastPriceAnimation: LastPriceAnimationMode.Disabled,
       priceFormat: {
         type: 'price',
         precision: 2,
@@ -557,7 +555,6 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(function 
       futureBars: 16,
       barInterval: BAR_INTERVAL_SEC,
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartSetups, lastPrice])
 
   const changeColor = priceChange >= 0 ? TV.bull.bright : TV.bear.bright

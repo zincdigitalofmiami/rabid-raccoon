@@ -47,7 +47,8 @@ async function main() {
         from: r.min_date?.toISOString().slice(0, 10) ?? 'N/A',
         to: r.max_date?.toISOString().slice(0, 10) ?? 'N/A',
       })))
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e)
       // news_signals doesn't have seriesId — handle separately
       if (table === 'news_signals') {
         try {
@@ -64,11 +65,12 @@ async function main() {
             from: r.min_date?.toISOString().slice(0, 10) ?? 'N/A',
             to: r.max_date?.toISOString().slice(0, 10) ?? 'N/A',
           })))
-        } catch (e2: any) {
-          console.log(`\n=== ${table} === ERROR: ${e2.message?.slice(0, 100)}`)
+        } catch (e2: unknown) {
+          const e2Msg = e2 instanceof Error ? e2.message : String(e2)
+          console.log(`\n=== ${table} === ERROR: ${e2Msg.slice(0, 100)}`)
         }
       } else {
-        console.log(`\n=== ${table} === ERROR: ${e.message?.slice(0, 100)}`)
+        console.log(`\n=== ${table} === ERROR: ${errMsg.slice(0, 100)}`)
       }
     }
   }

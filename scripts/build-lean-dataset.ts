@@ -138,12 +138,12 @@ function featureIndex(column: string): number {
 }
 
 const IDX_VIX = featureIndex('fred_vix')
-const IDX_DFF = featureIndex('fred_dff')
+const _IDX_DFF = featureIndex('fred_dff')
 const IDX_FED_TARGET_LOWER = featureIndex('fred_fed_target_lower')
 const IDX_FED_TARGET_UPPER = featureIndex('fred_fed_target_upper')
 const IDX_Y2Y = featureIndex('fred_y2y')
 const IDX_Y10Y = featureIndex('fred_y10y')
-const IDX_DXY = featureIndex('fred_dxy')
+const _IDX_DXY = featureIndex('fred_dxy')
 const IDX_IG_OAS = featureIndex('fred_ig_oas')
 const IDX_HY_OAS = featureIndex('fred_hy_oas')
 const IDX_FED_ASSETS = featureIndex('fred_fed_assets')
@@ -807,6 +807,7 @@ async function run(): Promise<void> {
   const now = new Date()
   while (chunkStart < now) {
     const chunkEnd = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, now.getTime()))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rawChunk = await (prisma as any)[tableName].findMany({
       where: { eventTime: { gte: chunkStart, lt: chunkEnd } },
       orderBy: { eventTime: 'asc' },
@@ -1093,7 +1094,7 @@ async function run(): Promise<void> {
   const eurusdArr = buildArr('fred_eurusd')
   const jpyusdArr = buildArr('fred_jpyusd')
   const wtiArr = buildArr('fred_wti')
-  const copperArr = buildArr('fred_copper')
+  const _copperArr = buildArr('fred_copper')
   const fedAssetsArr = buildArr('fred_fed_assets')
   const rrpArr = buildArr('fred_rrp')
   const claimsArr = buildArr('fred_claims')

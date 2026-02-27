@@ -10,7 +10,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
-import type { BhgSetup, SetupDirection } from '@/lib/bhg-engine'
+import type { BhgSetup } from '@/lib/bhg-engine'
 import type { RiskResult } from '@/lib/risk-engine'
 import type { EventContext } from '@/lib/event-awareness'
 import type { MarketContext } from '@/lib/market-context'
@@ -512,7 +512,7 @@ export async function computeTradeFeatures(
   const mmAlign = checkMeasuredMoveAlignment(setup, measuredMoves)
 
   // VIX — extract from market context correlations
-  const vixCorr = marketContext.correlations.find(c => c.pair.includes('VX'))
+  const _vixCorr = marketContext.correlations.find(c => c.pair.includes('VX'))
   // VIX level approximated from breakout7000 or yield context
   // The actual VIX spot is not stored directly — we use correlation as proxy
   const vixLvl: number | null = null // BACKTEST-TBD: wire VIX spot from data source

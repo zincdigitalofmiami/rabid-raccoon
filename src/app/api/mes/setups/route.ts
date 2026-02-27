@@ -9,7 +9,7 @@ import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
 import { toNum } from '@/lib/decimal'
 import type { Decimal } from '@prisma/client/runtime/client'
 import type { CandleData } from '@/lib/types'
-import { getEventContext, loadTodayEvents, EventContext } from '@/lib/event-awareness'
+import { getEventContext, loadTodayEvents } from '@/lib/event-awareness'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
