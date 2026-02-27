@@ -62,11 +62,15 @@ Acceptance:
 ### 3.4 Historical Backfill (Staging, Required)
 
 ```bash
-NODE_ENV=production DATABASE_URL="$DIRECT_URL" npx tsx scripts/backfill-mes-1h-1d.ts
+NODE_ENV=production DATABASE_URL="$DIRECT_URL" npx tsx scripts/backfill-mes-1h-1d.ts --strict
 ```
 
 Notes:
 - Script default range is `2019-12-01` to now.
+- Optional targeted range:
+  - `--start=YYYY-MM-DDT00:00:00Z --end=YYYY-MM-DDT00:00:00Z`
+- Manifest is always written (default under `reports/backfill/`), and can be retried:
+  - `--retry-manifest=<manifest.json>` to rerun only failed/partial month chunks.
 - Script auto-populates:
   - `mkt_futures_mes_1h` (from `ohlcv-1h`)
   - `mkt_futures_mes_1d` (from `ohlcv-1d`)
@@ -150,7 +154,13 @@ TRUNCATE TABLE mkt_futures_mes_4h, mkt_futures_mes_1w RESTART IDENTITY;
 ```
 
 3. Re-run section 3.4 and 3.5.
-4. If repeated failure, stop and investigate data/API availability before retry.
+4. Use targeted retry from manifest to avoid full-history reruns:
+
+```bash
+NODE_ENV=production DATABASE_URL="$DIRECT_URL" npx tsx scripts/backfill-mes-1h-1d.ts --retry-manifest=<manifest-path> --strict
+```
+
+5. If repeated failure, stop and investigate data/API availability before retry.
 
 ### 7.3 Wrong Database Targeted
 

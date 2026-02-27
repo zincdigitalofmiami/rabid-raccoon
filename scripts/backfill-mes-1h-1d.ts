@@ -1,13 +1,22 @@
 /**
  * backfill-mes-1h-1d.ts
- * 
+ *
  * Pulls MES.c.0 ohlcv-1h and ohlcv-1d from Databento for the full date range,
  * chunks by month, and batch-inserts into mkt_futures_mes_1h and mkt_futures_mes_1d.
  * Then derives and upserts mkt_futures_mes_4h and mkt_futures_mes_1w.
  * Uses skipDuplicates so it's fully idempotent — run it as many times as you want.
+ *
+ * Flags:
+ *   --start=ISO                 Override start boundary (default: 2019-12-01T00:00:00Z)
+ *   --end=ISO                   Override end boundary (default: now UTC)
+ *   --strict                    Exit non-zero if any month/schema fetch failed
+ *   --manifest-out=PATH         Write manifest JSON to custom path
+ *   --retry-manifest=PATH       Retry only failed month chunks from prior manifest
  */
 import { Prisma } from '@prisma/client'
 import { createHash } from 'node:crypto'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { logResolvedDbTarget, resolvePrismaRuntimeUrl } from '../src/lib/db-url'
 import { prisma } from '../src/lib/prisma'
 import { loadDotEnvFiles } from './ingest-utils'
@@ -20,10 +29,116 @@ const MES_DATASET = 'GLBX.MDP3'
 const MES_SYMBOL = 'MES.c.0'
 const BATCH_SIZE = 100  // Prisma Accelerate safe
 const REQUEST_TIMEOUT_MS = 120_000
+const DEFAULT_START = '2019-12-01T00:00:00Z'
+const SCRIPT_NAME = 'scripts/backfill-mes-1h-1d.ts'
+const SCHEMA_KEYS = ['ohlcv-1h', 'ohlcv-1d'] as const
 
 interface RawRecord {
   hd: { ts_event: string; publisher_id: number; instrument_id: number }
   open: number; high: number; low: number; close: number; volume: number
+}
+
+type ChunkRange = { start: string; end: string }
+type SchemaKey = (typeof SCHEMA_KEYS)[number]
+type SchemaChunkStatus = 'ok' | 'failed'
+type ChunkStatus = 'ok' | 'partial' | 'failed'
+
+interface SchemaChunkResult {
+  status: SchemaChunkStatus
+  fetched: number
+  inserted: number
+  error: string | null
+}
+
+interface ChunkResult {
+  month: string
+  start: string
+  end: string
+  status: ChunkStatus
+  schemas: Record<SchemaKey, SchemaChunkResult>
+}
+
+interface BackfillManifest {
+  generatedAt: string
+  script: string
+  options: {
+    start: string
+    end: string
+    strict: boolean
+    retryManifest: string | null
+    manifestOut: string
+  }
+  summary: {
+    totalChunks: number
+    okChunks: number
+    partialChunks: number
+    failedChunks: number
+    failedSchemas: Record<SchemaKey, number>
+    inserted: {
+      mes1h: number
+      mes1d: number
+      mes4h: number
+      mes1w: number
+    }
+  }
+  failedMonths: string[]
+  retryCommand: string | null
+  chunks: ChunkResult[]
+}
+
+interface CliOptions {
+  start: string
+  end: string
+  strict: boolean
+  retryManifest: string | null
+  manifestOut: string
+}
+
+function getArgValue(name: string): string | null {
+  const prefix = `--${name}=`
+  const arg = process.argv.find((entry) => entry.startsWith(prefix))
+  return arg ? arg.slice(prefix.length).trim() : null
+}
+
+function hasFlag(name: string): boolean {
+  return process.argv.includes(`--${name}`)
+}
+
+function asIsoOrThrow(value: string, label: string): string {
+  const parsed = new Date(value)
+  if (!Number.isFinite(parsed.getTime())) {
+    throw new Error(`Invalid --${label} value "${value}" (must be ISO timestamp or parseable date)`)
+  }
+  return parsed.toISOString()
+}
+
+function makeManifestPath(): string {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
+  return resolve(`reports/backfill/mes-1h-1d-manifest-${stamp}.json`)
+}
+
+function parseCliOptions(): CliOptions {
+  const retryManifest = getArgValue('retry-manifest')
+  if (retryManifest && (getArgValue('start') || getArgValue('end'))) {
+    throw new Error('Do not combine --retry-manifest with --start/--end. Choose one mode.')
+  }
+
+  const strictValue = getArgValue('strict')
+  const strict = hasFlag('strict') || strictValue === '1' || strictValue === 'true'
+  const start = asIsoOrThrow(getArgValue('start') || DEFAULT_START, 'start')
+  const end = asIsoOrThrow(getArgValue('end') || new Date().toISOString(), 'end')
+  if (new Date(start) >= new Date(end)) {
+    throw new Error(`Invalid range: --start ${start} must be before --end ${end}`)
+  }
+
+  const manifestOut = resolve(getArgValue('manifest-out') || makeManifestPath())
+  return {
+    start,
+    end,
+    strict,
+    retryManifest: retryManifest ? resolve(retryManifest) : null,
+    manifestOut,
+  }
 }
 
 // ── Databento fetch (raw HTTP, no SDK needed) ─────────────────────────────────
@@ -101,6 +216,96 @@ function monthChunks(startIso: string, endIso: string): Array<{ start: string; e
     cursor = next
   }
   return chunks
+}
+
+function normalizeChunkRange(start: unknown, end: unknown): ChunkRange {
+  if (typeof start !== 'string' || typeof end !== 'string') {
+    throw new Error('Manifest chunk is missing start/end ISO strings')
+  }
+  return {
+    start: asIsoOrThrow(start, 'retry-manifest.start'),
+    end: asIsoOrThrow(end, 'retry-manifest.end'),
+  }
+}
+
+function chunksFromRetryManifest(filePath: string): ChunkRange[] {
+  const raw = JSON.parse(readFileSync(filePath, 'utf8')) as { chunks?: unknown[] }
+  if (!Array.isArray(raw?.chunks)) {
+    throw new Error(`Retry manifest at ${filePath} has no "chunks" array`)
+  }
+
+  const failed = raw.chunks
+    .map((entry) => entry as { status?: string; start?: unknown; end?: unknown })
+    .filter((entry) => entry.status === 'failed' || entry.status === 'partial')
+    .map((entry) => normalizeChunkRange(entry.start, entry.end))
+
+  const deduped = new Map<string, ChunkRange>()
+  for (const chunk of failed) {
+    deduped.set(`${chunk.start}|${chunk.end}`, chunk)
+  }
+
+  const ranges = [...deduped.values()].sort((a, b) => a.start.localeCompare(b.start))
+  if (ranges.length === 0) {
+    throw new Error(`Retry manifest ${filePath} has no failed/partial chunks to retry`)
+  }
+  return ranges
+}
+
+function emptySchemaResult(): Record<SchemaKey, SchemaChunkResult> {
+  return {
+    'ohlcv-1h': { status: 'ok', fetched: 0, inserted: 0, error: null },
+    'ohlcv-1d': { status: 'ok', fetched: 0, inserted: 0, error: null },
+  }
+}
+
+function deriveChunkStatus(result: ChunkResult): ChunkStatus {
+  const failures = SCHEMA_KEYS.filter((schema) => result.schemas[schema].status === 'failed').length
+  if (failures === 0) return 'ok'
+  if (failures === SCHEMA_KEYS.length) return 'failed'
+  return 'partial'
+}
+
+function buildManifest(options: CliOptions, chunks: ChunkResult[], inserted: BackfillManifest['summary']['inserted']): BackfillManifest {
+  const okChunks = chunks.filter((chunk) => chunk.status === 'ok').length
+  const partialChunks = chunks.filter((chunk) => chunk.status === 'partial').length
+  const failedChunks = chunks.filter((chunk) => chunk.status === 'failed').length
+  const failedSchemas: Record<SchemaKey, number> = {
+    'ohlcv-1h': chunks.filter((chunk) => chunk.schemas['ohlcv-1h'].status === 'failed').length,
+    'ohlcv-1d': chunks.filter((chunk) => chunk.schemas['ohlcv-1d'].status === 'failed').length,
+  }
+  const failedMonths = chunks.filter((chunk) => chunk.status !== 'ok').map((chunk) => chunk.month)
+
+  const retryCommand = failedMonths.length > 0
+    ? `npx tsx ${SCRIPT_NAME} --retry-manifest=${options.manifestOut}${options.strict ? ' --strict' : ''}`
+    : null
+
+  return {
+    generatedAt: new Date().toISOString(),
+    script: SCRIPT_NAME,
+    options: {
+      start: options.start,
+      end: options.end,
+      strict: options.strict,
+      retryManifest: options.retryManifest,
+      manifestOut: options.manifestOut,
+    },
+    summary: {
+      totalChunks: chunks.length,
+      okChunks,
+      partialChunks,
+      failedChunks,
+      failedSchemas,
+      inserted,
+    },
+    failedMonths,
+    retryCommand,
+    chunks,
+  }
+}
+
+function writeManifest(filePath: string, manifest: BackfillManifest): void {
+  mkdirSync(dirname(filePath), { recursive: true })
+  writeFileSync(filePath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 }
 
 // ── Hash helpers ──────────────────────────────────────────────────────────────
@@ -321,30 +526,56 @@ async function main() {
   logResolvedDbTarget('backfill-mes-1h-1d', target)
   if (!process.env.DATABENTO_API_KEY) throw new Error('DATABENTO_API_KEY required')
 
-  const START = '2019-12-01T00:00:00Z'  // a bit before 2020-01 for safety
-  const END = new Date().toISOString()
-  const chunks = monthChunks(START, END)
+  const options = parseCliOptions()
+  const chunks = options.retryManifest
+    ? chunksFromRetryManifest(options.retryManifest)
+    : monthChunks(options.start, options.end)
 
-  console.log(`[backfill] ${chunks.length} month chunks from ${START} to ${END}`)
+  console.log(
+    options.retryManifest
+      ? `[backfill] retry mode from manifest ${options.retryManifest} (${chunks.length} failed/partial month chunks)`
+      : `[backfill] ${chunks.length} month chunks from ${options.start} to ${options.end}`
+  )
 
   let total1h = 0
   let total1d = 0
   const all1hRecords: RawRecord[] = []
   const all1dRecords: RawRecord[] = []
+  const chunkResults: ChunkResult[] = []
 
   for (let i = 0; i < chunks.length; i++) {
     const { start, end } = chunks[i]
     const label = start.slice(0, 7)
-    
+    const chunkResult: ChunkResult = {
+      month: label,
+      start,
+      end,
+      status: 'ok',
+      schemas: emptySchemaResult(),
+    }
+
     // ── 1h ──
     try {
       const records1h = await fetchDatabento('ohlcv-1h', start, end)
       const ins1h = await insert1h(records1h)
       all1hRecords.push(...records1h)
       total1h += ins1h
+      chunkResult.schemas['ohlcv-1h'] = {
+        status: 'ok',
+        fetched: records1h.length,
+        inserted: ins1h,
+        error: null,
+      }
       console.log(`[1h] ${label}  fetched=${records1h.length}  inserted=${ins1h}  total=${total1h}`)
     } catch (err) {
-      console.error(`[1h] ${label} FAILED: ${err instanceof Error ? err.message : err}`)
+      const message = err instanceof Error ? err.message : String(err)
+      chunkResult.schemas['ohlcv-1h'] = {
+        status: 'failed',
+        fetched: 0,
+        inserted: 0,
+        error: message,
+      }
+      console.error(`[1h] ${label} FAILED: ${message}`)
     }
 
     // ── 1d ──
@@ -353,20 +584,63 @@ async function main() {
       const ins1d = await insert1d(records1d)
       all1dRecords.push(...records1d)
       total1d += ins1d
+      chunkResult.schemas['ohlcv-1d'] = {
+        status: 'ok',
+        fetched: records1d.length,
+        inserted: ins1d,
+        error: null,
+      }
       console.log(`[1d] ${label}  fetched=${records1d.length}  inserted=${ins1d}  total=${total1d}`)
     } catch (err) {
-      console.error(`[1d] ${label} FAILED: ${err instanceof Error ? err.message : err}`)
+      const message = err instanceof Error ? err.message : String(err)
+      chunkResult.schemas['ohlcv-1d'] = {
+        status: 'failed',
+        fetched: 0,
+        inserted: 0,
+        error: message,
+      }
+      console.error(`[1d] ${label} FAILED: ${message}`)
     }
+
+    chunkResult.status = deriveChunkStatus(chunkResult)
+    chunkResults.push(chunkResult)
   }
 
   const total4h = await insert4hFromRaw1h(all1hRecords)
   const total1w = await insert1wFromRaw1d(all1dRecords)
 
+  const manifest = buildManifest(options, chunkResults, {
+    mes1h: total1h,
+    mes1d: total1d,
+    mes4h: total4h,
+    mes1w: total1w,
+  })
+  writeManifest(options.manifestOut, manifest)
+
   console.log(`\n[DONE] 1h inserted: ${total1h}  |  1d inserted: ${total1d}  |  4h inserted: ${total4h}  |  1w inserted: ${total1w}`)
-  await prisma.$disconnect()
+  console.log(`[manifest] ${options.manifestOut}`)
+
+  if (manifest.summary.failedChunks > 0 || manifest.summary.partialChunks > 0) {
+    console.warn(
+      `[warn] chunk failures detected: failed=${manifest.summary.failedChunks}, partial=${manifest.summary.partialChunks}, ` +
+      `schema failures 1h=${manifest.summary.failedSchemas['ohlcv-1h']}, 1d=${manifest.summary.failedSchemas['ohlcv-1d']}`
+    )
+    if (manifest.retryCommand) {
+      console.warn(`[action] retry only failed chunks:\n  ${manifest.retryCommand}`)
+    }
+  }
+
+  if (options.strict && (manifest.summary.failedChunks > 0 || manifest.summary.partialChunks > 0)) {
+    throw new Error(
+      `Strict mode failed: ${manifest.summary.failedChunks} failed chunks and ${manifest.summary.partialChunks} partial chunks. ` +
+      `See manifest at ${options.manifestOut}`
+    )
+  }
 }
 
 main().catch(err => {
   console.error('[FATAL]', err)
-  process.exit(1)
+  process.exitCode = 1
+}).finally(async () => {
+  await prisma.$disconnect()
 })
