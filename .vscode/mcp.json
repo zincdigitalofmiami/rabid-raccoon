@@ -1,12 +1,17 @@
 {
   "servers": {
     "memory": {
+      "type": "sse",
+      "url": "http://localhost:8765/mcp/claude/sse/zincdigital"
+    },
+    "MCP_DOCKER": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"],
-      "env": {
-        "MEMORY_FILE_PATH": "/Volumes/Satechi Hub/rabid-raccoon/.claude/memory.jsonl"
-      }
+      "command": "docker",
+      "args": [
+        "mcp",
+        "gateway",
+        "run"
+      ]
     }
   }
 }
