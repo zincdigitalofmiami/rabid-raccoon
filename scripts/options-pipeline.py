@@ -252,9 +252,9 @@ def preflight(env: dict) -> tuple:
         try:
             with engine.connect() as c:
                 ohlcv_count = c.execute(text('SELECT count(*) FROM mkt_options_ohlcv_1d')).scalar()
-                agg_count = c.execute(text('SELECT count(*) FROM mkt_options_agg_1d')).scalar()
+                agg_count = c.execute(text('SELECT count(*) FROM mkt_options_statistics_1d')).scalar()
                 log.info(f"{label} mkt_options_ohlcv_1d: {ohlcv_count:,} rows")
-                log.info(f"{label} mkt_options_agg_1d:   {agg_count:,} rows")
+                log.info(f"{label} mkt_options_statistics_1d:   {agg_count:,} rows")
         except Exception as e:
             log.warn(f"Could not read {label} row counts: {e}")
 
@@ -679,7 +679,7 @@ def ingest_ohlcv(engine, target_parent: str | None, dry_run: bool) -> int:
 
 
 def ingest_stats(engine, target_parent: str | None, dry_run: bool) -> int:
-    """Ingest statistics parent parquets into mkt_options_agg_1d."""
+    """Ingest statistics parent parquets into mkt_options_statistics_1d."""
     from sqlalchemy import text
 
     parent_dirs = get_parent_dirs(STATS_DIR, target_parent)
@@ -687,9 +687,9 @@ def ingest_stats(engine, target_parent: str | None, dry_run: bool) -> int:
         log.info("  Statistics: no parent directories found (Databento jobs still processing)")
         return 0
 
-    log.info(f"  Statistics: {len(parent_dirs)} parents → mkt_options_agg_1d")
+    log.info(f"  Statistics: {len(parent_dirs)} parents → mkt_options_statistics_1d")
     upsert_sql = text("""
-        INSERT INTO mkt_options_agg_1d
+        INSERT INTO mkt_options_statistics_1d
             ("parentSymbol", "eventDate", "totalVolume", "totalOI",
              settlement, "avgIV", "contractCount",
              source, "sourceDataset", "sourceSchema", "rowHash",
@@ -769,7 +769,7 @@ def validate(local_engine, prod_engine):
 
     log.header("POST-INGESTION VALIDATION")
 
-    for table in ["mkt_options_ohlcv_1d", "mkt_options_agg_1d"]:
+    for table in ["mkt_options_ohlcv_1d", "mkt_options_statistics_1d"]:
         local_count, local_max = query_table_stats(local_engine, "local", table)
         prod_count, prod_max = query_table_stats(prod_engine, "prod", table)
 

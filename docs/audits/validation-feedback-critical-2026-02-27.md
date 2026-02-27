@@ -59,11 +59,11 @@ The **unique constraint** already exists. The missing piece is a **non-unique co
 
 ```sql
 -- Currently have:
-@@unique([parentSymbol, eventDate], map: "mkt_options_agg_1d_parent_date_key") ✅
+@@unique([parentSymbol, eventDate], map: "mkt_options_statistics_1d_parent_date_key") ✅
 
 -- Miss for dashboard range queries like:
 -- WHERE parentSymbol = 'ES.OPT' AND eventDate BETWEEN ? AND ?
-@@index([parentSymbol, eventDate], map: "mkt_options_agg_1d_parent_date_idx")  ← ADD THIS
+@@index([parentSymbol, eventDate], map: "mkt_options_statistics_1d_parent_date_idx")  ← ADD THIS
 ```
 
 **Action:** Reframe finding to specify non-unique index gap for range-query optimization.

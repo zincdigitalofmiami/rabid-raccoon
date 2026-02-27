@@ -4,7 +4,7 @@ Ingest options data from per-parent parquet files into Postgres.
 
 Reads:
   datasets/options-ohlcv/{PARENT}/YYYY-MM.parquet   → mkt_options_ohlcv_1d
-  datasets/options-statistics/{PARENT}/YYYY-MM.parquet → mkt_options_agg_1d
+  datasets/options-statistics/{PARENT}/YYYY-MM.parquet → mkt_options_statistics_1d
 
 Aggregates per day per parent, inserts via UPSERT (ON CONFLICT UPDATE).
 Uses LOCAL_DATABASE_URL first, then DIRECT_URL fallback for Postgres connection.
@@ -299,7 +299,7 @@ def _build_stats_rows(parent_symbol: str, df: pd.DataFrame) -> list[dict]:
 
 
 def ingest_statistics(engine, target_parent: str | None, dry_run: bool) -> int:
-    """Read statistics parquets → aggregate per day → upsert into mkt_options_agg_1d."""
+    """Read statistics parquets → aggregate per day → upsert into mkt_options_statistics_1d."""
     from sqlalchemy import text
 
     parents = list_parents(STATS_DIR, target_parent)
@@ -308,7 +308,7 @@ def ingest_statistics(engine, target_parent: str | None, dry_run: bool) -> int:
         return 0
 
     print(f"\n{'='*60}")
-    print(f"Statistics Ingestion: {len(parents)} parents → mkt_options_agg_1d")
+    print(f"Statistics Ingestion: {len(parents)} parents → mkt_options_statistics_1d")
     print(f"{'='*60}")
 
     total_rows = 0
@@ -340,7 +340,7 @@ def ingest_statistics(engine, target_parent: str | None, dry_run: bool) -> int:
             continue
 
         upsert_sql = text("""
-            INSERT INTO mkt_options_agg_1d
+            INSERT INTO mkt_options_statistics_1d
                 ("parentSymbol", "eventDate", "totalVolume", "totalOI",
                  settlement, "avgIV", "contractCount",
                  source, "sourceDataset", "sourceSchema", "rowHash",
