@@ -149,6 +149,7 @@ async function fetchDatabento(schema: string, start: string, end: string): Promi
   const basicAuth = Buffer.from(`${apiKey}:`).toString('base64')
 
   let queryEnd = end
+  let lastFailure: string | null = null
   for (let attempt = 0; attempt < 4; attempt++) {
     const body = new URLSearchParams({
       dataset: MES_DATASET,
@@ -172,7 +173,10 @@ async function fetchDatabento(schema: string, start: string, end: string): Promi
       })
     } catch (err) {
       clearTimeout(timeout)
-      if (err instanceof Error && err.message.includes('aborted')) { continue }
+      if (err instanceof Error && err.message.includes('aborted')) {
+        lastFailure = `request timed out after ${REQUEST_TIMEOUT_MS}ms`
+        continue
+      }
       throw err
     }
     clearTimeout(timeout)
@@ -195,9 +199,12 @@ async function fetchDatabento(schema: string, start: string, end: string): Promi
       const availEnd = detail?.detail?.payload?.available_end
       if (availEnd && availEnd !== queryEnd) { queryEnd = availEnd; continue }
     } catch { /* fall through */ }
+    lastFailure = `Databento 422: ${errText.slice(0, 300)}`
     break
   }
-  return []
+  throw new Error(
+    `Databento fetch failed (${schema} ${start} → ${end})${lastFailure ? `: ${lastFailure}` : ''}`
+  )
 }
 
 // ── Month chunker ─────────────────────────────────────────────────────────────
