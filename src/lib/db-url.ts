@@ -47,6 +47,15 @@ export function resolvePrismaRuntimeUrl(): ResolvedDbTarget {
   const local = process.env.LOCAL_DATABASE_URL
   const database = process.env.DATABASE_URL
 
+  if (isProd) {
+    if (database) {
+      return buildTarget('prisma-runtime', 'DATABASE_URL', database)
+    }
+    throw new Error(
+      'Prisma runtime URL resolution failed in production: DATABASE_URL is required.'
+    )
+  }
+
   if (!isProd && local) {
     return buildTarget('prisma-runtime', 'LOCAL_DATABASE_URL', local)
   }
@@ -62,10 +71,18 @@ export function resolvePrismaRuntimeUrl(): ResolvedDbTarget {
 }
 
 export function resolveDirectPgUrl(): ResolvedDbTarget {
+  const isProd = process.env.NODE_ENV === 'production'
   const local = process.env.LOCAL_DATABASE_URL
-  if (local) return buildTarget('direct-pg', 'LOCAL_DATABASE_URL', local)
-
   const direct = process.env.DIRECT_URL
+
+  if (isProd) {
+    if (direct) return buildTarget('direct-pg', 'DIRECT_URL', direct)
+    throw new Error(
+      'Direct pg URL resolution failed in production: DIRECT_URL is required.'
+    )
+  }
+
+  if (local) return buildTarget('direct-pg', 'LOCAL_DATABASE_URL', local)
   if (direct) return buildTarget('direct-pg', 'DIRECT_URL', direct)
 
   throw new Error(
