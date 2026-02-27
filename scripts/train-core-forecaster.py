@@ -65,7 +65,7 @@ import argparse
 parser = argparse.ArgumentParser(description="MES Core Return Forecaster")
 parser.add_argument("--timeframe", default="1h", choices=["1h"],
                     help="Compatibility flag. 15m training is retired; only 1h dataset is supported.")
-parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (1h,4h)")
+parser.add_argument("--horizons", default=None, help="Comma-separated horizons to train (1h,4h,1d,1w)")
 parser.add_argument("--mode", default="classify", choices=["classify", "regress", "volnorm"],
                     help="classify: directional (up/down) with roc_auc. "
                          "regress: raw return with MAE. "
@@ -100,22 +100,28 @@ OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "core_oof_1h.csv"
 HORIZONS_CLASSIFY = {
     "1h": {"target": "target_dir_1h", "purge_bars": 1, "embargo_bars": 2},
     "4h": {"target": "target_dir_4h", "purge_bars": 4, "embargo_bars": 8},
+    "1d": {"target": "target_dir_1d", "purge_bars": 24, "embargo_bars": 48},
+    "1w": {"target": "target_dir_1w", "purge_bars": 120, "embargo_bars": 240},
 }
 HORIZONS_REGRESS = {
     "1h": {"target": "target_ret_1h", "purge_bars": 1, "embargo_bars": 2},
     "4h": {"target": "target_ret_4h", "purge_bars": 4, "embargo_bars": 8},
+    "1d": {"target": "target_ret_1d", "purge_bars": 24, "embargo_bars": 48},
+    "1w": {"target": "target_ret_1w", "purge_bars": 120, "embargo_bars": 240},
 }
 HORIZONS_VOLNORM = {
     "1h": {"target": "target_ret_norm_1h", "purge_bars": 1, "embargo_bars": 2},
     "4h": {"target": "target_ret_norm_4h", "purge_bars": 4, "embargo_bars": 8},
+    "1d": {"target": "target_ret_norm_1d", "purge_bars": 24, "embargo_bars": 48},
+    "1w": {"target": "target_ret_norm_1w", "purge_bars": 120, "embargo_bars": 240},
 }
 
 # All target columns in this dataset — never used as features
 DROP_COLS = {
     "item_id", "timestamp", "target",
-    "target_ret_1h", "target_ret_4h",
-    "target_dir_1h", "target_dir_4h",
-    "target_ret_norm_1h", "target_ret_norm_4h",
+    "target_ret_1h", "target_ret_4h", "target_ret_1d", "target_ret_1w",
+    "target_dir_1h", "target_dir_4h", "target_dir_1d", "target_dir_1w",
+    "target_ret_norm_1h", "target_ret_norm_4h", "target_ret_norm_1d", "target_ret_norm_1w",
 }
 
 # Select horizons based on mode
@@ -309,6 +315,13 @@ def main():
     print(f"Loading dataset: {DATASET_PATH.name}  (timeframe={TIMEFRAME})")
     df = pd.read_csv(DATASET_PATH)
     print(f"  Rows: {len(df):,}  Columns: {len(df.columns)}")
+
+    required_targets = sorted({cfg["target"] for cfg in HORIZONS.values()})
+    missing_targets = [col for col in required_targets if col not in df.columns]
+    if missing_targets:
+        print(f"ERROR: Dataset missing target columns for requested horizons: {missing_targets}")
+        print("Run: npx tsx scripts/build-lean-dataset.ts --timeframe=1h")
+        sys.exit(1)
 
     # Sort by timestamp (critical for walk-forward integrity)
     df = df.sort_values("timestamp").reset_index(drop=True)
