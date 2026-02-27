@@ -36,7 +36,7 @@ STAT_VOLUME = 6
 STAT_OI = 9
 STAT_IV = 14
 
-BATCH_SIZE = 40  # Prisma Accelerate 5s timeout — keep batches small
+BATCH_SIZE = 500  # Direct Postgres connection via DIRECT_URL — no Accelerate timeout
 
 
 # ─── Shared Helpers ────────────────────────────────────────────────────────

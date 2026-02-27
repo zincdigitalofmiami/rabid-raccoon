@@ -8,7 +8,10 @@ const globalForPrisma = globalThis as unknown as {
 }
 
 function getPrismaClient(): PrismaClient {
-  // In development, prefer LOCAL_DATABASE_URL (local Postgres) over DATABASE_URL (Accelerate)
+  // Local dev uses LOCAL_DATABASE_URL (local Postgres) — keeps Accelerate
+  // operations for Vercel production only, zero cost during development.
+  // Batch scripts and ingestion pipelines connect via DIRECT_URL directly,
+  // bypassing Accelerate entirely (no per-op cost, no 5s timeout).
   const localUrl = process.env.NODE_ENV !== 'production' ? process.env.LOCAL_DATABASE_URL : undefined
   const databaseUrl = localUrl || process.env.DATABASE_URL
   if (!databaseUrl) {
