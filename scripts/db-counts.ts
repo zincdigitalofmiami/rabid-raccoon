@@ -3,8 +3,8 @@ import { loadDotEnvFiles } from './ingest-utils'
 
 async function run(): Promise<void> {
   loadDotEnvFiles()
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL is required')
+  if (!process.env.LOCAL_DATABASE_URL && !process.env.DATABASE_URL) {
+    throw new Error('LOCAL_DATABASE_URL or DATABASE_URL is required')
   }
 
   const [
@@ -12,7 +12,9 @@ async function run(): Promise<void> {
     symbolMappings,
     mesPrices15m,
     mesPrices1h,
+    mesPrices4h,
     mesPrices1d,
+    mesPrices1w,
     mktFutures1h,
     mktFutures1d,
     mesLeakInNonMes,
@@ -38,7 +40,9 @@ async function run(): Promise<void> {
     prisma.symbolMapping.count(),
     prisma.mktFuturesMes15m.count(),
     prisma.mktFuturesMes1h.count(),
+    prisma.mktFuturesMes4h.count(),
     prisma.mktFuturesMes1d.count(),
+    prisma.mktFuturesMes1w.count(),
     prisma.mktFutures1h.count(),
     prisma.mktFutures1d.count(),
     prisma.mktFutures1h.count({ where: { symbolCode: 'MES' } }),
@@ -67,7 +71,9 @@ async function run(): Promise<void> {
     { table: 'symbol_mappings', rows: symbolMappings },
     { table: 'mkt_futures_mes_15m', rows: mesPrices15m },
     { table: 'mkt_futures_mes_1h', rows: mesPrices1h },
+    { table: 'mkt_futures_mes_4h', rows: mesPrices4h },
     { table: 'mkt_futures_mes_1d', rows: mesPrices1d },
+    { table: 'mkt_futures_mes_1w', rows: mesPrices1w },
     { table: 'mkt_futures_1h', rows: mktFutures1h },
     { table: 'mkt_futures_1d', rows: mktFutures1d },
     { table: 'mes_leak_check_in_mkt_futures_1h', rows: mesLeakInNonMes },
