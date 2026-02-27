@@ -1,0 +1,25 @@
+scripts/ingest-options.py
+  5254ef2bd91bb9e6 39
+src/lib/prisma.ts
+  5254ef2bd91bb9e6 11-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "b1e3930a79ba5463f31f124305a34b3e37bfb532",
+  "prompts": {
+    "5254ef2bd91bb9e6": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "2cd14019-7676-45b0-ae10-f9adde9da6be",
+        "model": "copilot/claude-sonnet-4.6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 9,
+      "accepted_lines": 7,
+      "overriden_lines": 4
+    }
+  }
+}
