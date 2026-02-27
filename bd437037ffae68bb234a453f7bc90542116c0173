@@ -1,0 +1,27 @@
+.env.example
+  7f1b92a012236c57 1,3,5-11
+prisma.config.ts
+  7f1b92a012236c57 6-8,14
+src/lib/prisma.ts
+  7f1b92a012236c57 11-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.5",
+  "base_commit_sha": "bd437037ffae68bb234a453f7bc90542116c0173",
+  "prompts": {
+    "7f1b92a012236c57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a544ac53-5b57-4f62-8f58-1dccec102f41",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Kirk Musick, MS, MBA <zincmiami@gmail.com>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 25,
+      "accepted_lines": 16,
+      "overriden_lines": 0
+    }
+  }
+}
