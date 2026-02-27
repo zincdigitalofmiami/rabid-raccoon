@@ -88,7 +88,7 @@ To answer that, it:
 
 1. **Domain-first table naming**: Tables are prefixed by domain (`mkt_`, `econ_`, `macro_`, `bhg_`, `mes_model_`).
 2. **Timeframe suffix**: `_1d`, `_1h`, `_15m` indicate the granularity of the data.
-3. **MES isolation**: MES has dedicated tables (`mkt_futures_mes_1h`, `mkt_futures_mes_15m`, `mkt_futures_mes_1d`) because it is the primary instrument with unique ingestion cadence and granularity requirements. Non-MES futures share generic tables with `symbolCode` FK.
+3. **MES isolation**: MES has dedicated tables (`mkt_futures_mes_15m`, `mkt_futures_mes_1h`, `mkt_futures_mes_4h`, `mkt_futures_mes_1d`, `mkt_futures_mes_1w`) because it is the primary instrument with unique ingestion cadence and granularity requirements. Non-MES futures share generic tables with `symbolCode` FK.
 4. **Econ domain splitting**: Economic data is split by category (`econ_rates_1d`, `econ_yields_1d`, `econ_fx_1d`, etc.) mirroring the ZINC Fusion V15 pattern. All split tables FK to `economic_series`.
 5. **Idempotent ingestion**: Every data table has a natural unique constraint and supports `skipDuplicates` or upsert patterns.
 
@@ -100,7 +100,9 @@ To answer that, it:
 |-------|-----|-------------|-------|
 | `mkt_futures_mes_15m` | `eventTime` unique | 15-min | MES intraday — primary trading timeframe |
 | `mkt_futures_mes_1h` | `eventTime` unique | Hourly | MES hourly candles |
+| `mkt_futures_mes_4h` | `eventTime` unique | 4-hour | Derived MES swing timeframe |
 | `mkt_futures_mes_1d` | `eventDate` unique | Daily | MES daily candles |
+| `mkt_futures_mes_1w` | `eventDate` unique | Weekly | Derived MES regime timeframe |
 | `mkt_futures_1h` | `(symbolCode, eventTime)` unique | Hourly | Non-MES futures, FK to symbols |
 | `mkt_futures_1d` | `(symbolCode, eventDate)` unique | Daily | Non-MES futures, FK to symbols |
 
@@ -182,8 +184,10 @@ Databento API
 ingest-market-prices-daily.ts (or Inngest mkt-mes-1h)
     │
     ├── MES 1h candles → mkt_futures_mes_1h
+    ├── MES 4h candles → mkt_futures_mes_4h (derived from 1h)
     ├── MES 15m candles → mkt_futures_mes_15m (via mes15m-refresh)
-    └── MES 1d candles → mkt_futures_mes_1d
+    ├── MES 1d candles → mkt_futures_mes_1d
+    └── MES 1w candles → mkt_futures_mes_1w (derived from 1d)
 ```
 
 ### Non-MES Ingestion Flow
@@ -306,10 +310,63 @@ Prisma provides type-safe database access, automatic migration management, and a
 
 ## Environment & Infrastructure
 
+### DB Routing Contract (Local-First, Deterministic)
+
+This repo uses a strict three-URL contract with explicit override flags:
+
+| Variable | Purpose | Primary Consumers |
+|-----------|---------|-------------------|
+| `LOCAL_DATABASE_URL` | local Postgres for development and local-first script runs | Next.js dev runtime, local script runs |
+| `DATABASE_URL` | Prisma runtime URL in deployed environments (typically Accelerate URL) | app runtime in production |
+| `DIRECT_URL` | direct Postgres URL for migrations and direct operations | Prisma CLI, direct `pg`/ops workloads |
+
+Override flags:
+
+- `PRISMA_LOCAL=1`: force local target resolution. Requires `LOCAL_DATABASE_URL`.
+- `PRISMA_DIRECT=1`: force direct target resolution. Requires `DIRECT_URL`.
+- Do not set both flags at once.
+
+Routing rules:
+
+1. Prisma runtime (`resolvePrismaRuntimeUrl`):
+   - Production: requires `DATABASE_URL`.
+   - Development: prefers `LOCAL_DATABASE_URL`, falls back to `DATABASE_URL`.
+   - Explicit flags override defaults (`PRISMA_LOCAL`/`PRISMA_DIRECT`).
+2. Direct workloads (`resolveDirectPgUrl`):
+   - Production: requires `DIRECT_URL`.
+   - Development: prefers `LOCAL_DATABASE_URL`, falls back to `DIRECT_URL`.
+   - Explicit flags override defaults.
+
+Operator safety rules:
+
+1. Never remap env semantics with `DATABASE_URL="$DIRECT_URL" ...`.
+2. Use explicit routing flags instead:
+   - `PRISMA_DIRECT=1 npx prisma migrate deploy`
+   - `PRISMA_DIRECT=1 npx tsx scripts/db-counts.ts`
+3. Every script/run boundary should emit target telemetry (`[db-target] ... host/source`) so operators can verify target selection before writes.
+
+### Known Roadblocks and Mitigations (2026-02-27)
+
+1. Migration drift between local and direct:
+   - Symptom: missing tables on direct (for example `mkt_futures_mes_4h`).
+   - Mitigation: always run `PRISMA_DIRECT=1 npx prisma migrate status` before direct data operations.
+2. Empty local DB while direct is populated:
+   - Symptom: app/dev reads zero rows while production-like scripts show full data.
+   - Mitigation: one-time `pg_dump` (direct) + `pg_restore` (local), then parity-check key table counts.
+3. Backfill partial-success risk:
+   - Symptom: non-zero rows but missing month ranges.
+   - Mitigation: run backfill with `--strict`, require manifest review, and use `--retry-manifest` for failed chunks.
+4. Missing provider credentials:
+   - Symptom: hard fail (for example `DATABENTO_API_KEY required`).
+   - Mitigation: preflight env checks before migration/backfill execution.
+5. SSL mode warning on direct `postgres://` URLs:
+   - Symptom: warning about future libpq semantics.
+   - Mitigation: normalize direct URLs to `sslmode=verify-full` (or explicit compatibility mode).
+
 | Component | Detail |
 |-----------|--------|
 | Database | PostgreSQL via Prisma Accelerate (`prisma+postgres://`) |
-| Direct DB access | Requires `DIRECT_URL` (direct `postgres://` string) for migrations and direct pg workloads |
+| Direct DB access | Requires `DIRECT_URL` (direct `postgres://` string) for migrations and direct pg workloads; use `PRISMA_DIRECT=1` when forcing direct script/runtime resolution |
 | Hosting | Vercel (dashboard) |
 | Scheduling | Inngest (managed, event-driven) |
 | Market data | Databento (REST, requires `DATABENTO_API_KEY`) |
@@ -318,5 +375,5 @@ Prisma provides type-safe database access, automatic migration management, and a
 
 ---
 
-*Last updated: 2026-02-22*
+*Last updated: 2026-02-27*
 *Maintained by: Kirk (architect) with Claude (governance)*

@@ -51,7 +51,7 @@ Acceptance:
 ### 3.3 Schema Presence Check (Staging)
 
 ```bash
-NODE_ENV=production DATABASE_URL="$DIRECT_URL" npx tsx scripts/db-counts.ts
+PRISMA_DIRECT=1 npx tsx scripts/db-counts.ts
 ```
 
 Acceptance:
@@ -62,7 +62,7 @@ Acceptance:
 ### 3.4 Historical Backfill (Staging, Required)
 
 ```bash
-NODE_ENV=production DATABASE_URL="$DIRECT_URL" npx tsx scripts/backfill-mes-1h-1d.ts --strict
+PRISMA_DIRECT=1 npx tsx scripts/backfill-mes-1h-1d.ts --strict
 ```
 
 Notes:
@@ -81,7 +81,7 @@ Notes:
 ### 3.5 Post-Backfill Validation (Staging)
 
 ```bash
-NODE_ENV=production DATABASE_URL="$DIRECT_URL" npx tsx scripts/db-counts.ts
+PRISMA_DIRECT=1 npx tsx scripts/db-counts.ts
 psql "$DIRECT_URL" -c "SELECT count(*) AS mes_1h FROM mkt_futures_mes_1h;"
 psql "$DIRECT_URL" -c "SELECT count(*) AS mes_4h FROM mkt_futures_mes_4h;"
 psql "$DIRECT_URL" -c "SELECT count(*) AS mes_1d FROM mkt_futures_mes_1d;"
@@ -157,7 +157,7 @@ TRUNCATE TABLE mkt_futures_mes_4h, mkt_futures_mes_1w RESTART IDENTITY;
 4. Use targeted retry from manifest to avoid full-history reruns:
 
 ```bash
-NODE_ENV=production DATABASE_URL="$DIRECT_URL" npx tsx scripts/backfill-mes-1h-1d.ts --retry-manifest=<manifest-path> --strict
+PRISMA_DIRECT=1 npx tsx scripts/backfill-mes-1h-1d.ts --retry-manifest=<manifest-path> --strict
 ```
 
 5. If repeated failure, stop and investigate data/API availability before retry.
