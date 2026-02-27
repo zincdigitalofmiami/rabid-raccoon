@@ -259,7 +259,9 @@ export async function runIngestMacroIndicators(options?: MacroIngestOptions): Pr
   loadDotEnvFiles()
 
   const { daysBack, dryRun } = resolveMacroOptions(options)
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!process.env.LOCAL_DATABASE_URL && !process.env.DATABASE_URL) {
+    throw new Error('LOCAL_DATABASE_URL or DATABASE_URL is required')
+  }
   if (!process.env.FRED_API_KEY) throw new Error('FRED_API_KEY is required')
   if (!Number.isFinite(daysBack) || daysBack <= 0) {
     throw new Error(`Invalid --days-back '${daysBack}'`)
