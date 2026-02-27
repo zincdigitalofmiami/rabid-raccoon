@@ -74,6 +74,23 @@ npm run test:db-routing     # contract tests for db-url routing policy
 npm run db:sync:local       # one-command DIRECT_URL -> LOCAL_DATABASE_URL sync with count validation
 ```
 
+## Core Model Training
+
+Use this exact sequence for core model prep + train:
+
+```bash
+npm run train:core:ready      # rebuild lean 1h dataset + run train-final preflight
+npm run train:core:prod       # full production training (clean fold dirs first)
+npm run predict:core:refresh  # regenerate public/ml-predictions.json from latest models
+```
+
+Direct commands are also available:
+
+```bash
+npm run dataset:lean:1h
+npm run train:core:preflight
+```
+
 ## Prisma Data Layer (Local PostgreSQL)
 
 The app now supports persistent market/macro storage via Prisma + Postgres.

@@ -39,6 +39,11 @@
     "import:fusion:econ": "tsx scripts/import-fusion-econ.ts",
     "dataset:autogluon:1h": "tsx scripts/build-complete-dataset.ts",
     "dataset:autogluon:15m": "tsx scripts/build-15m-dataset.ts",
+    "dataset:lean:1h": "tsx scripts/build-lean-dataset.ts --timeframe=1h --out=datasets/autogluon/mes_lean_fred_indexes_2020plus.csv",
+    "train:core:preflight": ".venv-autogluon/bin/python scripts/train-final.py --preflight-only --dataset datasets/autogluon/mes_lean_fred_indexes_2020plus.csv",
+    "train:core:prod": ".venv-autogluon/bin/python scripts/train-final.py --clean --dataset datasets/autogluon/mes_lean_fred_indexes_2020plus.csv",
+    "predict:core:refresh": ".venv-autogluon/bin/python scripts/predict.py --rows=24 --dataset datasets/autogluon/mes_lean_fred_indexes_2020plus.csv --output public/ml-predictions.json",
+    "train:core:ready": "npm run dataset:lean:1h && npm run train:core:preflight",
     "test:feature-availability": "node --import tsx --test scripts/feature-availability.test.ts",
     "test:db-routing": "node --import tsx --test scripts/db-url-contract.test.ts",
     "inngest:dev": "npx inngest-cli dev -u http://localhost:3000/api/inngest"
