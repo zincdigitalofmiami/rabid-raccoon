@@ -186,98 +186,6 @@ function buildMesPriceRow(candle: ReturnType<typeof toCandles>[number], dataset:
   }
 }
 
-function buildMes4hPriceRow(
-  candle: ReturnType<typeof toCandles>[number],
-  dataset: string
-): Prisma.MktFuturesMes4hCreateManyInput {
-  const eventTime = asUtcDateFromUnixSeconds(candle.time)
-  return {
-    eventTime,
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
-    source: 'DATABENTO',
-    sourceDataset: dataset,
-    sourceSchema: 'derived-4h',
-    rowHash: hashPriceRow('MES-H4', eventTime, candle.close),
-  }
-}
-
-function startOfUtcWeek(date: Date): Date {
-  const day = date.getUTCDay()
-  const shiftToMonday = (day + 6) % 7
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - shiftToMonday))
-}
-
-function aggregateMesToUtcWeeks(candles: ReturnType<typeof toCandles>): ReturnType<typeof toCandles> {
-  if (candles.length === 0) return []
-  const sorted = [...candles].sort((a, b) => a.time - b.time)
-  const byWeek = new Map<number, (typeof candles)[number]>()
-
-  for (const candle of sorted) {
-    const weekStart = startOfUtcWeek(asUtcDateFromUnixSeconds(candle.time))
-    const key = Math.floor(weekStart.getTime() / 1000)
-    const current = byWeek.get(key)
-    if (!current) {
-      byWeek.set(key, {
-        ...candle,
-        time: key,
-        volume: candle.volume || 0,
-      })
-      continue
-    }
-
-    current.high = Math.max(current.high, candle.high)
-    current.low = Math.min(current.low, candle.low)
-    current.close = candle.close
-    current.volume = (current.volume || 0) + (candle.volume || 0)
-  }
-
-  return [...byWeek.values()].sort((a, b) => a.time - b.time)
-}
-
-function buildMes1wPriceRow(
-  candle: ReturnType<typeof toCandles>[number],
-  dataset: string
-): Prisma.MktFuturesMes1wCreateManyInput {
-  const eventDate = startOfUtcDay(asUtcDateFromUnixSeconds(candle.time))
-  return {
-    eventDate,
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: BigInt(Math.max(0, Math.trunc(candle.volume || 0))),
-    source: 'DATABENTO',
-    sourceDataset: dataset,
-    sourceSchema: 'derived-1w',
-    rowHash: hashPriceRow('MES-W1', eventDate, candle.close),
-  }
-}
-
-async function insertMesDerivedRows(
-  dataset: string,
-  candles1h: ReturnType<typeof toCandles>,
-  dryRun: boolean
-): Promise<{ insertedH4: number; insertedW1: number }> {
-  const candles4h = aggregateCandles(candles1h, 240)
-  const candles1w = aggregateMesToUtcWeeks(candles1h)
-  if (dryRun) return { insertedH4: 0, insertedW1: 0 }
-
-  const rows4h = candles4h.map((candle) => buildMes4hPriceRow(candle, dataset))
-  const rows1w = candles1w.map((candle) => buildMes1wPriceRow(candle, dataset))
-
-  const insertedH4 = await batchInsertMany(rows4h, (batch) =>
-    prisma.mktFuturesMes4h.createMany({ data: batch, skipDuplicates: true })
-  )
-  const insertedW1 = await batchInsertMany(rows1w, (batch) =>
-    prisma.mktFuturesMes1w.createMany({ data: batch, skipDuplicates: true })
-  )
-  return { insertedH4, insertedW1 }
-}
-
 function buildNonMesPriceRow(symbolCode: string, candle: ReturnType<typeof toCandles>[number], dataset: string, sourceSchema: string): Prisma.MktFutures1dCreateManyInput {
   const eventTime = asUtcDateFromUnixSeconds(candle.time)
   return {
@@ -305,8 +213,8 @@ async function upsertDataSourceRegistry(): Promise<void> {
       sourceId: 'market-prices-databento',
       sourceName: 'Databento Futures OHLCV',
       description:
-        'Databento GLBX futures ingestion with MES (native 1h + derived 4h/1w) and non-MES (native 1d) in dedicated training tables.',
-      targetTable: 'mkt_futures_mes_1h,mkt_futures_mes_4h,mkt_futures_mes_1w,mkt_futures_1d',
+        'Databento GLBX futures ingestion with MES (native 1h) and non-MES (native 1d) in dedicated training tables. 4h/1w remain training horizons derived at dataset build time.',
+      targetTable: 'mkt_futures_mes_1h,mkt_futures_1d',
       apiProvider: 'databento',
       updateFrequency: 'mixed',
       authEnvVar: 'DATABENTO_API_KEY',
@@ -316,8 +224,8 @@ async function upsertDataSourceRegistry(): Promise<void> {
     update: {
       sourceName: 'Databento Futures OHLCV',
       description:
-        'Databento GLBX futures ingestion with MES (native 1h + derived 4h/1w) and non-MES (native 1d) in dedicated training tables.',
-      targetTable: 'mkt_futures_mes_1h,mkt_futures_mes_4h,mkt_futures_mes_1w,mkt_futures_1d',
+        'Databento GLBX futures ingestion with MES (native 1h) and non-MES (native 1d) in dedicated training tables. 4h/1w remain training horizons derived at dataset build time.',
+      targetTable: 'mkt_futures_mes_1h,mkt_futures_1d',
       apiProvider: 'databento',
       updateFrequency: 'mixed',
       authEnvVar: 'DATABENTO_API_KEY',
@@ -412,8 +320,7 @@ async function insertCandlesForSymbol(
     const inserted = await batchInsertMany(rows, (batch) =>
       prisma.mktFuturesMes1h.createMany({ data: batch, skipDuplicates: true })
     )
-    const derived = await insertMesDerivedRows(dataset, candles, dryRun)
-    return { processed, inserted: inserted + derived.insertedH4 + derived.insertedW1 }
+    return { processed, inserted }
   }
 
   const rows = candles.map((c) => buildNonMesPriceRow(symbolCode, c, dataset, sourceSchema))
@@ -431,18 +338,6 @@ async function verifyLoadedCoverage(
   const mesCount = await prisma.mktFuturesMes1h.count()
   if (symbolCodes.includes('MES') && mesCount < minCoverageHourly) {
     hardFail(`INSUFFICIENT_DATA: MES has only ${mesCount} rows; ${minCoverageHourly} required.`)
-  }
-  if (symbolCodes.includes('MES')) {
-    const minCoverage4h = Math.floor(minCoverageHourly / 4)
-    const minCoverage1w = Math.floor(minCoverageDaily / 5)
-    const mes4hCount = await prisma.mktFuturesMes4h.count()
-    const mes1wCount = await prisma.mktFuturesMes1w.count()
-    if (mes4hCount < minCoverage4h) {
-      hardFail(`INSUFFICIENT_DATA: MES 4h has only ${mes4hCount} rows; ${minCoverage4h} required.`)
-    }
-    if (mes1wCount < minCoverage1w) {
-      hardFail(`INSUFFICIENT_DATA: MES 1w has only ${mes1wCount} rows; ${minCoverage1w} required.`)
-    }
   }
 
   const nonMes = symbolCodes.filter((code) => code !== 'MES')
@@ -702,8 +597,6 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
     ? null
     : await Promise.all([
         prisma.mktFuturesMes1h.count(),
-        prisma.mktFuturesMes4h.count(),
-        prisma.mktFuturesMes1w.count(),
         prisma.mktFutures1d.count(),
       ])
   const symbolsProcessed: string[] = []
@@ -774,13 +667,11 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
       postLoadVerified = true
       const postCounts = await Promise.all([
         prisma.mktFuturesMes1h.count(),
-        prisma.mktFuturesMes4h.count(),
-        prisma.mktFuturesMes1w.count(),
         prisma.mktFutures1d.count(),
       ])
       if (preCounts) {
         console.log(
-          `[market-prices] row deltas mes1h=${postCounts[0] - preCounts[0]} mes4h=${postCounts[1] - preCounts[1]} mes1w=${postCounts[2] - preCounts[2]} nonMes1d=${postCounts[3] - preCounts[3]}`
+          `[market-prices] row deltas mes1h=${postCounts[0] - preCounts[0]} nonMes1d=${postCounts[1] - preCounts[1]}`
         )
       }
       console.log('ALL CLEAR: Full 2y ingestion complete – no lies, no fakes, ready for training.')

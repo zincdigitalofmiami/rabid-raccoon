@@ -88,7 +88,7 @@ To answer that, it:
 
 1. **Domain-first table naming**: Tables are prefixed by domain (`mkt_`, `econ_`, `macro_`, `bhg_`, `mes_model_`).
 2. **Timeframe suffix**: `_1d`, `_1h`, `_15m` indicate the granularity of the data.
-3. **MES isolation**: MES has dedicated tables (`mkt_futures_mes_15m`, `mkt_futures_mes_1h`, `mkt_futures_mes_4h`, `mkt_futures_mes_1d`, `mkt_futures_mes_1w`) because it is the primary instrument with unique ingestion cadence and granularity requirements. Non-MES futures share generic tables with `symbolCode` FK.
+3. **MES isolation**: MES has dedicated tables (`mkt_futures_mes_15m`, `mkt_futures_mes_1h`, `mkt_futures_mes_1d`) because it is the primary instrument with unique ingestion cadence and granularity requirements. Non-MES futures share generic tables with `symbolCode` FK.
 4. **Econ domain splitting**: Economic data is split by category (`econ_rates_1d`, `econ_yields_1d`, `econ_fx_1d`, etc.) mirroring the ZINC Fusion V15 pattern. All split tables FK to `economic_series`.
 5. **Idempotent ingestion**: Every data table has a natural unique constraint and supports `skipDuplicates` or upsert patterns.
 
@@ -100,9 +100,7 @@ To answer that, it:
 |-------|-----|-------------|-------|
 | `mkt_futures_mes_15m` | `eventTime` unique | 15-min | MES intraday — primary trading timeframe |
 | `mkt_futures_mes_1h` | `eventTime` unique | Hourly | MES hourly candles |
-| `mkt_futures_mes_4h` | `eventTime` unique | 4-hour | Derived MES swing timeframe |
 | `mkt_futures_mes_1d` | `eventDate` unique | Daily | MES daily candles |
-| `mkt_futures_mes_1w` | `eventDate` unique | Weekly | Derived MES regime timeframe |
 | `mkt_futures_1h` | `(symbolCode, eventTime)` unique | Hourly | Non-MES futures, FK to symbols |
 | `mkt_futures_1d` | `(symbolCode, eventDate)` unique | Daily | Non-MES futures, FK to symbols |
 
@@ -184,10 +182,8 @@ Databento API
 ingest-market-prices-daily.ts (or Inngest mkt-mes-1h)
     │
     ├── MES 1h candles → mkt_futures_mes_1h
-    ├── MES 4h candles → mkt_futures_mes_4h (derived from 1h)
     ├── MES 15m candles → mkt_futures_mes_15m (via mes15m-refresh)
-    ├── MES 1d candles → mkt_futures_mes_1d
-    └── MES 1w candles → mkt_futures_mes_1w (derived from 1d)
+    └── MES 1d candles → mkt_futures_mes_1d
 ```
 
 ### Non-MES Ingestion Flow
@@ -348,7 +344,7 @@ Operator safety rules:
 ### Known Roadblocks and Mitigations (2026-02-27)
 
 1. Migration drift between local and direct:
-   - Symptom: missing tables on direct (for example `mkt_futures_mes_4h`).
+   - Symptom: missing tables or enum values on direct.
    - Mitigation: always run `PRISMA_DIRECT=1 npx prisma migrate status` before direct data operations.
 2. Empty local DB while direct is populated:
    - Symptom: app/dev reads zero rows while production-like scripts show full data.

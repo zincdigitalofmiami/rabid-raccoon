@@ -3,7 +3,6 @@
  *
  * Pulls MES.c.0 ohlcv-1h and ohlcv-1d from Databento for the full date range,
  * chunks by month, and batch-inserts into mkt_futures_mes_1h and mkt_futures_mes_1d.
- * Then derives and upserts mkt_futures_mes_4h and mkt_futures_mes_1w.
  * Uses skipDuplicates so it's fully idempotent — run it as many times as you want.
  *
  * Flags:
@@ -77,8 +76,6 @@ interface BackfillManifest {
     inserted: {
       mes1h: number
       mes1d: number
-      mes4h: number
-      mes1w: number
     }
   }
   failedMonths: string[]
@@ -323,86 +320,6 @@ function hash1h(eventTime: Date, close: number): string {
 function hash1d(eventDate: string, close: number): string {
   return createHash('sha256').update(`MES-1D|${eventDate}|${close}`).digest('hex')
 }
-function hash4h(eventTime: Date, close: number): string {
-  return createHash('sha256').update(`MES-4H|${eventTime.toISOString()}|${close}`).digest('hex')
-}
-function hash1w(eventDate: string, close: number): string {
-  return createHash('sha256').update(`MES-1W|${eventDate}|${close}`).digest('hex')
-}
-
-interface CandlePoint {
-  time: number
-  open: number
-  high: number
-  low: number
-  close: number
-  volume: number
-}
-
-function rawToCandle(record: RawRecord): CandlePoint | null {
-  if (!(Number(record.open) > 0 && Number(record.close) > 0)) return null
-  const tsNano = BigInt(record.hd.ts_event)
-  return {
-    time: Number(tsNano / 1_000_000_000n),
-    open: Number(record.open) / FIXED_PRICE_SCALE,
-    high: Number(record.high) / FIXED_PRICE_SCALE,
-    low: Number(record.low) / FIXED_PRICE_SCALE,
-    close: Number(record.close) / FIXED_PRICE_SCALE,
-    volume: Math.max(0, Math.trunc(Number(record.volume))),
-  }
-}
-
-function aggregateToPeriod(candles: CandlePoint[], periodSeconds: number): CandlePoint[] {
-  if (candles.length === 0) return []
-  const sorted = [...candles].sort((a, b) => a.time - b.time)
-  const out: CandlePoint[] = []
-  let bucket: CandlePoint | null = null
-  let bucketStart = 0
-
-  for (const candle of sorted) {
-    const aligned = Math.floor(candle.time / periodSeconds) * periodSeconds
-    if (!bucket || aligned !== bucketStart) {
-      if (bucket) out.push(bucket)
-      bucket = { ...candle, time: aligned }
-      bucketStart = aligned
-      continue
-    }
-    bucket.high = Math.max(bucket.high, candle.high)
-    bucket.low = Math.min(bucket.low, candle.low)
-    bucket.close = candle.close
-    bucket.volume += candle.volume
-  }
-  if (bucket) out.push(bucket)
-  return out
-}
-
-function startOfUtcWeekFromDate(date: Date): Date {
-  const day = date.getUTCDay()
-  const shiftToMonday = (day + 6) % 7
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - shiftToMonday))
-}
-
-function aggregateToWeeksFromDaily(candles: CandlePoint[]): CandlePoint[] {
-  if (candles.length === 0) return []
-  const sorted = [...candles].sort((a, b) => a.time - b.time)
-  const byWeek = new Map<number, CandlePoint>()
-
-  for (const candle of sorted) {
-    const weekStart = startOfUtcWeekFromDate(new Date(candle.time * 1000))
-    const key = Math.floor(weekStart.getTime() / 1000)
-    const current = byWeek.get(key)
-    if (!current) {
-      byWeek.set(key, { ...candle, time: key })
-      continue
-    }
-    current.high = Math.max(current.high, candle.high)
-    current.low = Math.min(current.low, candle.low)
-    current.close = candle.close
-    current.volume += candle.volume
-  }
-
-  return [...byWeek.values()].sort((a, b) => a.time - b.time)
-}
 
 // ── Insert 1h rows ────────────────────────────────────────────────────────────
 
@@ -469,63 +386,6 @@ async function insert1d(records: RawRecord[]): Promise<number> {
   return inserted
 }
 
-async function insert4hFromRaw1h(records: RawRecord[]): Promise<number> {
-  const candles = records.map(rawToCandle).filter((r): r is CandlePoint => r !== null)
-  const aggregated = aggregateToPeriod(candles, 4 * 60 * 60)
-  const rows: Prisma.MktFuturesMes4hCreateManyInput[] = aggregated.map((candle) => {
-    const eventTime = new Date(candle.time * 1000)
-    return {
-      eventTime,
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-      volume: BigInt(candle.volume),
-      source: 'DATABENTO',
-      sourceDataset: MES_DATASET,
-      sourceSchema: 'derived-4h',
-      rowHash: hash4h(eventTime, candle.close),
-    }
-  })
-
-  let inserted = 0
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE)
-    const result = await prisma.mktFuturesMes4h.createMany({ data: batch, skipDuplicates: true })
-    inserted += result.count
-  }
-  return inserted
-}
-
-async function insert1wFromRaw1d(records: RawRecord[]): Promise<number> {
-  const candles = records.map(rawToCandle).filter((r): r is CandlePoint => r !== null)
-  const aggregated = aggregateToWeeksFromDaily(candles)
-  const rows: Prisma.MktFuturesMes1wCreateManyInput[] = aggregated.map((candle) => {
-    const weekStart = new Date(candle.time * 1000)
-    const eventDateIso = weekStart.toISOString().slice(0, 10)
-    return {
-      eventDate: new Date(eventDateIso),
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-      volume: BigInt(candle.volume),
-      source: 'DATABENTO',
-      sourceDataset: MES_DATASET,
-      sourceSchema: 'derived-1w',
-      rowHash: hash1w(eventDateIso, candle.close),
-    }
-  })
-
-  let inserted = 0
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE)
-    const result = await prisma.mktFuturesMes1w.createMany({ data: batch, skipDuplicates: true })
-    inserted += result.count
-  }
-  return inserted
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -546,8 +406,6 @@ async function main() {
 
   let total1h = 0
   let total1d = 0
-  const all1hRecords: RawRecord[] = []
-  const all1dRecords: RawRecord[] = []
   const chunkResults: ChunkResult[] = []
 
   for (let i = 0; i < chunks.length; i++) {
@@ -565,7 +423,6 @@ async function main() {
     try {
       const records1h = await fetchDatabento('ohlcv-1h', start, end)
       const ins1h = await insert1h(records1h)
-      all1hRecords.push(...records1h)
       total1h += ins1h
       chunkResult.schemas['ohlcv-1h'] = {
         status: 'ok',
@@ -589,7 +446,6 @@ async function main() {
     try {
       const records1d = await fetchDatabento('ohlcv-1d', start, end)
       const ins1d = await insert1d(records1d)
-      all1dRecords.push(...records1d)
       total1d += ins1d
       chunkResult.schemas['ohlcv-1d'] = {
         status: 'ok',
@@ -613,18 +469,13 @@ async function main() {
     chunkResults.push(chunkResult)
   }
 
-  const total4h = await insert4hFromRaw1h(all1hRecords)
-  const total1w = await insert1wFromRaw1d(all1dRecords)
-
   const manifest = buildManifest(options, chunkResults, {
     mes1h: total1h,
     mes1d: total1d,
-    mes4h: total4h,
-    mes1w: total1w,
   })
   writeManifest(options.manifestOut, manifest)
 
-  console.log(`\n[DONE] 1h inserted: ${total1h}  |  1d inserted: ${total1d}  |  4h inserted: ${total4h}  |  1w inserted: ${total1w}`)
+  console.log(`\n[DONE] 1h inserted: ${total1h}  |  1d inserted: ${total1d}`)
   console.log(`[manifest] ${options.manifestOut}`)
 
   if (manifest.summary.failedChunks > 0 || manifest.summary.partialChunks > 0) {

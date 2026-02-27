@@ -37,7 +37,7 @@ PRISMA_DIRECT=1 npx prisma migrate deploy
 
 1. Direct DB was behind by one migration (`20260227153000_add_mes_4h_1w_tables`), causing missing-table failures.
 2. Local DB was schema-valid but empty, causing local/dev results to diverge from direct.
-3. Strict backfill for `4h/1w` cannot run without `DATABENTO_API_KEY`; this must be preflighted.
+3. Databento backfill scripts cannot run without `DATABENTO_API_KEY`; this must be preflighted.
 
 ## Mandatory Preflight Before Any Backfill/Migration
 
@@ -48,7 +48,6 @@ PRISMA_DIRECT=1 npx prisma migrate deploy
 
 ## Operational Guardrails
 
-1. Migration first, then data backfill/derive, then training smoke.
+1. Migration first, then data backfill (base series), then training smoke.
 2. For partial failures, require machine-readable manifest and targeted retry path.
 3. Keep local data parity with direct when local-first development is expected.
-

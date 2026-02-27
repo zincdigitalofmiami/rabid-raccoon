@@ -38,7 +38,7 @@ scripts/check-db-alignment.ts:139:      const expectedSymbols = ['NQ', 'ZN', 'CL
 scripts/check-db-alignment.ts:143:        const needed = expectedSymbols.includes(g.symbolCode) ? '' : ' (not needed by builder)'
 scripts/check-db-alignment.ts:158:      const missingSymbols = expectedSymbols.filter((s) => !foundSymbols.has(s))
 scripts/db-check.ts:33:  for (const sym of ["6J", "6E", "ZN", "GC", "SI", "SOX"]) {
-scripts/db-counts.ts:48:    prisma.mktFutures1h.count({ where: { symbolCode: 'MES' } }),
+scripts/db-counts.ts:44:    prisma.mktFutures1h.count({ where: { symbolCode: 'MES' } }),
 scripts/db-gaps.ts:8:  for (const sym of ["MES_1H", "6J", "6E", "ZN", "GC", "SI", "SOX", "ES", "NQ", "CL"]) {
 scripts/generate-symbol-registry-snapshot.ts:103:  const primaryMember = roleMembers.find((member) => member.roleKey === PRIMARY_SYMBOL_ROLE && member.enabled)
 scripts/generate-symbol-registry-snapshot.ts:106:  const mes = symbols.find((symbol) => symbol.code === 'MES' && symbol.isActive)
@@ -61,23 +61,22 @@ scripts/ingest-market-prices.ts:120:  if (activeRows.length !== INGESTION_SYMBOL
 scripts/ingest-market-prices.ts:122:      `Expected ${INGESTION_SYMBOLS.length} active Databento symbols, found ${activeRows.length}. ` +
 scripts/ingest-market-prices.ts:128:  const missingCanonical = INGESTION_SYMBOLS.filter((symbol) => !activeCodes.has(symbol.code)).map(
 scripts/ingest-market-prices.ts:185:    rowHash: hashPriceRow('MES', eventTime, candle.close),
-scripts/ingest-market-prices.ts:342:  for (const cfg of INGESTION_SYMBOLS) {
-scripts/ingest-market-prices.ts:394:  if (symbolCode === 'MES') {
-scripts/ingest-market-prices.ts:410:  if (symbolCode === 'MES') {
-scripts/ingest-market-prices.ts:432:  if (symbolCodes.includes('MES') && mesCount < minCoverageHourly) {
-scripts/ingest-market-prices.ts:435:  if (symbolCodes.includes('MES')) {
-scripts/ingest-market-prices.ts:448:  const nonMes = symbolCodes.filter((code) => code !== 'MES')
-scripts/ingest-market-prices.ts:504:    const symbolMinCoverage = symbol.code === 'MES' ? minCoverageHourly : minCoverageDaily
-scripts/ingest-market-prices.ts:505:    const symbolTimeframe = symbol.code === 'MES' ? INGEST_CONFIG.MES_TIMEFRAME : INGEST_CONFIG.NON_MES_TIMEFRAME
-scripts/ingest-market-prices.ts:506:    const sourceSchema = symbol.code === 'MES' ? INGEST_CONFIG.MES_RAW_SCHEMA : INGEST_CONFIG.NON_MES_RAW_SCHEMA
-scripts/ingest-market-prices.ts:508:      symbol.code === 'MES'
-scripts/ingest-market-prices.ts:530:      symbol.code === 'MES'
-scripts/ingest-market-prices.ts:551:        timeoutMs: symbol.code === 'MES' ? 120_000 : 45_000,
-scripts/ingest-market-prices.ts:552:        maxAttempts: symbol.code === 'MES' ? 3 : 2,
-scripts/ingest-market-prices.ts:595:        : aggregateCandles(uniqueCandles, symbol.code === 'MES' ? 60 : 1440)
+scripts/ingest-market-prices.ts:250:  for (const cfg of INGESTION_SYMBOLS) {
+scripts/ingest-market-prices.ts:302:  if (symbolCode === 'MES') {
+scripts/ingest-market-prices.ts:318:  if (symbolCode === 'MES') {
+scripts/ingest-market-prices.ts:339:  if (symbolCodes.includes('MES') && mesCount < minCoverageHourly) {
+scripts/ingest-market-prices.ts:343:  const nonMes = symbolCodes.filter((code) => code !== 'MES')
+scripts/ingest-market-prices.ts:399:    const symbolMinCoverage = symbol.code === 'MES' ? minCoverageHourly : minCoverageDaily
+scripts/ingest-market-prices.ts:400:    const symbolTimeframe = symbol.code === 'MES' ? INGEST_CONFIG.MES_TIMEFRAME : INGEST_CONFIG.NON_MES_TIMEFRAME
+scripts/ingest-market-prices.ts:401:    const sourceSchema = symbol.code === 'MES' ? INGEST_CONFIG.MES_RAW_SCHEMA : INGEST_CONFIG.NON_MES_RAW_SCHEMA
+scripts/ingest-market-prices.ts:403:      symbol.code === 'MES'
+scripts/ingest-market-prices.ts:425:      symbol.code === 'MES'
+scripts/ingest-market-prices.ts:446:        timeoutMs: symbol.code === 'MES' ? 120_000 : 45_000,
+scripts/ingest-market-prices.ts:447:        maxAttempts: symbol.code === 'MES' ? 3 : 2,
+scripts/ingest-market-prices.ts:490:        : aggregateCandles(uniqueCandles, symbol.code === 'MES' ? 60 : 1440)
+scripts/ingest-market-prices.ts:626:    const mesSymbol = selected.find((symbol) => symbol.code === 'MES')
+scripts/ingest-market-prices.ts:640:    const nonMesSymbols = selected.filter((symbol) => symbol.code !== 'MES')
 scripts/ingest-market-prices.ts:6:import { INGESTION_SYMBOLS, type IngestionSymbol } from '../src/lib/ingestion-symbols'
-scripts/ingest-market-prices.ts:733:    const mesSymbol = selected.find((symbol) => symbol.code === 'MES')
-scripts/ingest-market-prices.ts:747:    const nonMesSymbols = selected.filter((symbol) => symbol.code !== 'MES')
 scripts/ingest-market-prices.ts:97:  if (INGESTION_SYMBOLS.length !== CANONICAL_SYMBOL_COUNT) {
 scripts/ingest-mm-signals.ts:160:    : ['MES']
 scripts/ingest-mm-signals.ts:167:  if (symbolsRequested.includes('MES')) {
