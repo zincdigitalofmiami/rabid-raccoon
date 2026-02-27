@@ -232,6 +232,17 @@ Options market data is pulled via the **Databento Python SDK** (`databento` pack
 - Pull scripts: `scripts/pull-options-statistics.py`, `scripts/pull-options-ohlcv.py`
 - Output: `datasets/options-statistics/<SYMBOL>/YYYY-MM.parquet`, `datasets/options-ohlcv/<SYMBOL>/YYYY-MM.parquet`
 
+### Databento Live Subscription (Standing Decision — 2026-02-27)
+
+Kirk's Databento account **has an active Live subscription**. Do NOT keep asking about this.
+
+- The live chart uses the **Databento Live Subscription Gateway** (Python SDK `databento.Live`), NOT the historical REST API.
+- Live worker: `scripts/ingest-mes-live-databento.py` — runs OFF Vercel (local machine / always-on host).
+- Target cadence: **5 seconds** for chart updates.
+- Vercel API routes (`/api/live/mes`, `/api/live/mes15m`) are **read-only** — they poll the DB, never call Databento.
+- Cost constraint: minimize Vercel function invocations and avoid Databento API calls from serverless.
+- npm script: `npm run ingest:mes:live:databento`
+
 ## File Organization
 
 ```

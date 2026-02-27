@@ -313,8 +313,8 @@ async function finalizeFredNewsRun(
 
 export async function runIngestFredNews(): Promise<RunStats> {
   loadDotEnvFiles()
-  if (!process.env.LOCAL_DATABASE_URL && !process.env.DATABASE_URL && !process.env.DIRECT_URL) {
-    throw new Error('LOCAL_DATABASE_URL, DATABASE_URL, or DIRECT_URL is required')
+  if (!process.env.LOCAL_DATABASE_URL && !process.env.DIRECT_URL) {
+    throw new Error('LOCAL_DATABASE_URL is required (or set PRISMA_DIRECT=1 with DIRECT_URL for explicit direct runs)')
   }
 
   await upsertRegistry()

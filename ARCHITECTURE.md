@@ -175,8 +175,40 @@ Both paths write `ingestion_runs` records for audit.
 
 ### MES Ingestion Flow (Primary Instrument)
 
+#### Live Chart Data (Databento Live API — 5s cadence)
+
+Kirk's Databento account has an active Live subscription. The live chart
+uses the Databento Live Subscription Gateway (TCP binary, Python SDK)
+instead of the historical REST API. This gives true real-time MES data
+with ~5-second chart updates and zero Vercel cost for the data fetch.
+
 ```
-Databento API
+Databento Live Gateway (TCP)
+    │  ohlcv-1m stream for MES.c.0
+    ▼
+scripts/ingest-mes-live-databento.py   ← runs OFF Vercel (local / always-on host)
+    │  aggregates 1m → 15m, flushes every 5s
+    ▼
+mkt_futures_mes_15m (Postgres)
+    │
+    ▼
+/api/live/mes15m (SSE, read-only, polls DB every 5s)
+    │  zero Databento API calls on Vercel
+    ▼
+LiveMesChart (Lightweight Charts)
+```
+
+**Key design decisions:**
+- Live worker runs off Vercel to avoid serverless function costs and timeout limits.
+- Vercel API routes are **read-only** — they never call Databento directly.
+- 5-second poll cadence balances real-time feel with minimal DB read cost.
+- Historical polling fallback (`ingest-mes-live-15m.ts`) is still available if the
+  live worker is not running.
+
+#### Daily/Hourly Batch Data (Databento Historical API)
+
+```
+Databento Historical API
     │
     ▼
 ingest-market-prices-daily.ts (or Inngest mkt-mes-1h)
@@ -326,11 +358,11 @@ Routing rules:
 
 1. Prisma runtime (`resolvePrismaRuntimeUrl`):
    - Production: requires `DATABASE_URL`.
-   - Development: prefers `LOCAL_DATABASE_URL`, falls back to `DATABASE_URL`.
+   - Development: requires `LOCAL_DATABASE_URL` by default (local-first, fail-loud).
    - Explicit flags override defaults (`PRISMA_LOCAL`/`PRISMA_DIRECT`).
 2. Direct workloads (`resolveDirectPgUrl`):
    - Production: requires `DIRECT_URL`.
-   - Development: prefers `LOCAL_DATABASE_URL`, falls back to `DIRECT_URL`.
+   - Development: requires `LOCAL_DATABASE_URL` by default (local-first, fail-loud).
    - Explicit flags override defaults.
 
 Operator safety rules:

@@ -27,6 +27,7 @@
     "ingest:mm": "tsx scripts/ingest-mm-signals.ts",
     "ingest:mes:live": "tsx scripts/ingest-mes-live-15m.ts",
     "ingest:mes:live:stream": "tsx scripts/ingest-mes-live-stream.ts",
+    "ingest:mes:live:databento": ".venv-finance/bin/python scripts/ingest-mes-live-databento.py",
     "ingest:mes:backfill": "tsx scripts/backfill-mes-15m-1h-1d.ts",
     "ingest:all": "tsx scripts/ingest-all.ts",
     "registry:snapshot": "tsx scripts/generate-symbol-registry-snapshot.ts",

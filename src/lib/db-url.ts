@@ -75,18 +75,16 @@ export function resolvePrismaRuntimeUrl(): ResolvedDbTarget {
     )
   }
 
-  if (!isProd && local) {
-    return buildTarget('prisma-runtime', 'LOCAL_DATABASE_URL', local)
+  if (!isProd) {
+    if (local) {
+      return buildTarget('prisma-runtime', 'LOCAL_DATABASE_URL', local)
+    }
+    throw new Error(
+      'Prisma runtime URL resolution failed in non-production: LOCAL_DATABASE_URL is required by default. To bypass local-first explicitly, set PRISMA_DIRECT=1 with DIRECT_URL.'
+    )
   }
-  if (database) {
-    return buildTarget('prisma-runtime', 'DATABASE_URL', database)
-  }
-  if (local) {
-    return buildTarget('prisma-runtime', 'LOCAL_DATABASE_URL', local)
-  }
-  throw new Error(
-    'Prisma runtime URL resolution failed: expected LOCAL_DATABASE_URL (dev) or DATABASE_URL.'
-  )
+
+  throw new Error('Prisma runtime URL resolution failed: unresolved configuration state.')
 }
 
 export function resolveDirectPgUrl(): ResolvedDbTarget {
@@ -115,12 +113,14 @@ export function resolveDirectPgUrl(): ResolvedDbTarget {
     )
   }
 
-  if (local) return buildTarget('direct-pg', 'LOCAL_DATABASE_URL', local)
-  if (direct) return buildTarget('direct-pg', 'DIRECT_URL', direct)
+  if (!isProd) {
+    if (local) return buildTarget('direct-pg', 'LOCAL_DATABASE_URL', local)
+    throw new Error(
+      'Direct pg URL resolution failed in non-production: LOCAL_DATABASE_URL is required by default. To use direct Postgres explicitly, set PRISMA_DIRECT=1 with DIRECT_URL.'
+    )
+  }
 
-  throw new Error(
-    'Direct pg URL resolution failed: expected LOCAL_DATABASE_URL (local-first) or DIRECT_URL (direct Postgres).'
-  )
+  throw new Error('Direct pg URL resolution failed: unresolved configuration state.')
 }
 
 export function describeDbTarget(target: ResolvedDbTarget): string {

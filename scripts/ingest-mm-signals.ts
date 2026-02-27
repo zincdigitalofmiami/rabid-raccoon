@@ -197,8 +197,8 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
   const { daysBack, timeframe, dryRun, symbolsRequested } = resolveMmOptions(options)
 
-  if (!process.env.LOCAL_DATABASE_URL && !process.env.DATABASE_URL && !process.env.DIRECT_URL) {
-    throw new Error('LOCAL_DATABASE_URL, DATABASE_URL, or DIRECT_URL is required')
+  if (!process.env.LOCAL_DATABASE_URL && !process.env.DIRECT_URL) {
+    throw new Error('LOCAL_DATABASE_URL is required (or set PRISMA_DIRECT=1 with DIRECT_URL for explicit direct runs)')
   }
   if (!Number.isFinite(daysBack) || daysBack <= 0) {
     throw new Error(`Invalid --days-back '${daysBack}'`)
