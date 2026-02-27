@@ -211,6 +211,8 @@ model MktFuturesMes1d {
   @@map("mkt_futures_mes_1d")
 }
 
+// Legacy exploratory table. Training horizons (4h/1w) are generated from
+// forward target columns in dataset builders, not from this persisted table.
 model MktFuturesMes4h {
   id            BigInt     @id @default(autoincrement())
   eventTime     DateTime   @db.Timestamptz(6)
@@ -231,6 +233,8 @@ model MktFuturesMes4h {
   @@map("mkt_futures_mes_4h")
 }
 
+// Legacy exploratory table. Training horizons (4h/1w) are generated from
+// forward target columns in dataset builders, not from this persisted table.
 model MktFuturesMes1w {
   id            BigInt     @id @default(autoincrement())
   eventDate     DateTime   @db.Date
