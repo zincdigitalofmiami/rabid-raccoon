@@ -2,14 +2,18 @@
  * create-scored-trades.ts — Create the scored_trades table via direct connection.
  * Run: npx tsx scripts/create-scored-trades.ts
  */
-import 'dotenv/config'
+import { config as loadEnv } from 'dotenv'
 import pg from 'pg'
+import { logResolvedDbTarget, resolveDirectPgUrl } from '../src/lib/db-url'
+
+loadEnv({ path: '.env.local' })
+loadEnv({ path: '.env' })
 
 async function main() {
-  const url = process.env.DIRECT_URL
-  if (!url) { console.error('No DIRECT_URL'); process.exit(1) }
+  const target = resolveDirectPgUrl()
+  logResolvedDbTarget('create-scored-trades', target)
 
-  const client = new pg.Client({ connectionString: url })
+  const client = new pg.Client({ connectionString: target.url })
   await client.connect()
 
   try {

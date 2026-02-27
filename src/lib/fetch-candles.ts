@@ -2,11 +2,22 @@ import { prisma } from './prisma'
 import { SYMBOLS } from './symbols'
 import { CandleData } from './types'
 import { toNum } from './decimal'
+import { logResolvedDbTarget, resolvePrismaRuntimeUrl } from './db-url'
 
 type DbState = 'disabled' | 'probing' | 'enabled' | 'failed'
 
-let dbState: DbState = process.env.DATABASE_URL ? 'probing' : 'disabled'
+function initialDbState(): DbState {
+  try {
+    resolvePrismaRuntimeUrl()
+    return 'probing'
+  } catch {
+    return 'disabled'
+  }
+}
+
+let dbState: DbState = initialDbState()
 let dbProbePromise: Promise<boolean> | null = null
+let dbTargetLogged = false
 
 async function canUseDatabase(): Promise<boolean> {
   if (dbState === 'disabled' || dbState === 'failed') return false
@@ -15,10 +26,17 @@ async function canUseDatabase(): Promise<boolean> {
   if (!dbProbePromise) {
     dbProbePromise = (async () => {
       try {
+        if (!dbTargetLogged) {
+          const target = resolvePrismaRuntimeUrl()
+          logResolvedDbTarget('fetch-candles:probe', target)
+          dbTargetLogged = true
+        }
         await prisma.$queryRawUnsafe('SELECT 1')
         dbState = 'enabled'
         return true
-      } catch {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.warn(`[fetch-candles] DB probe failed: ${message}`)
         dbState = 'failed'
         return false
       } finally {
@@ -178,7 +196,9 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
         return toCandle(row.eventDate.getTime(), price, price, price, price, 0)
       }
     )
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[fetch-candles] fetchCandlesFromDb failed for ${symbol}: ${message}`)
     dbState = 'failed'
     return null
   }
@@ -237,7 +257,9 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
     }
 
     return null
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[fetch-candles] fetchMacroFromDb failed for ${indicator}: ${message}`)
     dbState = 'failed'
     return null
   }

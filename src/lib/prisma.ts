@@ -1,6 +1,7 @@
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@prisma/client'
 import { withAccelerate } from '@prisma/extension-accelerate'
+import { logResolvedDbTarget, resolvePrismaRuntimeUrl } from './db-url'
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient
@@ -8,15 +9,9 @@ const globalForPrisma = globalThis as unknown as {
 }
 
 function getPrismaClient(): PrismaClient {
-  // Local dev uses LOCAL_DATABASE_URL (local Postgres) — keeps Accelerate
-  // operations for Vercel production only, zero cost during development.
-  // Batch scripts and ingestion pipelines connect via DIRECT_URL directly,
-  // bypassing Accelerate entirely (no per-op cost, no 5s timeout).
-  const localUrl = process.env.NODE_ENV !== 'production' ? process.env.LOCAL_DATABASE_URL : undefined
-  const databaseUrl = localUrl || process.env.DATABASE_URL
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL is not configured; Prisma client is unavailable')
-  }
+  const target = resolvePrismaRuntimeUrl()
+  const databaseUrl = target.url
+  logResolvedDbTarget('getPrismaClient', target)
 
   if (globalForPrisma.prisma && globalForPrisma.prismaUrl === databaseUrl) {
     return globalForPrisma.prisma
