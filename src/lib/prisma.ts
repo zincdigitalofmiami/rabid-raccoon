@@ -8,7 +8,9 @@ const globalForPrisma = globalThis as unknown as {
 }
 
 function getPrismaClient(): PrismaClient {
-  const databaseUrl = process.env.DATABASE_URL
+  // In development, prefer LOCAL_DATABASE_URL (local Postgres) over DATABASE_URL (Accelerate)
+  const localUrl = process.env.NODE_ENV !== 'production' ? process.env.LOCAL_DATABASE_URL : undefined
+  const databaseUrl = localUrl || process.env.DATABASE_URL
   if (!databaseUrl) {
     throw new Error('DATABASE_URL is not configured; Prisma client is unavailable')
   }
@@ -30,21 +32,6 @@ function getPrismaClient(): PrismaClient {
   const client = useAccelerateUrl
     ? (baseClient.$extends(withAccelerate()) as unknown as PrismaClient)
     : baseClient
-
-  // Dev-mode guard: warn if Accelerate tenant_id doesn't match DIRECT_URL
-  if (process.env.NODE_ENV !== 'production' && useAccelerateUrl && process.env.DIRECT_URL) {
-    try {
-      const jwt = new URL(databaseUrl).searchParams.get('api_key')!
-      const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString())
-      const directUser = new URL(`postgres://${process.env.DIRECT_URL.replace(/^postgres(ql)?:\/\//, '')}`).username
-      if (payload.tenant_id && payload.tenant_id !== directUser) {
-        console.warn(
-          `\n⚠️  DATABASE_URL Accelerate tenant (${payload.tenant_id.slice(0, 8)}…) does not match ` +
-          `DIRECT_URL user (${directUser.slice(0, 8)}…) — these may be different databases!\n`
-        )
-      }
-    } catch { /* ignore parse errors */ }
-  }
 
   if (process.env.NODE_ENV !== 'production') {
     globalForPrisma.prisma = client
