@@ -15,6 +15,17 @@ To answer that, it:
 5. **Displays** analysis, forecasts, BHG setups, and correlation data on a Next.js dashboard.
 6. **(Phase 2)** Pushes predictions to TradingView via webhook for chart overlay.
 
+## AI Tooling Baseline (MCP)
+
+For agent-assisted work in this repository, project MCP config is intentionally minimal and explicit:
+
+1. `memory` — OpenMemory SSE identity `zincdigital`
+2. `context7` — Docker `mcp/context7` server for up-to-date library docs
+3. `sequentialthinking` — Docker `mcp/sequentialthinking` server for structured reasoning
+
+These are defined in both `.mcp.json` and `.vscode/mcp.json` using the correct schema for each client.
+Avoid adding duplicate local MCP server definitions for the same capability.
+
 ## Data Flow
 
 ```

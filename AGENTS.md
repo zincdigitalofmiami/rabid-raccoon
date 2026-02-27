@@ -280,8 +280,10 @@ rabid-raccoon/
 
 All agents MUST use the Memory MCP server to persist and recall project decisions, corrections, and context across sessions.
 
-**Server**: `@modelcontextprotocol/server-memory` (stdio)
-**Memory file**: `.claude/memory.jsonl` (repo-local, shared across all agents)
+**Server**: OpenMemory SSE (`http://localhost:8765/mcp/<client>/sse/zincdigital`)
+**Identity**: `zincdigital`
+**Runtime**: Docker (`openmemory-openmemory-mcp-1` + `openmemory-mem0_store-1`)
+**Legacy file note**: `.claude/memory.jsonl` is historical data from the old stdio server-memory flow. Do not treat it as the active source of truth.
 
 ### Configuration
 
@@ -289,17 +291,27 @@ The Memory MCP is pre-configured for each agent platform:
 
 | Platform | Config file | Key format |
 |----------|-------------|------------|
-| Claude Code / Desktop | `.mcp.json` (repo root) | `mcpServers.memory` |
+| Claude Code / Desktop | `.mcp.json` (repo root) | `mcpServers.memory` (SSE URL) |
 | VS Code Copilot | `.vscode/mcp.json` | `servers.memory` |
 | Cline | `.clinerules` + `.mcp.json` | Uses `.mcp.json` |
 | Cursor | `.mcp.json` | Uses `.mcp.json` |
+
+### Project MCP Baseline
+
+Project-level MCP config in this repo must stay synchronized to:
+
+1. `memory` (OpenMemory SSE)
+2. `context7` (Docker server)
+3. `sequentialthinking` (Docker server)
+
+Do not add duplicate local definitions of the same capability in repo MCP files.
 
 ### Rules
 
 1. **Search memory first** — Before starting any task, search memory for keywords from the request + "rabid-raccoon" + "Kirk". This catches past decisions and corrections.
 2. **Store immediately** — When Kirk states a preference, makes a correction, or you learn something project-specific, write it to memory before moving on.
 3. **Never skip memory** — Even if a task seems simple. Past context prevents repeated mistakes.
-4. **Memory is shared** — All agents read/write the same `.claude/memory.jsonl`. Keep entries clean and factual.
+4. **Memory is shared** — All agents read/write the same OpenMemory identity (`zincdigital`). Keep entries clean and factual.
 
 ## Agent Workflow
 
@@ -329,5 +341,5 @@ When you receive a task:
 
 ---
 
-*Last updated: 2026-02-22*
+*Last updated: 2026-02-27*
 *Maintained by: Kirk (architect) with Claude (governance)*
