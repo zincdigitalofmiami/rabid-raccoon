@@ -13,12 +13,15 @@
     "lint": "npm run lint:symbol-hardcodes && eslint .",
     "lint:symbol-hardcodes": "node scripts/lint-symbol-hardcodes.mjs",
     "lint:symbol-hardcodes:baseline": "node scripts/lint-symbol-hardcodes.mjs --write-baseline",
+    "mcp:doctor": "node scripts/mcp-doctor.mjs",
+    "mcp:check": "node scripts/check-mcp-drift.mjs",
     "backtest": "tsx scripts/backtest-signals.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "db:migrate": "prisma migrate deploy",
     "db:counts": "tsx scripts/db-counts.ts",
+    "db:sync:local": "tsx scripts/db-sync-local.ts",
     "ingest:market": "tsx scripts/ingest-market-prices.ts",
     "ingest:market:daily": "tsx scripts/ingest-market-prices-daily.ts",
     "ingest:macro": "tsx scripts/ingest-macro-indicators.ts",
@@ -37,6 +40,7 @@
     "dataset:autogluon:1h": "tsx scripts/build-complete-dataset.ts",
     "dataset:autogluon:15m": "tsx scripts/build-15m-dataset.ts",
     "test:feature-availability": "node --import tsx --test scripts/feature-availability.test.ts",
+    "test:db-routing": "node --import tsx --test scripts/db-url-contract.test.ts",
     "inngest:dev": "npx inngest-cli dev -u http://localhost:3000/api/inngest"
   },
   "dependencies": {

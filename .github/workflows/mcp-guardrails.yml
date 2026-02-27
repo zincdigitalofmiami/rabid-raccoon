@@ -1,0 +1,32 @@
+name: MCP Guardrails
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - codex/**
+
+jobs:
+  mcp-and-routing-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate MCP baseline drift
+        run: npm run mcp:check
+
+      - name: Validate DB routing contract
+        run: npm run test:db-routing

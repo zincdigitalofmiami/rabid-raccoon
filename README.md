@@ -63,6 +63,17 @@ For the Next.js dashboard analysis overlay (`/api/analyse/ai`), set:
 
 Copy `.env.example` to `.env.local` and fill the keys.
 
+## Ops Guardrails
+
+Use these commands to keep MCP wiring and DB routing healthy:
+
+```bash
+npm run mcp:doctor          # live health checks (memory/context7/sequentialthinking + docker)
+npm run mcp:check           # repo drift checks for MCP baseline/docs
+npm run test:db-routing     # contract tests for db-url routing policy
+npm run db:sync:local       # one-command DIRECT_URL -> LOCAL_DATABASE_URL sync with count validation
+```
+
 ## Prisma Data Layer (Local PostgreSQL)
 
 The app now supports persistent market/macro storage via Prisma + Postgres.
