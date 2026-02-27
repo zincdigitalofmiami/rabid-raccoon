@@ -22,6 +22,7 @@ Flags:
 """
 import sys
 import os
+import re
 import time
 import json
 from pathlib import Path
@@ -115,6 +116,91 @@ def get_engine(url: str):
     return create_engine(url)
 
 
+# ─── Symbol Helpers ──────────────────────────────────────────────────────────
+
+def load_parent_map() -> dict[str, str] | None:
+    """Load symbol registry and build root → parent map (e.g. ES → ES.OPT).
+
+    Returns None if registry not found (logs failure).
+    """
+    registry_path = ROOT / "src" / "lib" / "symbol-registry" / "snapshot.json"
+    if not registry_path.exists():
+        log.fail(f"Symbol registry not found at {registry_path}")
+        return None
+
+    with open(registry_path) as f:
+        registry = json.load(f)
+
+    parent_map = {}
+    for sym in registry.get("symbols", []):
+        code = sym.get("code", "")
+        if code.endswith(".OPT"):
+            root = code.replace(".OPT", "")
+            parent_map[root] = code
+
+    log.info(f"Symbol registry: {len(parent_map)} option parents loaded")
+    return parent_map
+
+
+def map_symbol(sym_str: str, sorted_roots: list[str], parent_map: dict[str, str]) -> str | None:
+    """Map contract symbol to parent by longest-prefix match."""
+    sym_str = str(sym_str).strip()
+    for root in sorted_roots:
+        if sym_str.startswith(root):
+            return parent_map[root]
+    return None
+
+
+# ─── DataFrame Helpers ───────────────────────────────────────────────────────
+
+def resolve_symbol_column(df: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
+    """Find or create the 'symbol' column. Returns (df, col_name) or (df, None)."""
+    if "symbol" in df.columns:
+        return df, "symbol"
+    if df.index.name == "symbol":
+        return df.reset_index(), "symbol"
+    return df, None
+
+
+def resolve_month_column(df: pd.DataFrame, dbn_file: Path) -> pd.DataFrame | None:
+    """Add '_month' column from timestamp or filename. Returns None on failure."""
+    ts_col = "ts_event" if "ts_event" in df.columns else (
+        "ts_ref" if "ts_ref" in df.columns else None
+    )
+    if ts_col:
+        df["_month"] = pd.to_datetime(df[ts_col]).dt.to_period("M")
+        return df
+
+    match = re.search(r"(\d{4})(\d{2})\d{2}-\d{8}", dbn_file.name)
+    if not match:
+        return None
+    df["_month"] = pd.Period(f"{match.group(1)}-{match.group(2)}", freq="M")
+    return df
+
+
+def detect_count_column(df: pd.DataFrame) -> str | None:
+    """Return the best column for counting unique contracts."""
+    if "instrument_id" in df.columns:
+        return "instrument_id"
+    if "symbol" in df.columns:
+        return "symbol"
+    return None
+
+
+def safe_stat_agg(
+    day_df: pd.DataFrame,
+    stat_type: int,
+    col: str,
+    agg_fn: str,
+    cast_fn=float,
+) -> float | int | None:
+    """Filter day_df by stat_type, aggregate col with agg_fn, return cast result or None."""
+    rows = day_df[day_df["stat_type"] == stat_type]
+    if rows.empty or col not in rows.columns:
+        return None
+    return cast_fn(getattr(rows[col], agg_fn)())
+
+
 # ─── Step 0: Preflight Checks ────────────────────────────────────────────────
 
 def preflight(env: dict) -> tuple:
@@ -183,6 +269,33 @@ def preflight(env: dict) -> tuple:
 
 # ─── Step 1: Download from Databento ─────────────────────────────────────────
 
+def should_skip_job(
+    job: dict,
+    schema_to_dir: dict[str, Path],
+    seen_schemas: dict[str, tuple[str, int]],
+) -> str | None:
+    """Check if a job should be skipped. Returns skip reason string, or None to proceed."""
+    state = job["state"]
+    schema = job["schema"]
+    jid = job["id"]
+
+    if state != "done":
+        return f"{state} ({job.get('progress', '?')}%)"
+
+    out_dir = schema_to_dir.get(schema, DATASETS / f"options-{schema}-raw")
+    existing = out_dir / jid
+    if existing.exists() and any(existing.iterdir()):
+        return f"already on disk at {existing.name}/"
+
+    rec_count = job.get("record_count", 0)
+    if schema in seen_schemas:
+        prev_id, prev_count = seen_schemas[schema]
+        if rec_count == prev_count:
+            return f"duplicate of {prev_id} ({rec_count:,} records)"
+
+    return None
+
+
 def download_jobs(databento_key: str, dry_run: bool) -> dict:
     """Download all completed Databento batch jobs. Returns summary."""
     import databento as db
@@ -200,35 +313,18 @@ def download_jobs(databento_key: str, dry_run: bool) -> dict:
         "definition": DEFN_RAW,
     }
 
-    # Group by schema, dedupe identical jobs (take first done)
     seen_schemas = {}
     for j in jobs:
-        schema = j["schema"]
-        state = j["state"]
-        jid = j["id"]
-
-        if state != "done":
-            log.info(f"  {jid} ({schema}): {state} ({j.get('progress', '?')}%) — skipping")
+        jid, schema = j["id"], j["schema"]
+        skip_reason = should_skip_job(j, schema_to_dir, seen_schemas)
+        if skip_reason:
+            level = "ok" if "already on disk" in skip_reason else "info"
+            getattr(log, level)(f"  {jid} ({schema}): {skip_reason} — skipping")
             continue
 
-        # Check if we already have this job on disk
+        seen_schemas[schema] = (jid, j.get("record_count", 0))
         out_dir = schema_to_dir.get(schema, DATASETS / f"options-{schema}-raw")
-        existing = out_dir / jid
-        if existing.exists() and any(existing.iterdir()):
-            log.ok(f"  {jid} ({schema}): already on disk at {existing.name}/")
-            downloaded[schema.replace("-1d", "")] = downloaded.get(schema.replace("-1d", ""), 0)
-            continue
-
-        # Dedupe: skip if we already downloaded same schema with same record count
         rec_count = j.get("record_count", 0)
-        if schema in seen_schemas:
-            prev_id, prev_count = seen_schemas[schema]
-            if rec_count == prev_count:
-                log.info(f"  {jid} ({schema}): duplicate of {prev_id} ({rec_count:,} records) — skipping")
-                continue
-        seen_schemas[schema] = (jid, rec_count)
-
-        # Download
         expires = j.get("ts_expiration", "unknown")
         size_gb = j.get("package_size", 0) / 1e9
         log.info(f"  {jid} ({schema}): {rec_count:,} records, {size_gb:.1f} GB, expires {expires}")
@@ -251,41 +347,81 @@ def download_jobs(databento_key: str, dry_run: bool) -> dict:
 
 # ─── Step 2: Convert Raw → Parquet ───────────────────────────────────────────
 
-def convert_raw_to_parquet(dry_run: bool, target_parent: str | None = None):
-    """Convert .dbn.zst files to per-symbol monthly parquets."""
+def process_dbn_file(
+    dbn_file: Path,
+    schema_label: str,
+    sorted_roots: list[str],
+    parent_map: dict[str, str],
+    out_dir: Path,
+    target_parent: str | None,
+    dry_run: bool,
+) -> int:
+    """Process one .dbn.zst file: read, map symbols, write parquets. Returns row count."""
     import databento as db
 
+    try:
+        store = db.DBNStore.from_file(str(dbn_file))
+        df = store.to_df()
+    except Exception as e:
+        log.warn(f"    {dbn_file.name}: failed to read — {e}")
+        return 0
+
+    if df.empty:
+        return 0
+
+    # Filter statistics to useful stat types
+    if schema_label == "statistics" and "stat_type" in df.columns:
+        df = df[df["stat_type"].isin(STAT_TYPES_TO_KEEP)]
+
+    # Map symbols to parents
+    df, sym_col = resolve_symbol_column(df)
+    if not sym_col:
+        log.warn(f"    {dbn_file.name}: no symbol column")
+        return 0
+
+    df["_parent"] = df[sym_col].apply(lambda s: map_symbol(s, sorted_roots, parent_map))
+    unmapped = df["_parent"].isna().sum()
+    if unmapped > 0:
+        df = df.dropna(subset=["_parent"])
+
+    if df.empty:
+        return 0
+
+    # Resolve month column
+    df = resolve_month_column(df, dbn_file)
+    if df is None:
+        log.warn(f"    {dbn_file.name}: could not determine month — skipping")
+        return 0
+
+    # Write per-parent, per-month parquets
+    total_rows = 0
+    for (parent, month), group_df in df.groupby(["_parent", "_month"]):
+        safe_parent = parent.replace(".", "_")
+        if target_parent and safe_parent != target_parent:
+            continue
+
+        if dry_run:
+            total_rows += len(group_df)
+            continue
+
+        parent_out = out_dir / safe_parent
+        parent_out.mkdir(parents=True, exist_ok=True)
+        save_df = group_df.drop(columns=["_parent", "_month"], errors="ignore")
+        save_df.to_parquet(parent_out / f"{month}.parquet", index=False)
+        total_rows += len(save_df)
+
+    return total_rows
+
+
+def convert_raw_to_parquet(dry_run: bool, target_parent: str | None = None):
+    """Convert .dbn.zst files to per-symbol monthly parquets."""
     log.header("CONVERT RAW → PARQUET")
 
-    # Load symbol registry
-    registry_path = ROOT / "src" / "lib" / "symbol-registry" / "snapshot.json"
-    if not registry_path.exists():
-        log.fail(f"Symbol registry not found at {registry_path}")
+    parent_map = load_parent_map()
+    if parent_map is None:
         return
 
-    with open(registry_path) as f:
-        registry = json.load(f)
-
-    # Build parent map: root → parent  (ES → ES.OPT)
-    parent_map = {}
-    for sym in registry.get("symbols", []):
-        code = sym.get("code", "")
-        if code.endswith(".OPT"):
-            root = code.replace(".OPT", "")
-            parent_map[root] = code
-
-    log.info(f"Symbol registry: {len(parent_map)} option parents loaded")
-
-    # Sort roots longest-first for prefix matching
     sorted_roots = sorted(parent_map.keys(), key=len, reverse=True)
-
-    def map_symbol(sym_str: str) -> str | None:
-        """Map contract symbol to parent by longest-prefix match."""
-        sym_str = str(sym_str).strip()
-        for root in sorted_roots:
-            if sym_str.startswith(root):
-                return parent_map[root]
-        return None
 
     for schema_label, raw_dir, out_dir in [
         ("ohlcv-1d", OHLCV_RAW, OHLCV_DIR),
@@ -307,76 +443,12 @@ def convert_raw_to_parquet(dry_run: bool, target_parent: str | None = None):
             dbn_files = sorted(job_dir.glob("*.dbn.zst"))
             if not dbn_files:
                 continue
-
             log.info(f"  {schema_label}/{job_dir.name}: {len(dbn_files)} .dbn.zst files")
-
             for dbn_file in dbn_files:
-                try:
-                    store = db.DBNStore.from_file(str(dbn_file))
-                    df = store.to_df()
-                except Exception as e:
-                    log.warn(f"    {dbn_file.name}: failed to read — {e}")
-                    continue
-
-                if df.empty:
-                    continue
-
-                # Filter statistics to useful stat types
-                if schema_label == "statistics" and "stat_type" in df.columns:
-                    df = df[df["stat_type"].isin(STAT_TYPES_TO_KEEP)]
-
-                # Map symbols to parents
-                sym_col = "symbol" if "symbol" in df.columns else None
-                if sym_col is None and df.index.name == "symbol":
-                    df = df.reset_index()
-                    sym_col = "symbol"
-
-                if sym_col:
-                    df["_parent"] = df[sym_col].apply(map_symbol)
-                    unmapped = df["_parent"].isna().sum()
-                    if unmapped > 0:
-                        df = df.dropna(subset=["_parent"])
-                else:
-                    log.warn(f"    {dbn_file.name}: no symbol column")
-                    continue
-
-                if df.empty:
-                    continue
-
-                # Write per-parent, per-month parquets
-                ts_col = "ts_event" if "ts_event" in df.columns else (
-                    "ts_ref" if "ts_ref" in df.columns else None
+                total_rows += process_dbn_file(
+                    dbn_file, schema_label, sorted_roots, parent_map,
+                    out_dir, target_parent, dry_run,
                 )
-                if ts_col:
-                    df["_month"] = pd.to_datetime(df[ts_col]).dt.to_period("M")
-                else:
-                    import re
-
-                    match = re.search(r"(\d{4})(\d{2})\d{2}-\d{8}", dbn_file.name)
-                    if not match:
-                        log.warn(f"    {dbn_file.name}: could not determine month — skipping")
-                        continue
-                    df["_month"] = pd.Period(f"{match.group(1)}-{match.group(2)}", freq="M")
-
-                for (parent, month), group_df in df.groupby(["_parent", "_month"]):
-                    safe_parent = parent.replace(".", "_")
-                    if target_parent and safe_parent != target_parent:
-                        continue
-
-                    parent_out = out_dir / safe_parent
-                    month_str = str(month)
-                    out_file = parent_out / f"{month_str}.parquet"
-
-                    if dry_run:
-                        total_rows += len(group_df)
-                        continue
-
-                    parent_out.mkdir(parents=True, exist_ok=True)
-                    # Drop helper columns before saving
-                    save_df = group_df.drop(columns=["_parent", "_month"], errors="ignore")
-                    save_df.to_parquet(out_file, index=False)
-                    total_rows += len(save_df)
-
                 total_files += 1
 
         action = "would convert" if dry_run else "converted"
@@ -489,9 +561,7 @@ def build_ohlcv_rows(parent_symbol: str, df: pd.DataFrame) -> list[dict[str, Any
 
     df = df.copy()
     df["eventDate"] = pd.to_datetime(df["ts_event"]).dt.date
-    count_col = "instrument_id" if "instrument_id" in df.columns else (
-        "symbol" if "symbol" in df.columns else None
-    )
+    count_col = detect_count_column(df)
 
     rows = []
     for date, day_df in df.groupby("eventDate"):
@@ -527,20 +597,14 @@ def build_stats_rows(parent_symbol: str, df: pd.DataFrame) -> list[dict[str, Any
 
     df = df.copy()
     df["eventDate"] = pd.to_datetime(df[date_col]).dt.date
-    count_col = "instrument_id" if "instrument_id" in df.columns else (
-        "symbol" if "symbol" in df.columns else None
-    )
+    count_col = detect_count_column(df)
 
     rows = []
     for date, day_df in df.groupby("eventDate"):
-        vol_rows = day_df[day_df["stat_type"] == STAT_VOLUME]
-        total_volume = int(vol_rows["quantity"].sum()) if not vol_rows.empty and "quantity" in vol_rows.columns else None
-        oi_rows = day_df[day_df["stat_type"] == STAT_OI]
-        total_oi = int(oi_rows["quantity"].sum()) if not oi_rows.empty and "quantity" in oi_rows.columns else None
-        settle_rows = day_df[day_df["stat_type"] == STAT_SETTLEMENT]
-        settlement = float(settle_rows["price"].median()) if not settle_rows.empty and "price" in settle_rows.columns else None
-        iv_rows = day_df[day_df["stat_type"] == STAT_IV]
-        avg_iv = float(iv_rows["price"].mean()) if not iv_rows.empty and "price" in iv_rows.columns else None
+        total_volume = safe_stat_agg(day_df, STAT_VOLUME, "quantity", "sum", int)
+        total_oi = safe_stat_agg(day_df, STAT_OI, "quantity", "sum", int)
+        settlement = safe_stat_agg(day_df, STAT_SETTLEMENT, "price", "median")
+        avg_iv = safe_stat_agg(day_df, STAT_IV, "price", "mean")
         contract_count = int(day_df[count_col].nunique()) if count_col else None
         row_hash = sha256(f"{parent_symbol}|{date}|stats|{total_volume}".encode()).hexdigest()
 
@@ -682,6 +746,23 @@ def ingest_to_db(engine, label: str, target_parent: str | None, dry_run: bool) -
 
 # ─── Step 4: Post-Ingestion Validation ───────────────────────────────────────
 
+def query_table_stats(engine, label: str, table: str) -> tuple[int, str]:
+    """Query row count and max eventDate for a table. Returns (count, max_date_str)."""
+    from sqlalchemy import text
+
+    if not engine:
+        return 0, "N/A"
+    try:
+        with engine.connect() as c:
+            count = c.execute(text(f'SELECT count(*) FROM {table}')).scalar()
+            row = c.execute(text(f'SELECT max("eventDate")::text FROM {table}')).fetchone()
+            max_date = row[0] if row and row[0] else "N/A"
+        return count, max_date
+    except Exception as e:
+        log.warn(f"Could not query {label} {table}: {e}")
+        return 0, "N/A"
+
+
 def validate(local_engine, prod_engine):
     """Compare local and production row counts and freshness."""
     from sqlalchemy import text
@@ -689,26 +770,8 @@ def validate(local_engine, prod_engine):
     log.header("POST-INGESTION VALIDATION")
 
     for table in ["mkt_options_ohlcv_1d", "mkt_options_agg_1d"]:
-        local_count, local_max = 0, "N/A"
-        prod_count, prod_max = 0, "N/A"
-
-        if local_engine:
-            try:
-                with local_engine.connect() as c:
-                    local_count = c.execute(text(f'SELECT count(*) FROM {table}')).scalar()
-                    row = c.execute(text(f'SELECT max("eventDate")::text FROM {table}')).fetchone()
-                    local_max = row[0] if row and row[0] else "N/A"
-            except Exception as e:
-                log.warn(f"Could not query local {table}: {e}")
-
-        if prod_engine:
-            try:
-                with prod_engine.connect() as c:
-                    prod_count = c.execute(text(f'SELECT count(*) FROM {table}')).scalar()
-                    row = c.execute(text(f'SELECT max("eventDate")::text FROM {table}')).fetchone()
-                    prod_max = row[0] if row and row[0] else "N/A"
-            except Exception as e:
-                log.warn(f"Could not query prod {table}: {e}")
+        local_count, local_max = query_table_stats(local_engine, "local", table)
+        prod_count, prod_max = query_table_stats(prod_engine, "prod", table)
 
         match = "MATCH" if local_count == prod_count else "DRIFT"
         log.info(f"  {table}:")
@@ -736,79 +799,44 @@ def validate(local_engine, prod_engine):
             pass
 
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
+# ─── CLI & Reporting ─────────────────────────────────────────────────────────
 
-def main():
-    t0 = time.time()
-
-    # Parse flags
-    skip_download = "--skip-download" in sys.argv
-    skip_convert = "--skip-convert" in sys.argv
-    local_only = "--local-only" in sys.argv
-    dry_run = "--dry-run" in sys.argv
-    target_parent = None
+def parse_flags() -> dict:
+    """Parse CLI flags from sys.argv."""
+    flags = {
+        "skip_download": "--skip-download" in sys.argv,
+        "skip_convert": "--skip-convert" in sys.argv,
+        "local_only": "--local-only" in sys.argv,
+        "dry_run": "--dry-run" in sys.argv,
+        "target_parent": None,
+    }
     for i, arg in enumerate(sys.argv):
         if arg == "--parent" and i + 1 < len(sys.argv):
-            target_parent = sys.argv[i + 1]
+            flags["target_parent"] = sys.argv[i + 1]
+    return flags
 
+
+def print_banner(flags: dict):
+    """Print the pipeline startup banner."""
     print("\n" + "="*70)
     print("  OPTIONS DATA PIPELINE")
     print(f"  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
-    if dry_run:
+    if flags["dry_run"]:
         print("  MODE: DRY RUN")
-    if local_only:
+    if flags["local_only"]:
         print("  MODE: LOCAL ONLY (no prod push)")
-    if target_parent:
-        print(f"  TARGET: {target_parent}")
+    if flags["target_parent"]:
+        print(f"  TARGET: {flags['target_parent']}")
     print("="*70)
 
-    # Load env
-    os.chdir(str(ROOT))
-    env = load_env()
 
-    # Step 0: Preflight
-    local_engine, prod_engine, databento_key = preflight(env)
-
-    if not local_engine:
-        log.fail("ABORT: Cannot connect to local Postgres")
-        sys.exit(1)
-
-    # Step 1: Download
-    if not skip_download and databento_key:
-        download_jobs(databento_key, dry_run)
-    elif skip_download:
-        log.header("DOWNLOAD — SKIPPED (--skip-download)")
-    else:
-        log.header("DOWNLOAD — SKIPPED (no DATABENTO_API_KEY)")
-
-    # Step 2: Convert
-    if not skip_convert:
-        convert_raw_to_parquet(dry_run, target_parent)
-    else:
-        log.header("CONVERT — SKIPPED (--skip-convert)")
-
-    # Step 3a: Ingest → Local
-    local_result = ingest_to_db(local_engine, "LOCAL", target_parent, dry_run)
-
-    # Step 3b: Ingest → Production
-    prod_result = {"ohlcv_rows": 0, "stats_rows": 0}
-    if not local_only and prod_engine:
-        prod_result = ingest_to_db(prod_engine, "PROD", target_parent, dry_run)
-    elif local_only:
-        log.header("PROD PUSH — SKIPPED (--local-only)")
-    else:
-        log.header("PROD PUSH — SKIPPED (no production connection)")
-
-    # Step 4: Validate
-    validate(local_engine, prod_engine)
-
-    # ── Final Report ──
-    elapsed = time.time() - t0
+def print_report(local_result: dict, prod_result: dict, flags: dict, elapsed: float):
+    """Print the final pipeline summary report."""
     print(f"\n{'='*70}")
     print(f"  PIPELINE COMPLETE — {elapsed:.1f}s")
     print(f"{'='*70}")
     print(f"  LOCAL:  OHLCV {local_result['ohlcv_rows']:>7,} rows  |  Stats {local_result['stats_rows']:>7,} rows")
-    if not local_only:
+    if not flags["local_only"]:
         print(f"  PROD:   OHLCV {prod_result['ohlcv_rows']:>7,} rows  |  Stats {prod_result['stats_rows']:>7,} rows")
     if log.warnings:
         print(f"\n  WARNINGS ({len(log.warnings)}):")
@@ -821,6 +849,57 @@ def main():
     else:
         print(f"\n  No errors.")
     print()
+
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    t0 = time.time()
+    flags = parse_flags()
+    print_banner(flags)
+
+    os.chdir(str(ROOT))
+    env = load_env()
+
+    # Step 0: Preflight
+    local_engine, prod_engine, databento_key = preflight(env)
+    if not local_engine:
+        log.fail("ABORT: Cannot connect to local Postgres")
+        sys.exit(1)
+
+    dry_run = flags["dry_run"]
+    target_parent = flags["target_parent"]
+
+    # Step 1: Download
+    if not flags["skip_download"] and databento_key:
+        download_jobs(databento_key, dry_run)
+    elif flags["skip_download"]:
+        log.header("DOWNLOAD — SKIPPED (--skip-download)")
+    else:
+        log.header("DOWNLOAD — SKIPPED (no DATABENTO_API_KEY)")
+
+    # Step 2: Convert
+    if not flags["skip_convert"]:
+        convert_raw_to_parquet(dry_run, target_parent)
+    else:
+        log.header("CONVERT — SKIPPED (--skip-convert)")
+
+    # Step 3a: Ingest → Local
+    local_result = ingest_to_db(local_engine, "LOCAL", target_parent, dry_run)
+
+    # Step 3b: Ingest → Production
+    prod_result = {"ohlcv_rows": 0, "stats_rows": 0}
+    if not flags["local_only"] and prod_engine:
+        prod_result = ingest_to_db(prod_engine, "PROD", target_parent, dry_run)
+    elif flags["local_only"]:
+        log.header("PROD PUSH — SKIPPED (--local-only)")
+    else:
+        log.header("PROD PUSH — SKIPPED (no production connection)")
+
+    # Step 4: Validate
+    validate(local_engine, prod_engine)
+
+    print_report(local_result, prod_result, flags, time.time() - t0)
 
 
 if __name__ == "__main__":
