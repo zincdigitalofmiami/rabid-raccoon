@@ -135,8 +135,8 @@ async function ingestOnce(lookbackMinutes: number): Promise<LiveIngestSummary> {
 export async function runMesLiveIngestion15m(): Promise<void> {
   loadDotEnvFiles()
 
-  if (!process.env.LOCAL_DATABASE_URL && !process.env.DATABASE_URL) {
-    throw new Error('LOCAL_DATABASE_URL or DATABASE_URL is required')
+  if (!process.env.LOCAL_DATABASE_URL && !process.env.DATABASE_URL && !process.env.DIRECT_URL) {
+    throw new Error('LOCAL_DATABASE_URL, DATABASE_URL, or DIRECT_URL is required')
   }
   if (!process.env.DATABENTO_API_KEY) throw new Error('DATABENTO_API_KEY is required')
 
