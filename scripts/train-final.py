@@ -64,16 +64,43 @@ HORIZONS = {
 }
 
 SEED = 42
-N_FOLDS = 5
-TIME_LIMIT = 3600              # 60 min per fold
-PRESETS = "best_quality_v150"
-NUM_BAG_FOLDS = 5              # 5-fold bagging for stability
-NUM_STACK_LEVELS = 1
 EVAL_METRIC = "roc_auc"
 MIN_COVERAGE = 0.50            # drop features with <50% non-null
-MAX_FEATURES = 50              # IC screening: keep top N per fold
+DEFAULT_MAX_FEATURES = 50      # IC screening: keep top N per fold
 CORR_THRESHOLD = 0.90          # hierarchical cluster dedup threshold
 FEATURE_MAX_LOOKBACK = 24      # longest rolling window in feature engineering (24h)
+
+TRAINING_PROFILES = {
+    # Smoke: quick wiring/shape check
+    "smoke": {
+        "n_folds": 2,
+        "time_limit": 300,
+        "num_bag_folds": 0,
+        "num_stack_levels": 0,
+        "max_features": 30,
+        "max_memory_ratio": 1.2,
+    },
+    # Balanced: default day-to-day fit profile
+    "balanced": {
+        "n_folds": 3,
+        "time_limit": 1800,
+        "num_bag_folds": 3,
+        "num_stack_levels": 1,
+        "max_features": DEFAULT_MAX_FEATURES,
+        "max_memory_ratio": 1.4,
+    },
+    # Production: full quality profile
+    "production": {
+        "n_folds": 5,
+        "time_limit": 3600,
+        "num_bag_folds": 5,
+        "num_stack_levels": 1,
+        "max_features": DEFAULT_MAX_FEATURES,
+        "max_memory_ratio": 1.5,
+    },
+}
+
+DEFAULT_PROFILE = "balanced"
 
 
 def parse_args():
@@ -89,16 +116,62 @@ def parse_args():
         help="Comma-separated horizons to train (subset of: 1h,4h,1d,1w). Default: all.",
     )
     parser.add_argument(
+        "--profile",
+        default=DEFAULT_PROFILE,
+        choices=sorted(TRAINING_PROFILES.keys()),
+        help="Training profile: smoke, balanced, production.",
+    )
+    parser.add_argument(
         "--time-limit",
         type=int,
         default=None,
-        help="Override time limit in seconds per fold (default: 3600).",
+        help="Override time limit in seconds per fold (profile default if omitted).",
     )
     parser.add_argument(
         "--n-folds",
         type=int,
         default=None,
-        help="Override number of walk-forward folds (default: 5).",
+        help="Override number of walk-forward folds (profile default if omitted).",
+    )
+    parser.add_argument(
+        "--num-bag-folds",
+        type=int,
+        default=None,
+        help="Override AutoGluon bag folds (profile default if omitted).",
+    )
+    parser.add_argument(
+        "--num-stack-levels",
+        type=int,
+        default=None,
+        help="Override AutoGluon stack levels (profile default if omitted).",
+    )
+    parser.add_argument(
+        "--max-features",
+        type=int,
+        default=None,
+        help="Top-N IC-screened features per fold (profile default if omitted).",
+    )
+    parser.add_argument(
+        "--max-memory-ratio",
+        type=float,
+        default=None,
+        help="ag.max_memory_usage_ratio (profile default if omitted).",
+    )
+    parser.add_argument(
+        "--fit-verbosity",
+        type=int,
+        default=2,
+        help="AutoGluon verbosity passed to TabularPredictor.",
+    )
+    parser.add_argument(
+        "--raise-on-model-failure",
+        action="store_true",
+        help="Fail immediately if any AutoGluon model errors during fit (diagnostic mode).",
+    )
+    parser.add_argument(
+        "--allow-no-models-fitted",
+        action="store_true",
+        help="Allow fit to continue even if no models train (not recommended).",
     )
     parser.add_argument(
         "--clean",
@@ -129,6 +202,26 @@ DROP_COLS = {
 #   NN_TORCH: overfits on weak financial signal
 EXCLUDED = ["KNN", "FASTAI", "RF", "NN_TORCH"]
 
+# Explicit model family configs to avoid oversized preset sweeps.
+HYPERPARAMETERS = {
+    "GBM": [
+        {"num_boost_round": 5000, "learning_rate": 0.02, "num_leaves": 31, "feature_fraction": 0.7, "min_data_in_leaf": 20, "extra_trees": False},
+        {"num_boost_round": 5000, "learning_rate": 0.01, "num_leaves": 63, "feature_fraction": 0.5, "min_data_in_leaf": 50, "extra_trees": True},
+    ],
+    "CAT": [
+        {"iterations": 5000, "learning_rate": 0.03, "depth": 6},
+        {"iterations": 5000, "learning_rate": 0.01, "depth": 8},
+    ],
+    "XGB": [
+        {"n_estimators": 5000, "learning_rate": 0.02, "max_depth": 6, "colsample_bytree": 0.7},
+        {"n_estimators": 5000, "learning_rate": 0.01, "max_depth": 8, "colsample_bytree": 0.5},
+    ],
+    "XT": [
+        {},
+        {"max_features": 0.5, "min_samples_leaf": 5},
+    ],
+}
+
 # ─── Dataset Quality Gates ────────────────────────────────────────────────────
 
 REQUIRED_GROUPS = {
@@ -136,6 +229,13 @@ REQUIRED_GROUPS = {
     "macro_liquidity": ["yield_curve_slope", "fed_liquidity"],
     "cross_asset": ["nq_ret_1h", "zn_ret_1h", "cl_ret_1h"],
     "event_context": ["is_high_impact_day", "hours_to_next_high_impact"],
+    "technical_indicators": ["sqz_mom", "wvf_value", "macd_hist", "mes_edss"],
+    "options_ohlcv": [
+        "options_ohlcv_total_volume_1d",
+        "options_ohlcv_total_contracts_1d",
+        "options_ohlcv_avg_close_vw",
+        "options_ohlcv_volume_momentum_5d",
+    ],
 }
 MIN_GROUP_COVERAGE = 0.70
 
@@ -200,6 +300,12 @@ FEATURE_TV_MAP = {
     "is_nfp_day":          {"indicator": "NFP Day flag", "setting": "Watch 8:30 AM ET", "chart": "CALENDAR"},
     "hours_to_next_high_impact": {"indicator": "Event countdown", "setting": "Hours until next high-impact release", "chart": "CALENDAR"},
     "econ_surprise_index": {"indicator": "Surprise Index", "setting": "Net economic surprise direction", "chart": "DASHBOARD"},
+    # Options OHLCV aggregates
+    "options_ohlcv_total_volume_1d": {"indicator": "Options Volume", "setting": "Aggregated OPTIONS_PARENT daily volume", "chart": "DASHBOARD"},
+    "options_ohlcv_total_contracts_1d": {"indicator": "Options Breadth", "setting": "Aggregated contract count across parent symbols", "chart": "DASHBOARD"},
+    "options_ohlcv_avg_close_vw": {"indicator": "Options Premium", "setting": "Volume-weighted average close across parents", "chart": "DASHBOARD"},
+    "options_ohlcv_volume_momentum_5d": {"indicator": "Options Momentum", "setting": "5-day momentum in aggregate options volume", "chart": "DASHBOARD"},
+    "options_ohlcv_range_ratio": {"indicator": "Options Volatility", "setting": "Cross-parent max-high/min-low ratio proxy", "chart": "DASHBOARD"},
     # Time
     "hour_utc":            {"indicator": "Time of day", "setting": "Session timing", "chart": "N/A"},
     "day_of_week":         {"indicator": "Day of week", "setting": "Mon=0 .. Fri=4", "chart": "N/A"},
@@ -318,6 +424,8 @@ def cluster_dedup_features(df, feature_cols, target_col, threshold=0.90):
 
     # Distance matrix from correlation
     corr = df[numeric].corr(method='spearman').abs().values
+    # Constant or near-constant features can yield NaN correlations; treat as 0 overlap.
+    corr = np.nan_to_num(corr, nan=0.0, posinf=0.0, neginf=0.0)
     np.fill_diagonal(corr, 1.0)
     dist = 1 - corr
     dist = np.clip(dist, 0, 2)
@@ -486,7 +594,7 @@ def generate_tv_report(importance_by_horizon, report_path):
 
 def generate_validation_report(report_path, results, fold_metrics_by_horizon,
                                 calibration_info, feature_stability_by_horizon,
-                                ds_hash, n_rows, n_cols, n_folds, time_limit, presets):
+                                ds_hash, n_rows, n_cols, n_folds, time_limit, fit_config):
     """Auto-generate models/reports/v2_validation.md with full diagnostics."""
     lines = [
         "# MES Directional Classifier — v2.1 Validation Report",
@@ -496,7 +604,7 @@ def generate_validation_report(report_path, results, fold_metrics_by_horizon,
         f"- Dataset hash: `{ds_hash}`",
         f"- Rows: {n_rows:,} | Columns: {n_cols}",
         f"- Seed: {SEED}",
-        f"- Folds: {n_folds} | Time/fold: {time_limit}s | Presets: {presets}",
+        f"- Folds: {n_folds} | Time/fold: {time_limit}s | Config: {fit_config}",
         "",
     ]
 
@@ -589,14 +697,49 @@ def main():
             sys.exit(1)
         active_horizons = {h: HORIZONS[h] for h in requested}
 
-    n_folds = args.n_folds if args.n_folds is not None else N_FOLDS
-    time_limit = args.time_limit if args.time_limit is not None else TIME_LIMIT
+    profile_cfg = TRAINING_PROFILES[args.profile]
+    n_folds = args.n_folds if args.n_folds is not None else profile_cfg["n_folds"]
+    time_limit = args.time_limit if args.time_limit is not None else profile_cfg["time_limit"]
+    num_bag_folds = args.num_bag_folds if args.num_bag_folds is not None else profile_cfg["num_bag_folds"]
+    num_stack_levels = args.num_stack_levels if args.num_stack_levels is not None else profile_cfg["num_stack_levels"]
+    max_features = args.max_features if args.max_features is not None else profile_cfg["max_features"]
+    max_memory_ratio = args.max_memory_ratio if args.max_memory_ratio is not None else profile_cfg["max_memory_ratio"]
+
+    if num_bag_folds == 0 and num_stack_levels > 0:
+        print("WARNING: num_stack_levels > 0 requires bagging. Forcing num_stack_levels=0.")
+        num_stack_levels = 0
+
     if n_folds < 1:
         print("ERROR: --n-folds must be >= 1")
         sys.exit(1)
     if time_limit < 1:
         print("ERROR: --time-limit must be >= 1")
         sys.exit(1)
+    if num_bag_folds < 0:
+        print("ERROR: --num-bag-folds must be >= 0")
+        sys.exit(1)
+    if num_stack_levels < 0:
+        print("ERROR: --num-stack-levels must be >= 0")
+        sys.exit(1)
+    if max_features < 1:
+        print("ERROR: --max-features must be >= 1")
+        sys.exit(1)
+    if max_memory_ratio <= 0:
+        print("ERROR: --max-memory-ratio must be > 0")
+        sys.exit(1)
+    if args.fit_verbosity < 0 or args.fit_verbosity > 4:
+        print("ERROR: --fit-verbosity must be between 0 and 4")
+        sys.exit(1)
+
+    raise_on_no_models_fitted = not args.allow_no_models_fitted
+    fit_config = (
+        f"profile={args.profile}, "
+        f"families=GBM/CAT/XGB/XT, "
+        f"bag={num_bag_folds}, stack={num_stack_levels}, "
+        f"mem_ratio={max_memory_ratio}, "
+        f"raise_on_model_failure={args.raise_on_model_failure}, "
+        f"raise_on_no_models_fitted={raise_on_no_models_fitted}"
+    )
 
     dataset_path = Path(args.dataset).expanduser()
     if not dataset_path.is_absolute():
@@ -714,18 +857,23 @@ def main():
 
     print(f"\n  Features after cleanup: {len(feature_cols)}")
     print(f"  Horizons: {list(active_horizons.keys())}")
-    print(f"  Folds: {n_folds}  |  Time/fold: {time_limit}s  |  Presets: {PRESETS}")
-    print(f"  Bagging: {NUM_BAG_FOLDS}  |  Stack: {NUM_STACK_LEVELS}  |  Metric: {EVAL_METRIC}")
-    print(f"  IC screening: top {MAX_FEATURES} features per fold")
+    print(f"  Profile: {args.profile}")
+    print(f"  Folds: {n_folds}  |  Time/fold: {time_limit}s")
+    print(f"  Bagging: {num_bag_folds}  |  Stack: {num_stack_levels}  |  Metric: {EVAL_METRIC}")
+    print(f"  IC screening: top {max_features} features per fold")
     print(f"  Correlation dedup: hierarchical clustering, |r| > {CORR_THRESHOLD}")
     print(f"  Purge/embargo: label-overlap + {FEATURE_MAX_LOOKBACK}h lookback")
     print(f"  Excluded models: {EXCLUDED}")
+    print(f"  Hyperparameters: GBM({len(HYPERPARAMETERS['GBM'])}) + CAT({len(HYPERPARAMETERS['CAT'])}) + XGB({len(HYPERPARAMETERS['XGB'])}) + XT({len(HYPERPARAMETERS['XT'])})")
+    print(f"  Memory ratio: {max_memory_ratio} (ag.max_memory_usage_ratio)")
+    print(f"  Fit debug: raise_on_model_failure={args.raise_on_model_failure}, raise_on_no_models_fitted={raise_on_no_models_fitted}")
     est_hrs = time_limit * n_folds * len(active_horizons) / 3600
     print(f"  Est. total: {est_hrs:.1f} hours")
     print()
 
     if args.preflight_only:
         print("  Preflight-only mode: checks passed, no training started.")
+        print("  NOTE: This mode exits quickly by design and does not fit any model.")
         log_file.close()
         sys.stdout = sys.__stdout__
         sys.stderr = sys.__stderr__
@@ -779,6 +927,9 @@ def main():
 
         splits = walk_forward_splits(len(h_df), n_folds, purge, embargo)
         print(f"  Walk-forward folds: {len(splits)}")
+        if not splits:
+            print(f"  SKIP: no valid walk-forward splits (n={len(h_df):,}, folds={n_folds}, purge={purge}, embargo={embargo})")
+            continue
 
         for fi, (tr_idx, va_idx) in enumerate(splits):
             gap = va_idx[0] - tr_idx[-1] - 1 if tr_idx and va_idx else 0
@@ -803,7 +954,7 @@ def main():
 
             # ── Per-fold IC screening ──
             fold_features = rank_features_by_ic(
-                train_data, feature_cols, target_col, top_n=MAX_FEATURES
+                train_data, feature_cols, target_col, top_n=max_features
             )
             print(f"    Using {len(fold_features)} features for this fold")
 
@@ -823,26 +974,37 @@ def main():
                 path=str(fold_dir),
                 problem_type="binary",
                 eval_metric=EVAL_METRIC,
-                verbosity=2,
+                verbosity=args.fit_verbosity,
             )
 
-            predictor.fit(
+            fit_kwargs = dict(
                 train_data=train_subset,
                 time_limit=time_limit,
-                presets=PRESETS,
                 num_gpus=0,
                 excluded_model_types=EXCLUDED,
-                num_bag_folds=NUM_BAG_FOLDS,
-                num_stack_levels=NUM_STACK_LEVELS,
+                hyperparameters=HYPERPARAMETERS,
+                num_bag_folds=num_bag_folds,
+                num_stack_levels=num_stack_levels,
                 dynamic_stacking=False,
+                calibrate_decision_threshold=False,
+                raise_on_model_failure=args.raise_on_model_failure,
+                raise_on_no_models_fitted=raise_on_no_models_fitted,
                 ag_args_fit={
                     "num_early_stopping_rounds": 50,
-                    "ag.max_memory_usage_ratio": 1.5,
-                },
-                ag_args_ensemble={
-                    "fold_fitting_strategy": "sequential_local",
+                    "ag.max_memory_usage_ratio": max_memory_ratio,
                 },
             )
+            if num_bag_folds > 1:
+                fit_kwargs["ag_args_ensemble"] = {
+                    "fold_fitting_strategy": "sequential_local",
+                }
+
+            predictor.fit(**fit_kwargs)
+
+            model_failures = predictor.model_failures()
+            if len(model_failures) > 0:
+                print(f"    WARNING: {len(model_failures)} model(s) failed during fold fit")
+                print(model_failures[["model", "exc_type"]].head(5).to_string(index=False))
 
             # Leaderboard
             lb = predictor.leaderboard(val_subset, silent=True)
@@ -1118,7 +1280,7 @@ def main():
         REPORT_DIR / "v2_validation.md",
         results, fold_metrics_by_horizon,
         calibration_info, feature_stability_by_horizon,
-        ds_hash_val, len(df), len(df.columns), n_folds, time_limit, PRESETS,
+        ds_hash_val, len(df), len(df.columns), n_folds, time_limit, fit_config,
     )
 
     # ── Final Summary ─────────────────────────────────────────────────────────
@@ -1128,11 +1290,12 @@ def main():
     print(f"{'=' * 70}")
     print(f"  Dataset:     {dataset_path.name} ({len(df):,} rows x {len(df.columns)} cols)")
     print(f"  DS Hash:     {ds_hash_val}")
-    print(f"  Features:    {len(feature_cols)} available, top {MAX_FEATURES} used per fold (IC screened)")
+    print(f"  Features:    {len(feature_cols)} available, top {max_features} used per fold (IC screened)")
     print(f"  Corr dedup:  hierarchical clustering, |r| > {CORR_THRESHOLD}")
-    print(f"  Config:      {PRESETS} | {n_folds} folds | {time_limit}s/fold")
+    print(f"  Profile:     {args.profile}")
+    print(f"  Config:      {fit_config} | {n_folds} folds | {time_limit}s/fold")
     print(f"  Models:      GBM + CAT + XGB + XT -> WeightedEnsemble")
-    print(f"  Bagging:     {NUM_BAG_FOLDS}-fold | Stack: {NUM_STACK_LEVELS} level")
+    print(f"  Bagging:     {num_bag_folds}-fold | Stack: {num_stack_levels} level")
     print(f"  Calibration: Nested selection (isotonic vs Platt) on OOF")
     print()
 

@@ -211,6 +211,26 @@ interface EventSignalRow {
   actual: number
 }
 
+interface OptionsOhlcvDayRow {
+  parentSymbol: string
+  eventDate: Date
+  totalVolume: bigint | null
+  contractCount: number | null
+  avgClose: number | null
+  maxHigh: number | null
+  minLow: number | null
+}
+
+interface OptionsOhlcvDayAggregate {
+  totalVolume: number
+  totalContracts: number
+  weightedCloseSum: number
+  weightedCloseWeight: number
+  maxHigh: number | null
+  minLow: number | null
+  parentCount: number
+}
+
 // ─── HELPERS ──────────────────────────────────────────────────────────────
 
 function pctChange(current: number, previous: number): number | null {
@@ -891,7 +911,126 @@ async function run(): Promise<void> {
 
   console.log(`[lean-dataset] Cross-asset bars aligned to MES timeline`)
 
-  // ── 2. Load FRED series ──
+  // ── 2. Load options OHLCV aggregates (OPTIONS_PARENT role only, no statistics) ──
+  console.log('[lean-dataset] Loading options OHLCV aggregates (OPTIONS_PARENT role, statistics excluded)...')
+
+  const optionParentRows = await prisma.$queryRaw<Array<{ symbol_code: string }>>`
+    SELECT m.symbol_code
+    FROM symbol_role_members m
+    JOIN symbol_roles r ON r.role_key = m.role_key
+    WHERE m.role_key = 'OPTIONS_PARENT'
+      AND m.enabled = true
+      AND r.is_active = true
+    ORDER BY m.position ASC, m.symbol_code ASC
+  `
+  const optionParents = optionParentRows.map((row) => row.symbol_code)
+  if (optionParents.length === 0) {
+    throw new Error('[lean-dataset] OPTIONS_PARENT role has no active symbols; cannot build options features')
+  }
+
+  const optionsStart = new Date(start.getTime() - 120 * MS_PER_DAY)
+  const optionsRowsRaw = await prisma.mktOptionsOhlcv1d.findMany({
+    where: {
+      parentSymbol: { in: optionParents },
+      eventDate: { gte: optionsStart },
+    },
+    orderBy: [{ eventDate: 'asc' }, { parentSymbol: 'asc' }],
+    select: {
+      parentSymbol: true,
+      eventDate: true,
+      totalVolume: true,
+      contractCount: true,
+      avgClose: true,
+      maxHigh: true,
+      minLow: true,
+    },
+  })
+
+  const optionsRows: OptionsOhlcvDayRow[] = optionsRowsRaw.map((row) => ({
+    parentSymbol: row.parentSymbol,
+    eventDate: row.eventDate,
+    totalVolume: row.totalVolume,
+    contractCount: row.contractCount,
+    avgClose: row.avgClose == null ? null : toNum(row.avgClose),
+    maxHigh: row.maxHigh == null ? null : toNum(row.maxHigh),
+    minLow: row.minLow == null ? null : toNum(row.minLow),
+  }))
+
+  if (optionsRows.length === 0) {
+    throw new Error('[lean-dataset] mkt_options_ohlcv_1d returned zero rows for OPTIONS_PARENT role in the requested range')
+  }
+
+  const optionsByDate = new Map<string, OptionsOhlcvDayAggregate>()
+  for (const row of optionsRows) {
+    const key = dateKeyUtc(row.eventDate)
+    const agg = optionsByDate.get(key) ?? {
+      totalVolume: 0,
+      totalContracts: 0,
+      weightedCloseSum: 0,
+      weightedCloseWeight: 0,
+      maxHigh: null,
+      minLow: null,
+      parentCount: 0,
+    }
+
+    const totalVolume = row.totalVolume == null ? null : Number(row.totalVolume)
+    const contractCount = row.contractCount
+    const avgClose = row.avgClose
+    const maxHigh = row.maxHigh
+    const minLow = row.minLow
+
+    if (totalVolume != null && Number.isFinite(totalVolume) && totalVolume > 0) {
+      agg.totalVolume += totalVolume
+    }
+    if (contractCount != null && Number.isFinite(contractCount) && contractCount > 0) {
+      agg.totalContracts += contractCount
+    }
+
+    if (avgClose != null && Number.isFinite(avgClose)) {
+      const weight = totalVolume != null && Number.isFinite(totalVolume) && totalVolume > 0
+        ? totalVolume
+        : contractCount != null && Number.isFinite(contractCount) && contractCount > 0
+          ? contractCount
+          : 1
+      agg.weightedCloseSum += avgClose * weight
+      agg.weightedCloseWeight += weight
+    }
+
+    if (maxHigh != null && Number.isFinite(maxHigh)) {
+      agg.maxHigh = agg.maxHigh == null ? maxHigh : Math.max(agg.maxHigh, maxHigh)
+    }
+    if (minLow != null && Number.isFinite(minLow)) {
+      agg.minLow = agg.minLow == null ? minLow : Math.min(agg.minLow, minLow)
+    }
+
+    agg.parentCount += 1
+    optionsByDate.set(key, agg)
+  }
+
+  const optionsSortedKeys = [...optionsByDate.keys()].sort()
+  const optionsParentCountLookup: FredLookup = new Map()
+  const optionsTotalVolumeLookup: FredLookup = new Map()
+  const optionsTotalContractsLookup: FredLookup = new Map()
+  const optionsAvgCloseLookup: FredLookup = new Map()
+  const optionsRangeRatioLookup: FredLookup = new Map()
+
+  for (const key of optionsSortedKeys) {
+    const agg = optionsByDate.get(key)
+    if (!agg) continue
+    optionsParentCountLookup.set(key, agg.parentCount)
+    if (agg.totalVolume > 0) optionsTotalVolumeLookup.set(key, agg.totalVolume)
+    if (agg.totalContracts > 0) optionsTotalContractsLookup.set(key, agg.totalContracts)
+    if (agg.weightedCloseWeight > 0) {
+      const avgClose = agg.weightedCloseSum / agg.weightedCloseWeight
+      optionsAvgCloseLookup.set(key, avgClose)
+      if (agg.maxHigh != null && agg.minLow != null && avgClose !== 0) {
+        optionsRangeRatioLookup.set(key, (agg.maxHigh - agg.minLow) / Math.abs(avgClose))
+      }
+    }
+  }
+  console.log(`  OPTIONS_PARENT symbols: ${optionParents.length}, aggregated daily rows: ${optionsRows.length}, unique dates: ${optionsSortedKeys.length}`)
+
+  // ── 3. Load FRED series ──
   console.log(`[lean-dataset] Loading ${FRED_FEATURES.length} FRED series (lean set)...`)
 
   const fredLookups: Map<string, { lookup: FredLookup; sortedKeys: string[] }> = new Map()
@@ -924,7 +1063,7 @@ async function run(): Promise<void> {
     }
   }
 
-  // ── 3. Load econ_calendar for event, regime, and release-signal features ──
+  // ── 4. Load econ_calendar for event, regime, and release-signal features ──
   console.log('[lean-dataset] Loading economic calendar for event and release-signal features...')
   const calendarEventsRaw = await prisma.econCalendar.findMany({
     where: { eventDate: { gte: calendarLoadStart } },
@@ -1112,6 +1251,16 @@ async function run(): Promise<void> {
   const sp500Ma20Arr = rollingMeanNullable(sp500Arr, 20 * barsPerDay, 10 * barsPerDay)
 
   console.log(`[lean-dataset] Built ${FRED_FEATURES.length} FRED arrays for velocity/stationary features`)
+
+  const buildOptionsArr = (lookup: FredLookup): (number | null)[] =>
+    buildFredArray(candles, lookup, optionsSortedKeys, 1, dateKeyUtc, asofLookupByDateKey)
+
+  const optionsParentCountArr = buildOptionsArr(optionsParentCountLookup)
+  const optionsTotalVolumeArr = buildOptionsArr(optionsTotalVolumeLookup)
+  const optionsTotalContractsArr = buildOptionsArr(optionsTotalContractsLookup)
+  const optionsAvgCloseArr = buildOptionsArr(optionsAvgCloseLookup)
+  const optionsRangeRatioArr = buildOptionsArr(optionsRangeRatioLookup)
+  console.log('[lean-dataset] Options OHLCV arrays built (lag=1 day, OPTIONS_PARENT aggregate)')
 
   // ── 7. Precompute MES technical indicators ──
   console.log('[lean-dataset] Computing technical indicators...')
@@ -1363,6 +1512,17 @@ async function run(): Promise<void> {
     'news_total_volume_7d',     // combined econ + policy news
     // BHG rolling setup counts (2)
     'bhg_setups_count_7d', 'bhg_setups_count_30d',
+    // Options OHLCV aggregates (10) — from mkt_options_ohlcv_1d only (statistics excluded)
+    'options_ohlcv_parent_count_1d',
+    'options_ohlcv_total_volume_1d',
+    'options_ohlcv_total_contracts_1d',
+    'options_ohlcv_avg_close_vw',
+    'options_ohlcv_range_ratio',
+    'options_ohlcv_volume_change_1d',
+    'options_ohlcv_volume_momentum_5d',
+    'options_ohlcv_contracts_change_1d',
+    'options_ohlcv_avg_close_change_1d',
+    'options_ohlcv_range_change_1d',
     // Cross-asset technicals (6 symbols × 6 = 36)
     ...CROSS_ASSET_SYMBOLS.flatMap(sym => [
       `${sym.prefix}_ret_1h`,
@@ -1628,6 +1788,18 @@ async function run(): Promise<void> {
       tsMs - BHG_RESOLUTION_LAG_MS
     )
 
+    // Options OHLCV aggregates (from mkt_options_ohlcv_1d, lagged by 1 day)
+    const optionsParentCount1d = optionsParentCountArr[i]
+    const optionsTotalVolume1d = optionsTotalVolumeArr[i]
+    const optionsTotalContracts1d = optionsTotalContractsArr[i]
+    const optionsAvgCloseVw = optionsAvgCloseArr[i]
+    const optionsRangeRatio = optionsRangeRatioArr[i]
+    const optionsVolumeChange1d = deltaBack(optionsTotalVolumeArr, i, barsPerDay)
+    const optionsVolumeMomentum5d = pctDeltaBack(optionsTotalVolumeArr, i, velocityLookback)
+    const optionsContractsChange1d = deltaBack(optionsTotalContractsArr, i, barsPerDay)
+    const optionsAvgCloseChange1d = deltaBack(optionsAvgCloseArr, i, barsPerDay)
+    const optionsRangeChange1d = deltaBack(optionsRangeRatioArr, i, barsPerDay)
+
     // ── ASSEMBLE ROW ──
     // CRITICAL: order MUST match header exactly
     const row: (string | number | null)[] = [
@@ -1693,6 +1865,11 @@ async function run(): Promise<void> {
       econNewsVolume7d, policyNewsVolume7d, newsTotalVolume7d,
       // BHG rolling setup counts (2)
       bhgSetupsCount7d, bhgSetupsCount30d,
+      // Options OHLCV aggregates (10)
+      optionsParentCount1d, optionsTotalVolume1d, optionsTotalContracts1d,
+      optionsAvgCloseVw, optionsRangeRatio,
+      optionsVolumeChange1d, optionsVolumeMomentum5d, optionsContractsChange1d,
+      optionsAvgCloseChange1d, optionsRangeChange1d,
       // Cross-asset technicals (6 symbols × 6 = 36)
       ...CROSS_ASSET_SYMBOLS.flatMap(sym => {
         const tech = crossAssetTech.get(sym.code)!
@@ -1819,6 +1996,16 @@ async function run(): Promise<void> {
     'cal_inflation_events_7d', 'cal_employment_events_7d',
     'econ_news_volume_7d', 'policy_news_volume_7d', 'news_total_volume_7d',
     'bhg_setups_count_7d', 'bhg_setups_count_30d',
+    'options_ohlcv_parent_count_1d',
+    'options_ohlcv_total_volume_1d',
+    'options_ohlcv_total_contracts_1d',
+    'options_ohlcv_avg_close_vw',
+    'options_ohlcv_range_ratio',
+    'options_ohlcv_volume_change_1d',
+    'options_ohlcv_volume_momentum_5d',
+    'options_ohlcv_contracts_change_1d',
+    'options_ohlcv_avg_close_change_1d',
+    'options_ohlcv_range_change_1d',
     'macd_line', 'macd_signal', 'macd_hist', 'macd_hist_color', 'macd_above_signal', 'macd_hist_rising',
     'vol_accel', 'vol_regime', 'vol_of_vol',
     'mes_zn_corr_21d', 'mes_nq_corr_21d', 'mes_cl_corr_21d', 'mes_e6_corr_21d',

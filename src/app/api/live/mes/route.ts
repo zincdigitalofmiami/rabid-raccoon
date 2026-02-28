@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/prisma'
 import { toNum } from '@/lib/decimal'
-import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
 import type { Decimal } from '@prisma/client/runtime/client'
 
 export const runtime = 'nodejs'
@@ -72,8 +71,7 @@ export async function GET(request: Request): Promise<Response> {
       }
 
       try {
-        await refreshMes15mFromDatabento({ force: true })
-
+        // Read-only: live data written by off-Vercel Python worker (ingest-mes-live-databento.py).
         const initial = await prisma.mktFuturesMes15m.findMany({
           orderBy: { eventTime: 'desc' },
           take: backfillCount,
@@ -81,7 +79,7 @@ export async function GET(request: Request): Promise<Response> {
 
         if (initial.length === 0) {
           pushErrorAndClose(
-            'No MES 15m data in DB yet. Start local live ingestion: npm run ingest:mes:live -- --once=true'
+            'No MES 15m data in DB yet. Start live worker: .venv-finance/bin/python scripts/ingest-mes-live-databento.py'
           )
           return
         }
@@ -102,11 +100,10 @@ export async function GET(request: Request): Promise<Response> {
         return
       }
 
+      // Poll every 5 seconds — DB is kept fresh by the off-Vercel live worker.
       const interval = setInterval(async () => {
         if (closed) return
         try {
-          await refreshMes15mFromDatabento({ force: false })
-
           const latest = await prisma.mktFuturesMes15m.findMany({
             orderBy: { eventTime: 'desc' },
             take: Math.max(80, Math.min(400, backfillCount)),
@@ -148,7 +145,7 @@ export async function GET(request: Request): Promise<Response> {
           const message = error instanceof Error ? error.message : String(error)
           pushErrorAndClose(`Live stream query failed: ${message}`)
         }
-      }, 2000)
+      }, 5_000)
 
       const abortListener = () => {
         if (closed) return

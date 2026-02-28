@@ -8,4 +8,4 @@ Supporting docs: `ARCHITECTURE.md` (system design) · `CONVENTIONS.md` (coding s
 
 Before every task, search the Memory MCP for relevant context (keywords from the request + "rabid-raccoon" + "Kirk"). Store any new decisions, corrections, or preferences to memory immediately. See `AGENTS.md` § Memory MCP for full rules.
 
-The Memory MCP server is configured in `.mcp.json` (`mcpServers.memory`). Memory file: `.claude/memory.jsonl`.
+The active Memory MCP server is configured in `.mcp.json` (`mcpServers.memory`) as OpenMemory SSE (`http://localhost:8765/mcp/claude/sse/zincdigital`).

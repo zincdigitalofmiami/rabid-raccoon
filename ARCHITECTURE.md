@@ -15,6 +15,17 @@ To answer that, it:
 5. **Displays** analysis, forecasts, BHG setups, and correlation data on a Next.js dashboard.
 6. **(Phase 2)** Pushes predictions to TradingView via webhook for chart overlay.
 
+## AI Tooling Baseline (MCP)
+
+For agent-assisted work in this repository, project MCP config is intentionally minimal and explicit:
+
+1. `memory` — OpenMemory SSE identity `zincdigital`
+2. `context7` — Docker `mcp/context7` server for up-to-date library docs
+3. `sequentialthinking` — Docker `mcp/sequentialthinking` server for structured reasoning
+
+These are defined in both `.mcp.json` and `.vscode/mcp.json` using the correct schema for each client.
+Avoid adding duplicate local MCP server definitions for the same capability.
+
 ## Data Flow
 
 ```
@@ -88,7 +99,7 @@ To answer that, it:
 
 1. **Domain-first table naming**: Tables are prefixed by domain (`mkt_`, `econ_`, `macro_`, `bhg_`, `mes_model_`).
 2. **Timeframe suffix**: `_1d`, `_1h`, `_15m` indicate the granularity of the data.
-3. **MES isolation**: MES has dedicated tables (`mkt_futures_mes_1h`, `mkt_futures_mes_15m`, `mkt_futures_mes_1d`) because it is the primary instrument with unique ingestion cadence and granularity requirements. Non-MES futures share generic tables with `symbolCode` FK.
+3. **MES isolation**: MES has dedicated tables (`mkt_futures_mes_15m`, `mkt_futures_mes_1h`, `mkt_futures_mes_1d`) because it is the primary instrument with unique ingestion cadence and granularity requirements. Non-MES futures share generic tables with `symbolCode` FK.
 4. **Econ domain splitting**: Economic data is split by category (`econ_rates_1d`, `econ_yields_1d`, `econ_fx_1d`, etc.) mirroring the ZINC Fusion V15 pattern. All split tables FK to `economic_series`.
 5. **Idempotent ingestion**: Every data table has a natural unique constraint and supports `skipDuplicates` or upsert patterns.
 
@@ -175,8 +186,40 @@ Both paths write `ingestion_runs` records for audit.
 
 ### MES Ingestion Flow (Primary Instrument)
 
+#### Live Chart Data (Databento Live API — 5s cadence)
+
+Kirk's Databento account has an active Live subscription. The live chart
+uses the Databento Live Subscription Gateway (TCP binary, Python SDK)
+instead of the historical REST API. This gives true real-time MES data
+with ~5-second chart updates and zero Vercel cost for the data fetch.
+
 ```
-Databento API
+Databento Live Gateway (TCP)
+    │  ohlcv-1m stream for MES.c.0
+    ▼
+scripts/ingest-mes-live-databento.py   ← runs OFF Vercel (local / always-on host)
+    │  aggregates 1m → 15m, flushes every 5s
+    ▼
+mkt_futures_mes_15m (Postgres)
+    │
+    ▼
+/api/live/mes15m (SSE, read-only, polls DB every 5s)
+    │  zero Databento API calls on Vercel
+    ▼
+LiveMesChart (Lightweight Charts)
+```
+
+**Key design decisions:**
+- Live worker runs off Vercel to avoid serverless function costs and timeout limits.
+- Vercel API routes are **read-only** — they never call Databento directly.
+- 5-second poll cadence balances real-time feel with minimal DB read cost.
+- Historical polling fallback (`ingest-mes-live-15m.ts`) is still available if the
+  live worker is not running.
+
+#### Daily/Hourly Batch Data (Databento Historical API)
+
+```
+Databento Historical API
     │
     ▼
 ingest-market-prices-daily.ts (or Inngest mkt-mes-1h)
@@ -306,10 +349,63 @@ Prisma provides type-safe database access, automatic migration management, and a
 
 ## Environment & Infrastructure
 
+### DB Routing Contract (Local-First, Deterministic)
+
+This repo uses a strict three-URL contract with explicit override flags:
+
+| Variable | Purpose | Primary Consumers |
+|-----------|---------|-------------------|
+| `LOCAL_DATABASE_URL` | local Postgres for development and local-first script runs | Next.js dev runtime, local script runs |
+| `DATABASE_URL` | Prisma runtime URL in deployed environments (typically Accelerate URL) | app runtime in production |
+| `DIRECT_URL` | direct Postgres URL for migrations and direct operations | Prisma CLI, direct `pg`/ops workloads |
+
+Override flags:
+
+- `PRISMA_LOCAL=1`: force local target resolution. Requires `LOCAL_DATABASE_URL`.
+- `PRISMA_DIRECT=1`: force direct target resolution. Requires `DIRECT_URL`.
+- Do not set both flags at once.
+
+Routing rules:
+
+1. Prisma runtime (`resolvePrismaRuntimeUrl`):
+   - Production: requires `DATABASE_URL`.
+   - Development: requires `LOCAL_DATABASE_URL` by default (local-first, fail-loud).
+   - Explicit flags override defaults (`PRISMA_LOCAL`/`PRISMA_DIRECT`).
+2. Direct workloads (`resolveDirectPgUrl`):
+   - Production: requires `DIRECT_URL`.
+   - Development: requires `LOCAL_DATABASE_URL` by default (local-first, fail-loud).
+   - Explicit flags override defaults.
+
+Operator safety rules:
+
+1. Never remap env semantics with `DATABASE_URL="$DIRECT_URL" ...`.
+2. Use explicit routing flags instead:
+   - `PRISMA_DIRECT=1 npx prisma migrate deploy`
+   - `PRISMA_DIRECT=1 npx tsx scripts/db-counts.ts`
+3. Every script/run boundary should emit target telemetry (`[db-target] ... host/source`) so operators can verify target selection before writes.
+
+### Known Roadblocks and Mitigations (2026-02-27)
+
+1. Migration drift between local and direct:
+   - Symptom: missing tables or enum values on direct.
+   - Mitigation: always run `PRISMA_DIRECT=1 npx prisma migrate status` before direct data operations.
+2. Empty local DB while direct is populated:
+   - Symptom: app/dev reads zero rows while production-like scripts show full data.
+   - Mitigation: one-time `pg_dump` (direct) + `pg_restore` (local), then parity-check key table counts.
+3. Backfill partial-success risk:
+   - Symptom: non-zero rows but missing month ranges.
+   - Mitigation: run backfill with `--strict`, require manifest review, and use `--retry-manifest` for failed chunks.
+4. Missing provider credentials:
+   - Symptom: hard fail (for example `DATABENTO_API_KEY required`).
+   - Mitigation: preflight env checks before migration/backfill execution.
+5. SSL mode warning on direct `postgres://` URLs:
+   - Symptom: warning about future libpq semantics.
+   - Mitigation: normalize direct URLs to `sslmode=verify-full` (or explicit compatibility mode).
+
 | Component | Detail |
 |-----------|--------|
 | Database | PostgreSQL via Prisma Accelerate (`prisma+postgres://`) |
-| Direct DB access | Requires `DIRECT_URL` (direct `postgres://` string) for migrations and direct pg workloads |
+| Direct DB access | Requires `DIRECT_URL` (direct `postgres://` string) for migrations and direct pg workloads; use `PRISMA_DIRECT=1` when forcing direct script/runtime resolution |
 | Hosting | Vercel (dashboard) |
 | Scheduling | Inngest (managed, event-driven) |
 | Market data | Databento (REST, requires `DATABENTO_API_KEY`) |
@@ -318,5 +414,5 @@ Prisma provides type-safe database access, automatic migration management, and a
 
 ---
 
-*Last updated: 2026-02-22*
+*Last updated: 2026-02-27*
 *Maintained by: Kirk (architect) with Claude (governance)*

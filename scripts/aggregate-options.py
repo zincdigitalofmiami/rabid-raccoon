@@ -10,7 +10,7 @@ Writes:
   datasets/options-agg/{PARENT}/stats-agg.parquet   (daily stats summary)
   datasets/options-agg/{PARENT}/ohlcv-agg.parquet   (daily OHLCV summary)
 
-These aggregated files can be loaded into the MktOptionsAgg1d and MktOptionsOhlcv1d
+These aggregated files can be loaded into the MktOptionsStatistics1d and MktOptionsOhlcv1d
 tables via the ingestion pipeline, or used directly by the dataset builders.
 
 Usage:

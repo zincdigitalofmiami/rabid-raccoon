@@ -16,6 +16,7 @@ Usage:
 Flags:
   --skip-download     Skip Databento download (use existing raw files)
   --skip-convert      Skip raw → parquet conversion (use existing parquets)
+  --with-stats        Enable options statistics download/convert/ingest/validation
   --local-only        Don't push to production
   --dry-run           Preview everything, write nothing
   --parent ES_OPT     Process only one parent symbol
@@ -203,7 +204,7 @@ def safe_stat_agg(
 
 # ─── Step 0: Preflight Checks ────────────────────────────────────────────────
 
-def preflight(env: dict) -> tuple:
+def preflight(env: dict, with_stats: bool) -> tuple:
     """Validate environment, connections, and disk state before doing anything."""
     from sqlalchemy import text
 
@@ -252,9 +253,12 @@ def preflight(env: dict) -> tuple:
         try:
             with engine.connect() as c:
                 ohlcv_count = c.execute(text('SELECT count(*) FROM mkt_options_ohlcv_1d')).scalar()
-                agg_count = c.execute(text('SELECT count(*) FROM mkt_options_agg_1d')).scalar()
                 log.info(f"{label} mkt_options_ohlcv_1d: {ohlcv_count:,} rows")
-                log.info(f"{label} mkt_options_agg_1d:   {agg_count:,} rows")
+                if with_stats:
+                    agg_count = c.execute(text('SELECT count(*) FROM mkt_options_statistics_1d')).scalar()
+                    log.info(f"{label} mkt_options_statistics_1d:   {agg_count:,} rows")
+                else:
+                    log.info(f"{label} mkt_options_statistics_1d:   skipped (stats disabled)")
         except Exception as e:
             log.warn(f"Could not read {label} row counts: {e}")
 
@@ -296,7 +300,7 @@ def should_skip_job(
     return None
 
 
-def download_jobs(databento_key: str, dry_run: bool) -> dict:
+def download_jobs(databento_key: str, dry_run: bool, with_stats: bool) -> dict:
     """Download all completed Databento batch jobs. Returns summary."""
     import databento as db
 
@@ -316,6 +320,9 @@ def download_jobs(databento_key: str, dry_run: bool) -> dict:
     seen_schemas = {}
     for j in jobs:
         jid, schema = j["id"], j["schema"]
+        if schema == "statistics" and not with_stats:
+            log.info(f"  {jid} ({schema}): stats disabled — skipping")
+            continue
         skip_reason = should_skip_job(j, schema_to_dir, seen_schemas)
         if skip_reason:
             level = "ok" if "already on disk" in skip_reason else "info"
@@ -413,7 +420,7 @@ def process_dbn_file(
     return total_rows
 
 
-def convert_raw_to_parquet(dry_run: bool, target_parent: str | None = None):
+def convert_raw_to_parquet(dry_run: bool, target_parent: str | None = None, with_stats: bool = False):
     """Convert .dbn.zst files to per-symbol monthly parquets."""
     log.header("CONVERT RAW → PARQUET")
 
@@ -423,10 +430,11 @@ def convert_raw_to_parquet(dry_run: bool, target_parent: str | None = None):
 
     sorted_roots = sorted(parent_map.keys(), key=len, reverse=True)
 
-    for schema_label, raw_dir, out_dir in [
-        ("ohlcv-1d", OHLCV_RAW, OHLCV_DIR),
-        ("statistics", STATS_RAW, STATS_DIR),
-    ]:
+    schemas = [("ohlcv-1d", OHLCV_RAW, OHLCV_DIR)]
+    if with_stats:
+        schemas.append(("statistics", STATS_RAW, STATS_DIR))
+
+    for schema_label, raw_dir, out_dir in schemas:
         if not raw_dir.exists():
             log.info(f"  {schema_label}: no raw directory — skipping")
             continue
@@ -679,7 +687,7 @@ def ingest_ohlcv(engine, target_parent: str | None, dry_run: bool) -> int:
 
 
 def ingest_stats(engine, target_parent: str | None, dry_run: bool) -> int:
-    """Ingest statistics parent parquets into mkt_options_agg_1d."""
+    """Ingest statistics parent parquets into mkt_options_statistics_1d."""
     from sqlalchemy import text
 
     parent_dirs = get_parent_dirs(STATS_DIR, target_parent)
@@ -687,9 +695,9 @@ def ingest_stats(engine, target_parent: str | None, dry_run: bool) -> int:
         log.info("  Statistics: no parent directories found (Databento jobs still processing)")
         return 0
 
-    log.info(f"  Statistics: {len(parent_dirs)} parents → mkt_options_agg_1d")
+    log.info(f"  Statistics: {len(parent_dirs)} parents → mkt_options_statistics_1d")
     upsert_sql = text("""
-        INSERT INTO mkt_options_agg_1d
+        INSERT INTO mkt_options_statistics_1d
             ("parentSymbol", "eventDate", "totalVolume", "totalOI",
              settlement, "avgIV", "contractCount",
              source, "sourceDataset", "sourceSchema", "rowHash",
@@ -731,14 +739,27 @@ def ingest_stats(engine, target_parent: str | None, dry_run: bool) -> int:
 
     return total_rows
 
-def ingest_to_db(engine, label: str, target_parent: str | None, dry_run: bool) -> dict:
+def ingest_to_db(
+    engine,
+    label: str,
+    target_parent: str | None,
+    dry_run: bool,
+    with_stats: bool,
+) -> dict:
     """Ingest OHLCV and statistics parquets into a Postgres database."""
     log.header(f"INGEST → {label} POSTGRES")
 
     run_id = create_ingestion_run(engine, label, target_parent, dry_run)
+    ohlcv_rows = ingest_ohlcv(engine, target_parent, dry_run)
+    stats_rows = 0
+    if with_stats:
+        stats_rows = ingest_stats(engine, target_parent, dry_run)
+    else:
+        log.info("  Statistics ingest skipped (stats disabled)")
+
     result = {
-        "ohlcv_rows": ingest_ohlcv(engine, target_parent, dry_run),
-        "stats_rows": ingest_stats(engine, target_parent, dry_run),
+        "ohlcv_rows": ohlcv_rows,
+        "stats_rows": stats_rows,
     }
     finalize_ingestion_run(engine, run_id, result, dry_run)
     return result
@@ -763,13 +784,17 @@ def query_table_stats(engine, label: str, table: str) -> tuple[int, str]:
         return 0, "N/A"
 
 
-def validate(local_engine, prod_engine):
+def validate(local_engine, prod_engine, with_stats: bool):
     """Compare local and production row counts and freshness."""
     from sqlalchemy import text
 
     log.header("POST-INGESTION VALIDATION")
 
-    for table in ["mkt_options_ohlcv_1d", "mkt_options_agg_1d"]:
+    tables = ["mkt_options_ohlcv_1d"]
+    if with_stats:
+        tables.append("mkt_options_statistics_1d")
+
+    for table in tables:
         local_count, local_max = query_table_stats(local_engine, "local", table)
         prod_count, prod_max = query_table_stats(prod_engine, "prod", table)
 
@@ -806,6 +831,7 @@ def parse_flags() -> dict:
     flags = {
         "skip_download": "--skip-download" in sys.argv,
         "skip_convert": "--skip-convert" in sys.argv,
+        "with_stats": "--with-stats" in sys.argv,
         "local_only": "--local-only" in sys.argv,
         "dry_run": "--dry-run" in sys.argv,
         "target_parent": None,
@@ -827,6 +853,10 @@ def print_banner(flags: dict):
         print("  MODE: LOCAL ONLY (no prod push)")
     if flags["target_parent"]:
         print(f"  TARGET: {flags['target_parent']}")
+    if flags["with_stats"]:
+        print("  STATS: ENABLED (--with-stats)")
+    else:
+        print("  STATS: DISABLED (OHLCV-only mode)")
     print("="*70)
 
 
@@ -862,7 +892,7 @@ def main():
     env = load_env()
 
     # Step 0: Preflight
-    local_engine, prod_engine, databento_key = preflight(env)
+    local_engine, prod_engine, databento_key = preflight(env, flags["with_stats"])
     if not local_engine:
         log.fail("ABORT: Cannot connect to local Postgres")
         sys.exit(1)
@@ -872,7 +902,7 @@ def main():
 
     # Step 1: Download
     if not flags["skip_download"] and databento_key:
-        download_jobs(databento_key, dry_run)
+        download_jobs(databento_key, dry_run, flags["with_stats"])
     elif flags["skip_download"]:
         log.header("DOWNLOAD — SKIPPED (--skip-download)")
     else:
@@ -880,24 +910,24 @@ def main():
 
     # Step 2: Convert
     if not flags["skip_convert"]:
-        convert_raw_to_parquet(dry_run, target_parent)
+        convert_raw_to_parquet(dry_run, target_parent, flags["with_stats"])
     else:
         log.header("CONVERT — SKIPPED (--skip-convert)")
 
     # Step 3a: Ingest → Local
-    local_result = ingest_to_db(local_engine, "LOCAL", target_parent, dry_run)
+    local_result = ingest_to_db(local_engine, "LOCAL", target_parent, dry_run, flags["with_stats"])
 
     # Step 3b: Ingest → Production
     prod_result = {"ohlcv_rows": 0, "stats_rows": 0}
     if not flags["local_only"] and prod_engine:
-        prod_result = ingest_to_db(prod_engine, "PROD", target_parent, dry_run)
+        prod_result = ingest_to_db(prod_engine, "PROD", target_parent, dry_run, flags["with_stats"])
     elif flags["local_only"]:
         log.header("PROD PUSH — SKIPPED (--local-only)")
     else:
         log.header("PROD PUSH — SKIPPED (no production connection)")
 
     # Step 4: Validate
-    validate(local_engine, prod_engine)
+    validate(local_engine, prod_engine, flags["with_stats"])
 
     print_report(local_result, prod_result, flags, time.time() - t0)
 

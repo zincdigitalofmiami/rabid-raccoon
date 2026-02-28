@@ -194,8 +194,8 @@ async function backfillSymbolHourly(symbol: string, records: RawRecord[]): Promi
 
 async function main() {
   if (!process.env.DATABENTO_API_KEY) throw new Error('DATABENTO_API_KEY required')
-  if (!process.env.LOCAL_DATABASE_URL && !process.env.DATABASE_URL) {
-    throw new Error('LOCAL_DATABASE_URL or DATABASE_URL required')
+  if (!process.env.LOCAL_DATABASE_URL && !process.env.DIRECT_URL) {
+    throw new Error('LOCAL_DATABASE_URL is required (or set PRISMA_DIRECT=1 with DIRECT_URL for explicit direct runs)')
   }
 
   const { symbols, schemas, start } = parseArgs()

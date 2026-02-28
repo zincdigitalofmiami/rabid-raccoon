@@ -1,30 +1,40 @@
 #!/usr/bin/env python3
 """
-Ingest options data from per-parent parquet files into Postgres.
+Ingest options data into Postgres.
 
 Reads:
   datasets/options-ohlcv/{PARENT}/YYYY-MM.parquet   → mkt_options_ohlcv_1d
-  datasets/options-statistics/{PARENT}/YYYY-MM.parquet → mkt_options_agg_1d
+  datasets/options-statistics/{PARENT}/YYYY-MM.parquet → mkt_options_statistics_1d
+
+Optional live pull:
+  Databento GLBX.MDP3 / statistics / stype_in=parent
+  (used when statistics parquets are missing or delayed)
 
 Aggregates per day per parent, inserts via UPSERT (ON CONFLICT UPDATE).
-Uses LOCAL_DATABASE_URL first, then DIRECT_URL fallback for Postgres connection.
+Uses LOCAL_DATABASE_URL only.
 
 Usage:
   .venv-finance/bin/python scripts/ingest-options.py
+  .venv-finance/bin/python scripts/ingest-options.py --with-stats
   .venv-finance/bin/python scripts/ingest-options.py --ohlcv-only
   .venv-finance/bin/python scripts/ingest-options.py --stats-only
+  .venv-finance/bin/python scripts/ingest-options.py --stats-only --stats-live
+  .venv-finance/bin/python scripts/ingest-options.py --stats-only --stats-live --start 2020-01-01 --end 2026-02-24
   .venv-finance/bin/python scripts/ingest-options.py --parent ES_OPT
   .venv-finance/bin/python scripts/ingest-options.py --dry-run
 """
-import pandas as pd
-import numpy as np
-from pathlib import Path
-from decimal import Decimal
-from hashlib import sha256
-from urllib.parse import urlparse
+import json
+import os
 import sys
 import time
-import json
+from datetime import date, timedelta
+from hashlib import sha256
+from pathlib import Path
+from urllib.parse import urlparse
+
+import pandas as pd
+
+from lib.registry import get_symbols_by_role
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -37,7 +47,10 @@ STAT_VOLUME = 6
 STAT_OI = 9
 STAT_IV = 14
 
-BATCH_SIZE = 500  # Local/direct Postgres path (no Accelerate timeout)
+WEEKLY_CHUNK_PARENTS = {"ES.OPT", "NQ.OPT"}
+LIVE_STATS_START_DEFAULT = "2020-01-01"
+
+BATCH_SIZE = 500
 _DB_TARGET_LOGGED = False
 
 
@@ -51,6 +64,48 @@ def _batch_upsert(conn, sql, rows: list[dict], batch_size: int = BATCH_SIZE) -> 
             conn.execute(sql, row)
 
 
+def _arg_value(flag: str) -> str | None:
+    for i, arg in enumerate(sys.argv):
+        if arg == flag and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
+
+
+def _to_parent_symbol(parent_arg: str) -> str:
+    return parent_arg.replace("_", ".")
+
+
+def _parse_date_or_fail(value: str, label: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {label} date '{value}', expected YYYY-MM-DD") from exc
+
+
+def resolve_live_window(start_arg: str | None, end_arg: str | None) -> tuple[date, date]:
+    """
+    Resolve live pull window as [start_date, end_exclusive).
+
+    --end is treated as inclusive for CLI ergonomics.
+    """
+    start_date = _parse_date_or_fail(start_arg or LIVE_STATS_START_DEFAULT, "start")
+    end_inclusive = _parse_date_or_fail(end_arg or date.today().isoformat(), "end")
+    end_exclusive = end_inclusive + timedelta(days=1)
+    if start_date >= end_exclusive:
+        raise ValueError(
+            f"Invalid window: start={start_date.isoformat()} must be <= end={end_inclusive.isoformat()}"
+        )
+    return start_date, end_exclusive
+
+
+def _iter_date_chunks(start_date: date, end_exclusive: date, days_per_chunk: int):
+    cursor = start_date
+    while cursor < end_exclusive:
+        nxt = min(cursor + timedelta(days=days_per_chunk), end_exclusive)
+        yield cursor, nxt
+        cursor = nxt
+
+
 # ─── IngestionRun Tracking ───────────────────────────────────────────────────
 
 def create_ingestion_run(conn, job: str, details: dict | None = None) -> int:
@@ -58,7 +113,7 @@ def create_ingestion_run(conn, job: str, details: dict | None = None) -> int:
     from sqlalchemy import text
     result = conn.execute(text("""
         INSERT INTO "ingestion_runs" (job, status, details, "startedAt")
-        VALUES (:job, 'RUNNING', :details::jsonb, NOW())
+        VALUES (:job, 'RUNNING', CAST(:details AS jsonb), NOW())
         RETURNING id
     """), {"job": job, "details": json.dumps(details) if details else None})
     row = result.fetchone()
@@ -74,7 +129,7 @@ def finalize_ingestion_run(conn, run_id: int, status: str, rows_inserted: int = 
         SET status = :status,
             "finishedAt" = NOW(),
             "rowsInserted" = :rows_inserted,
-            details = COALESCE(details, '{}'::jsonb) || :details::jsonb
+            details = COALESCE(details, '{}'::jsonb) || CAST(:details AS jsonb)
         WHERE id = :id
     """), {
         "id": run_id,
@@ -87,8 +142,8 @@ def finalize_ingestion_run(conn, run_id: int, status: str, rows_inserted: int = 
 # ─── DB Connection ──────────────────────────────────────────────────────────
 
 def load_env() -> dict[str, str]:
-    """Load .env.local vars."""
-    env = {}
+    """Load env vars from files + process env (process env wins)."""
+    env: dict[str, str] = {}
     for envfile in [".env.local", ".env"]:
         p = Path(envfile)
         if not p.exists():
@@ -104,23 +159,34 @@ def load_env() -> dict[str, str]:
             val = line[eq + 1:].strip().strip('"')
             if key not in env:
                 env[key] = val
+    for key, val in os.environ.items():
+        if val:
+            env[key] = val
     return env
 
 
-def get_engine():
-    """Create SQLAlchemy engine. Uses LOCAL_DATABASE_URL when available
-    (local dev, zero Accelerate cost), falls back to DIRECT_URL (production)."""
+def get_engine(db_target: str = "auto"):
+    """Create SQLAlchemy engine for LOCAL_DATABASE_URL only."""
     from sqlalchemy import create_engine
+
     global _DB_TARGET_LOGGED
+    if db_target not in {"auto", "local"}:
+        raise ValueError(
+            f"Invalid --db-target '{db_target}'. Local-only mode allows: auto|local"
+        )
+
     env = load_env()
-    source = "LOCAL_DATABASE_URL" if env.get("LOCAL_DATABASE_URL") else "DIRECT_URL"
-    url = env.get("LOCAL_DATABASE_URL") or env.get("DIRECT_URL")
+    local_url = env.get("LOCAL_DATABASE_URL")
+    source = "LOCAL_DATABASE_URL"
+    url = local_url
     if not url:
-        raise RuntimeError("Neither LOCAL_DATABASE_URL nor DIRECT_URL found in .env.local")
+        raise RuntimeError("LOCAL_DATABASE_URL is required for scripts/ingest-options.py")
+
     parsed = urlparse(url)
     if not _DB_TARGET_LOGGED:
         print(f"[db-target] ingest-options source={source} protocol={parsed.scheme or 'unknown'} host={parsed.netloc.split('@')[-1]}")
         _DB_TARGET_LOGGED = True
+
     # SQLAlchemy requires postgresql:// not postgres://
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
@@ -167,7 +233,11 @@ def _build_ohlcv_rows(parent_symbol: str, df: pd.DataFrame) -> list[dict]:
         contract_count = int(day_df[count_col].nunique()) if count_col else None
         avg_close = float(day_df["close"].mean()) if "close" in day_df.columns else None
         max_high = float(day_df["high"].max()) if "high" in day_df.columns else None
-        low_series = day_df[day_df["low"] > 0]["low"] if "low" in day_df.columns else pd.Series()
+        low_series = (
+            day_df[day_df["low"] > 0]["low"]
+            if "low" in day_df.columns
+            else pd.Series(dtype=float)
+        )
         min_low = float(low_series.min()) if len(low_series) > 0 else None
 
         row_hash = sha256(f"{parent_symbol}|{date}|ohlcv|{volume}".encode()).hexdigest()
@@ -298,17 +368,41 @@ def _build_stats_rows(parent_symbol: str, df: pd.DataFrame) -> list[dict]:
     return rows
 
 
-def ingest_statistics(engine, target_parent: str | None, dry_run: bool) -> int:
-    """Read statistics parquets → aggregate per day → upsert into mkt_options_agg_1d."""
+def _stats_upsert_sql():
     from sqlalchemy import text
 
+    return text("""
+        INSERT INTO mkt_options_statistics_1d
+            ("parentSymbol", "eventDate", "totalVolume", "totalOI",
+             settlement, "avgIV", "contractCount",
+             source, "sourceDataset", "sourceSchema", "rowHash",
+             "ingestedAt", "knowledgeTime")
+        VALUES
+            (:parentSymbol, :eventDate, :totalVolume, :totalOI,
+             :settlement, :avgIV, :contractCount,
+             :source, :sourceDataset, :sourceSchema, :rowHash,
+             NOW(), NOW())
+        ON CONFLICT ("parentSymbol", "eventDate")
+        DO UPDATE SET
+            "totalVolume" = EXCLUDED."totalVolume",
+            "totalOI" = EXCLUDED."totalOI",
+            settlement = EXCLUDED.settlement,
+            "avgIV" = EXCLUDED."avgIV",
+            "contractCount" = EXCLUDED."contractCount",
+            "rowHash" = EXCLUDED."rowHash",
+            "ingestedAt" = NOW()
+    """)
+
+
+def ingest_statistics(engine, target_parent: str | None, dry_run: bool) -> int:
+    """Read statistics parquets → aggregate per day → upsert into mkt_options_statistics_1d."""
     parents = list_parents(STATS_DIR, target_parent)
     if not parents:
         print(f"  No statistics parent dirs found in {STATS_DIR}")
         return 0
 
     print(f"\n{'='*60}")
-    print(f"Statistics Ingestion: {len(parents)} parents → mkt_options_agg_1d")
+    print(f"Statistics Ingestion: {len(parents)} parents → mkt_options_statistics_1d")
     print(f"{'='*60}")
 
     total_rows = 0
@@ -331,7 +425,10 @@ def ingest_statistics(engine, target_parent: str | None, dry_run: bool) -> int:
             print(f"  {parent_name}: WARNING — no stat_type column, skipping")
             continue
 
-        df["eventDate"] = pd.to_datetime(df[date_col]).dt.date
+        # Use ts_ref first for statistics: ts_event can be publish time on next day.
+        date_col = "ts_ref" if "ts_ref" in df.columns else date_col
+        df["eventDate"] = pd.to_datetime(df[date_col], errors="coerce").dt.date
+        df = df.dropna(subset=["eventDate"])
         rows = _build_stats_rows(parent_symbol, df)
 
         if dry_run:
@@ -339,27 +436,7 @@ def ingest_statistics(engine, target_parent: str | None, dry_run: bool) -> int:
             total_rows += len(rows)
             continue
 
-        upsert_sql = text("""
-            INSERT INTO mkt_options_agg_1d
-                ("parentSymbol", "eventDate", "totalVolume", "totalOI",
-                 settlement, "avgIV", "contractCount",
-                 source, "sourceDataset", "sourceSchema", "rowHash",
-                 "ingestedAt", "knowledgeTime")
-            VALUES
-                (:parentSymbol, :eventDate, :totalVolume, :totalOI,
-                 :settlement, :avgIV, :contractCount,
-                 :source, :sourceDataset, :sourceSchema, :rowHash,
-                 NOW(), NOW())
-            ON CONFLICT ("parentSymbol", "eventDate")
-            DO UPDATE SET
-                "totalVolume" = EXCLUDED."totalVolume",
-                "totalOI" = EXCLUDED."totalOI",
-                settlement = EXCLUDED.settlement,
-                "avgIV" = EXCLUDED."avgIV",
-                "contractCount" = EXCLUDED."contractCount",
-                "rowHash" = EXCLUDED."rowHash",
-                "ingestedAt" = NOW()
-        """)
+        upsert_sql = _stats_upsert_sql()
 
         with engine.begin() as conn:
             _batch_upsert(conn, upsert_sql, rows)
@@ -371,30 +448,158 @@ def ingest_statistics(engine, target_parent: str | None, dry_run: bool) -> int:
     return total_rows
 
 
+def _get_stats_live_symbols(target_parent: str | None) -> list[str]:
+    role_symbols = get_symbols_by_role("OPTIONS_PARENT")
+    if target_parent:
+        parent_symbol = _to_parent_symbol(target_parent)
+        return [s for s in role_symbols if s == parent_symbol]
+    return role_symbols
+
+
+def _fetch_stats_df_chunk(client, parent_symbol: str, chunk_start: date, chunk_end_exclusive: date) -> pd.DataFrame:
+    store = client.timeseries.get_range(
+        dataset="GLBX.MDP3",
+        schema="statistics",
+        symbols=[parent_symbol],
+        stype_in="parent",
+        start=chunk_start.isoformat(),
+        end=chunk_end_exclusive.isoformat(),
+    )
+    df = store.to_df()
+    if df.empty:
+        return df
+
+    # DBNStore often places a timestamp index (e.g., ts_recv). Make timestamps explicit columns.
+    if df.index.name is not None:
+        df = df.reset_index()
+
+    if "stat_type" not in df.columns:
+        return pd.DataFrame()
+
+    df = df[df["stat_type"].isin({STAT_SETTLEMENT, STAT_VOLUME, STAT_OI, STAT_IV})]
+    if df.empty:
+        return df
+
+    date_col = "ts_ref" if "ts_ref" in df.columns else ("ts_event" if "ts_event" in df.columns else None)
+    if date_col is None:
+        return pd.DataFrame()
+
+    df["eventDate"] = pd.to_datetime(df[date_col], errors="coerce").dt.date
+    df = df.dropna(subset=["eventDate"])
+    return df
+
+
+def ingest_statistics_live(
+    engine,
+    target_parent: str | None,
+    dry_run: bool,
+    start_date: date,
+    end_exclusive: date,
+) -> int:
+    """Pull statistics directly from Databento and upsert daily parent aggregates."""
+    import databento as db
+
+    env = load_env()
+    api_key = env.get("DATABENTO_API_KEY")
+    if not api_key:
+        raise RuntimeError("DATABENTO_API_KEY is required for --stats-live")
+
+    symbols = _get_stats_live_symbols(target_parent)
+    if not symbols:
+        print("  No options parents resolved for --stats-live")
+        return 0
+
+    print(f"\n{'='*60}")
+    print(f"Statistics Live Pull: {len(symbols)} parents → mkt_options_statistics_1d")
+    print(f"Window: {start_date.isoformat()} → {(end_exclusive - timedelta(days=1)).isoformat()} (inclusive)")
+    print(f"{'='*60}")
+
+    client = db.Historical(api_key)
+    upsert_sql = _stats_upsert_sql()
+    total_rows = 0
+
+    for parent_symbol in symbols:
+        parent_rows = 0
+        chunk_days = 7 if parent_symbol in WEEKLY_CHUNK_PARENTS else 31
+        print(f"  {parent_symbol} ({chunk_days}-day chunks)")
+
+        for chunk_start, chunk_end in _iter_date_chunks(start_date, end_exclusive, chunk_days):
+            df = _fetch_stats_df_chunk(client, parent_symbol, chunk_start, chunk_end)
+            if df.empty:
+                continue
+
+            rows = _build_stats_rows(parent_symbol, df)
+            if not rows:
+                continue
+
+            if dry_run:
+                parent_rows += len(rows)
+                continue
+
+            with engine.begin() as conn:
+                _batch_upsert(conn, upsert_sql, rows)
+
+            parent_rows += len(rows)
+
+        print(f"    {parent_rows} daily rows")
+        total_rows += parent_rows
+
+    return total_rows
+
+
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 def main():
     """CLI entrypoint — parse args and run OHLCV/statistics ingestion."""
-    from sqlalchemy import text
-
     t0 = time.time()
 
-    do_ohlcv = "--ohlcv-only" in sys.argv or "--stats-only" not in sys.argv
-    do_stats = "--stats-only" in sys.argv or "--ohlcv-only" not in sys.argv
+    ohlcv_only = "--ohlcv-only" in sys.argv
+    stats_only = "--stats-only" in sys.argv
+    with_stats = "--with-stats" in sys.argv
+
+    if ohlcv_only and stats_only:
+        raise ValueError("Cannot combine --ohlcv-only and --stats-only")
+    if ohlcv_only and with_stats:
+        raise ValueError("Cannot combine --ohlcv-only and --with-stats")
+
+    do_ohlcv = not stats_only
+    do_stats = stats_only or with_stats
+    if ohlcv_only:
+        do_ohlcv = True
+        do_stats = False
+    stats_live = "--stats-live" in sys.argv
     dry_run = "--dry-run" in sys.argv
 
-    target_parent = None
-    for i, arg in enumerate(sys.argv):
-        if arg == "--parent" and i + 1 < len(sys.argv):
-            target_parent = sys.argv[i + 1]
+    if stats_live and not do_stats:
+        raise ValueError("--stats-live requires --with-stats or --stats-only")
+
+    target_parent = _arg_value("--parent")
+    db_target = _arg_value("--db-target") or "auto"
+    start_arg = _arg_value("--start")
+    end_arg = _arg_value("--end")
+
+    if db_target not in {"auto", "local"}:
+        raise ValueError(
+            "--db-target direct is disabled. This script is local-only and uses LOCAL_DATABASE_URL."
+        )
+
+    start_date, end_exclusive = resolve_live_window(start_arg, end_arg)
 
     print("Options Data Ingestion → Postgres")
     if dry_run:
         print("  MODE: DRY RUN (no writes)")
     if target_parent:
         print(f"  TARGET: {target_parent}")
+    if not do_stats:
+        print("  STATS: DISABLED (default). Use --with-stats or --stats-only to enable.")
+    else:
+        print("  STATS: ENABLED")
+    if stats_live:
+        print("  STATS SOURCE: Databento live pull")
+        print(f"  WINDOW: {start_date.isoformat()} → {(end_exclusive - timedelta(days=1)).isoformat()} (inclusive)")
+    print(f"  DB TARGET: {db_target}")
 
-    engine = get_engine()
+    engine = get_engine(db_target)
 
     # Create IngestionRun record
     run_id = None
@@ -403,7 +608,11 @@ def main():
             run_id = create_ingestion_run(conn, "ingest-options", {
                 "do_ohlcv": do_ohlcv,
                 "do_stats": do_stats,
+                "stats_live": stats_live,
                 "target_parent": target_parent,
+                "db_target": db_target,
+                "start": start_date.isoformat(),
+                "end_inclusive": (end_exclusive - timedelta(days=1)).isoformat(),
                 "dry_run": dry_run,
             })
     except Exception as e:
@@ -418,7 +627,10 @@ def main():
             ohlcv_rows = ingest_ohlcv(engine, target_parent, dry_run)
 
         if do_stats:
-            stats_rows = ingest_statistics(engine, target_parent, dry_run)
+            if stats_live:
+                stats_rows = ingest_statistics_live(engine, target_parent, dry_run, start_date, end_exclusive)
+            else:
+                stats_rows = ingest_statistics(engine, target_parent, dry_run)
     except Exception as e:
         error_msg = str(e)
         print(f"ERROR: {e}")

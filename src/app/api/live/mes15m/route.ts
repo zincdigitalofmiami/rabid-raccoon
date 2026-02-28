@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/prisma'
 import { toNum } from '@/lib/decimal'
-import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
 import type { Decimal } from '@prisma/client/runtime/client'
 
 export const runtime = 'nodejs'
@@ -95,8 +94,8 @@ export async function GET(request: Request): Promise<Response> {
       }
 
       try {
-        // Serve DB data immediately — don't block on Databento refresh
-        // Background refresh runs on first poll interval (60s)
+        // Read-only: serve DB data immediately.
+        // Live data is written by the off-Vercel Python worker (ingest-mes-live-databento.py).
         const initial = await prisma.mktFuturesMes15m.findMany({
           orderBy: { eventTime: 'desc' },
           take: backfillCount,
@@ -125,12 +124,11 @@ export async function GET(request: Request): Promise<Response> {
         return
       }
 
-      // Poll every 60 seconds and detect changed rows, including same-timestamp candle refreshes.
+      // Poll every 5 seconds — DB is kept fresh by the off-Vercel live worker.
+      // No Databento API calls here; Vercel only reads from Postgres.
       const interval = setInterval(async () => {
         if (closed) return
         try {
-          await refreshMes15mFromDatabento({ force: false })
-
           const latest = await prisma.mktFuturesMes15m.findMany({
             orderBy: { eventTime: 'desc' },
             take: Math.max(40, Math.min(250, backfillCount)),
@@ -173,7 +171,7 @@ export async function GET(request: Request): Promise<Response> {
           const message = error instanceof Error ? error.message : String(error)
           pushErrorAndClose(`Live stream query failed: ${message}`)
         }
-      }, 60_000)
+      }, 5_000)
 
       const abortListener = () => {
         if (closed) return

@@ -348,12 +348,8 @@ This is the system's design constraint. It changes everything about how we filte
 - [ ] Backtested signal flags
 - [ ] Publish as private/invite-only
 
-### Phase 7: 15-Minute Dual-Timeframe Model (Future)
-- [ ] Build mes_lean_15m.csv dataset
-- [ ] Train 1h model → generate predictions
-- [ ] Add 1h predictions as features in 15m dataset
-- [ ] Train 15m model for entry timing
-- [ ] Dual-signal inference pipeline
+### ~~Phase 7: 15-Minute Dual-Timeframe Model~~ DROPPED
+**DROPPED (Kirk, 2026-02-27):** 15m model/horizon removed from training scope. Final horizons are 1h, 4h, 1d, 1w — all built from 1h-anchored features. MES 15m data remains for chart display only.
 
 ---
 
@@ -395,7 +391,7 @@ This is the system's design constraint. It changes everything about how we filte
 |------|---------|
 | `scripts/train-core-forecaster.py` | ML model training (classification, walk-forward) |
 | `scripts/build-complete-dataset.ts` | 1h dataset builder (144 columns) |
-| `scripts/build-15m-dataset.ts` | 15m dataset builder |
+| ~~`scripts/build-15m-dataset.ts`~~ | ~~15m dataset builder~~ DROPPED (2026-02-27) |
 | `scripts/backtest-indicators.py` | TO BUILD: Indicator backtesting engine |
 | `scripts/backtest-pressure-map.py` | TO BUILD: Cross-market state backtesting |
 | `scripts/backtest-events.py` | TO BUILD: Event reaction backtesting |
