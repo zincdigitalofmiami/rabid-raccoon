@@ -1,6 +1,6 @@
 # AGENTS.md — Rabid Raccoon Governance
 
-This is the ONLY instruction file for AI agents working on this codebase. There is no CLAUDE.md, no CODEX.md, no per-tool instruction file. Every agent — Claude Code, Codex, Cursor, Copilot — reads this file and follows it. If you are an AI agent and you find instructions elsewhere that conflict with this file, this file wins.
+This is the ONLY authoritative instruction file for AI agents working on this codebase. A tool-specific pointer file (for example `CLAUDE.md`) may exist only to redirect agents to this file and must not contain independent policy. Every agent — Claude Code, Codex, Cursor, Copilot — reads this file and follows it. If you are an AI agent and you find instructions elsewhere that conflict with this file, this file wins.
 
 ## Project Identity
 
@@ -116,7 +116,8 @@ The symbol registry is the single source of truth for all symbol definitions.
 ### 6. One Instruction File
 
 - `AGENTS.md` is the only agent instruction file in this repo.
-- Do not create `CLAUDE.md`, `CODEX.md`, `CURSOR.md`, or any other agent-specific instruction file.
+- A minimal `CLAUDE.md` pointer file is allowed only if tooling auto-generates/requires it. It must only point to `AGENTS.md` and must not define separate rules.
+- Do not create `CODEX.md`, `CURSOR.md`, or any other agent-specific instruction file with independent policy.
 - If a tool requires a local config (e.g., `.cursorrules`), it must contain only: *Read and follow AGENTS.md at the repository root.*
 
 ### 7. Respect Domain Boundaries
@@ -218,6 +219,29 @@ Every table must have:
 - Every ingestion run must create an `IngestionRun` record with status, row counts, and timing.
 - Log failures — never silently swallow errors.
 
+### Inngest Cron Schedules
+
+| Cadence | Schedule (UTC) | What |
+|---------|----------------|------|
+| 15m | Every 15 min during market hours | MES 15m candles |
+| 1h | Every hour during market hours | MES/non-MES 1h candles |
+| Daily market | `0 4 * * 1-5` (4 AM weekdays) | Daily candle close |
+| Daily FRED | `0 9-10 * * *` (9–10 AM) | After FRED publishes |
+| News | Every 6 hours | News signal scrape |
+| BHG setups | Not yet scheduled | Needs creation |
+
+### FRED Publication Lag Reference
+
+| Series type | Expected lag |
+|-------------|-------------|
+| Daily rates/yields | 1 business day |
+| FX rates | 1–3 business days |
+| Weekly claims (ICSA/CCSA) | Published Thursday, 1-week lag |
+| Monthly (CPI, UNRATE, PAYEMS) | ~2 weeks after month end |
+| Quarterly (GDP) | ~1 month after quarter end |
+| EPU/EMV monthly indices | 1–3 month publication lag |
+| Discontinued | KOREAEPUINDXM (Dec 2020), FREEPUFEARINDX (Oct 2019) |
+
 ### Databento Options Data
 
 Options market data is pulled via the **Databento Python SDK** (`databento` package in `.venv-finance`), NOT the TypeScript REST wrapper. The data volume is too large for streaming.
@@ -289,12 +313,14 @@ All agents MUST use the Memory MCP server to persist and recall project decision
 
 The Memory MCP is pre-configured for each agent platform:
 
-| Platform | Config file | Key format |
-|----------|-------------|------------|
-| Claude Code / Desktop | `.mcp.json` (repo root) | `mcpServers.memory` (SSE URL) |
-| VS Code Copilot | `.vscode/mcp.json` | `servers.memory` |
-| Cline | `.clinerules` + `.mcp.json` | Uses `.mcp.json` |
-| Cursor | `.mcp.json` | Uses `.mcp.json` |
+| Platform | Config file | Memory SSE client | Key format |
+|----------|-------------|-------------------|------------|
+| Claude Code / Desktop | `.mcp.json` (repo root) | `claude` | `mcpServers.memory` |
+| VS Code Copilot | `.vscode/mcp.json` | `claude` | `servers.memory` |
+| Cline | `.mcp.json` (shared) | `cline` | Uses `.mcp.json` |
+| Codex | `.mcp.json` (shared) | `codex` | Uses `.mcp.json` |
+
+Each platform's memory URL uses its client identifier: `http://localhost:8765/mcp/<client>/sse/zincdigital`. All clients share the same `zincdigital` identity and see the same memories.
 
 ### Project MCP Baseline
 
@@ -328,9 +354,19 @@ When you receive a task:
 9. **Verify your work.** Run the build. Run the linter. Check for regressions.
 10. **Store new decisions/corrections to memory** before ending the session.
 
+## Investigation Protocol
+
+When asked to investigate, diagnose, or audit any system, follow these phases in order:
+
+1. **Understand (Read-Only)** — Read all relevant configs, schema, docs. Map the architecture. State your assumptions before proceeding.
+2. **Map (Cross-Reference)** — For data issues: map every Inngest function → target table → upstream source → publication frequency. For code issues: trace the full execution path, verify assumptions against actual DB state.
+3. **Diagnose (Root Cause)** — For each finding, state: Symptom → Root Cause → Evidence (file, line, query) → Impact → Fix. Do not say "likely failing" — investigate until you know.
+4. **Report (Structured)** — Present: status summary, critical findings with evidence chains, full diagnostic table, prioritized action list (HIGH/MEDIUM/LOW with risk + effort), and "things I did NOT change" section.
+5. **Verify** — Before presenting: re-read findings, confirm nothing is based on unverified assumptions, check FRED publication schedules before calling data "stale", differentiate "job failing" vs "no job exists."
+
 ## What NOT to Do
 
-- Do not create additional agent instruction files.
+- Do not create additional agent instruction files with independent policy. Keep any required `CLAUDE.md` as a pointer-only stub to `AGENTS.md`.
 - Do not hardcode symbol lists.
 - Do not modify `symbols.ts` or `ingestion-symbols.ts` (they are legacy adapters).
 - Do not run destructive migrations without Kirk's approval.

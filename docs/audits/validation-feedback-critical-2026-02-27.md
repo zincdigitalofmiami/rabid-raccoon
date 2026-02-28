@@ -1,6 +1,12 @@
 # Critical Validation Feedback & Corrections
-**Date:** 2026-02-27  
-**Status:** ACTIVE — All issues require resolution before implementation begins
+**Date:** 2026-02-27
+**Status:** PARTIALLY RESOLVED — Kirk decisions applied 2026-02-27 evening session
+
+**Resolved this session:**
+- SOX.c.0 → replace with SMH (P0 RESOLVED)
+- Activity series count → 6 confirmed (P1 RESOLVED)
+- 15m model/horizon → DROPPED; final horizons are 1h, 4h, 1d, 1w (kills 4 items)
+- Training folds → 2–3 with more time per fold (was 5 @ 3600s)
 
 ---
 
@@ -150,109 +156,31 @@ async function batchUpsertWithTimeout(operations: any[], maxBatchSize = MAX_BATC
 
 ## FEATURE ENGINEERING SPEC ISSUES
 
-### P0 BLOCKER: SOX.c.0 Doesn't Exist
-**Location:** Phase 3, `crossAssetSymbols` array  
-**Severity:** P0 — Silent data corruption
+### ~~P0 BLOCKER: SOX.c.0 Doesn't Exist~~ ✅ RESOLVED
+**Location:** Phase 3, `crossAssetSymbols` array
+**Severity:** ~~P0 — Silent data corruption~~ **RESOLVED**
 
-❌ **PROBLEM:**
-- SOX = Philadelphia Semiconductor **INDEX** (cash only, not tradeable)
-- No futures contract `SOX.c.0` exists for Databento to return
-- If Databento returns anything, it's synthetic/incorrect
-- Silent data quality failure in Phase 3 cross-asset features
+**PROBLEM:** SOX is a cash index — no futures contract `SOX.c.0` exists for Databento.
 
-📋 **OPTIONS:**
-1. **Replace with `SMH`**: VanEck Semiconductor ETF (NASDAQ tradeable proxy)
-2. **Drop entirely**: If not critical to correlation universe
-
-**Action:** Confirm with Kirk which approach; update `crossAssetSymbols` before Phase 3 begins.
+**DECISION (Kirk, 2026-02-27):** Replace with **SMH** (VanEck Semiconductor ETF, NASDAQ tradeable proxy). Code changes (symbol registry, Inngest, backfill scripts) tracked separately.
 
 ---
 
-### P1 BUG: Activity Series Count Mismatch
-**Location:** Feature Engineering Spec header + Activity section  
-**Severity:** P1 — Scope ambiguity
+### ~~P1 BUG: Activity Series Count Mismatch~~ ✅ RESOLVED
+**Location:** Feature Engineering Spec header + Activity section
+**Severity:** ~~P1 — Scope ambiguity~~ **RESOLVED**
 
-❌ **DISCREPANCY:**
-Header claims: "5 new Activity series"  
-Spec lists: **6 series**
-- GDPC1 (GDP)
-- RSXFS (Retail Sales)
-- UMCSENT (Consumer Sentiment)
-- INDPRO (Industrial Production)
-- BOPGSTB (Trade Balance)
-- IMPCH (China Imports)
-
-**QUESTION:** Is duplication of BOPGSTB + IMPCH intentional given you already track FX stress and commodity stress?
-
-**Action required:** Kirk to confirm whether count is 5 or 6, and resolve any duplication.
+**DECISION (Kirk, 2026-02-27):** Keep all **6 series** (GDPC1, RSXFS, UMCSENT, INDPRO, BOPGSTB, IMPCH). Header should say 6, not 5.
 
 ---
 
-### P1 PERFORMANCE: Vectorization Required for 15m Builder
-**Location:** Feature Engineering Spec, "Helper Functions" section  
-**Severity:** P1 — Phase 2 build time will be prohibitive
-
-❌ **CURRENT PATTERN:**
-```typescript
-for (const candle of candles) {  // 46,800 candles for 15m
-  stats.push({
-    correlation: rollingCorrelation(closes, i, 20),  // O(20) per call
-    percentile: computePercentile(volumes, i, 100),  // O(100) per call
-    // ... 30+ more rolling calcs
-  })
-}
-// Total: 46,800 * O(150) = 7M+ ops, sequential
-```
-
-✅ **REQUIRED PATTERN:**
-```typescript
-// Pre-compute rolling stats OUTSIDE candle loop (vectorized)
-const precomputed = {
-  correlation20: computeRollingCorrelationFast(closes, window=20),  // O(n) once
-  percentile100: computeRollingPercentileFast(volumes, window=100), // O(n) once
-  // ... all rolling stats pre-computed in parallel
-}
-
-// Then reference pre-computed values in loop
-for (let i = 0; i < candles.length; i++) {
-  stats.push({
-    correlation: precomputed.correlation20[i],
-    percentile: precomputed.percentile100[i],
-  })
-}
-```
-
-**Impact estimate:**
-- Current (inline): 15–30 min build time (unacceptable)
-- After vectorization: 2–5 min build time (acceptable)
-
-**Action:** Implement vectorized rolling stat computation before Phase 2 work starts.
+### ~~P1 PERFORMANCE: Vectorization Required for 15m Builder~~ ✅ RESOLVED (N/A)
+**RESOLVED:** 15m model/horizon dropped (Kirk, 2026-02-27). No 15m builder needed. Vectorization may still benefit 1h builder but is no longer a blocker.
 
 ---
 
-### P1 MEMORY CONCERN: 15m Dataset Array Storage
-**Location:** Feature Engineering Spec, Data Structure section  
-**Severity:** P1 — Feasibility check required
-
-⚠️ **MEMORY PRESSURE:**
-- 1h dataset: ~11,700 rows
-- 15m dataset: ~46,800 rows (4x larger)
-- 30+ FRED series stored as `Float64Array` per series
-  - Each array: 46,800 * 8 bytes = ~375 KB
-  - 30 arrays = ~11.25 MB FRED data alone
-- Plus 100+ computed feature arrays in parallel
-
-**Estimate:** Total heap for 15m dataset build ~150–250 MB
-
-**Risks:**
-- Node.js default heap: 1.4 GB (safe margin exists)
-- But concurrent operations could exceed limits
-- No explicit memory management in current builders
-
-**Action:** 
-1. Benchmark 15m dataset build on target machine (Apple Silicon)
-2. Monitor peak heap during build
-3. If exceeds 500 MB, implement streaming/chunking
+### ~~P1 MEMORY CONCERN: 15m Dataset Array Storage~~ ✅ RESOLVED (N/A)
+**RESOLVED:** 15m model/horizon dropped (Kirk, 2026-02-27). No 15m dataset to build. 1h dataset (~11,700 rows) has no memory concerns.
 
 ---
 
@@ -265,9 +193,9 @@ Converting from:
 - **Current:** Point-in-time lookups: `eventValue = query(seriesId, candle.eventTime)`
 - **Proposed:** Indexed arrays: `eventValue = fredArrays[seriesId][candle.index]`
 
-**This affects BOTH builders:**
+**This affects the 1h builder:**
 1. 1h Builder: Requires array indexing refactor
-2. 15m Builder: Depends on 1h builder change
+2. ~~15m Builder: Depends on 1h builder change~~ (15m dropped)
 
 **Breaking changes for consumers:**
 - Symbol registry queries
@@ -282,24 +210,8 @@ Converting from:
 
 ---
 
-### P2 SPARSE FEATURE: Sahm Rule Null-Safety
-**Location:** Feature Engineering Spec, "Economic Indicators" section  
-**Severity:** P2 — Documentation + implementation guardrail
-
-⚠️ **SPARSITY PROBLEM:**
-Sahm Rule proxy lookback at 15m: `12 * 22 * 96 = 25,344 bars` = **6 months of history**
-
-Early rows in 15m dataset will have **completely NULL** Sahm Rule value until 6 months of data accumulated.
-
-**Current spec note:** Correctly acknowledged  
-**Required action:** 
-1. Document expected sparsity in dataset metadata
-2. Choose mitigation:
-   - **Option A:** Clip dataset start to first valid Sahm value
-   - **Option B:** Use forward-fill (NaN → prior valid value)
-   - **Option C:** Accept null; impute in training
-
-**Action:** Decide which approach before Phase 2 implementation.
+### ~~P2 SPARSE FEATURE: Sahm Rule Null-Safety~~ ✅ RESOLVED (reduced scope)
+**RESOLVED:** 15m model dropped (Kirk, 2026-02-27). At 1h granularity, Sahm Rule lookback is `12 * 22 * 24 = 6,336 bars` — still ~6 months but manageable with the 1h dataset's longer history. AutoGluon handles NaN natively; no special mitigation needed.
 
 ---
 
@@ -547,49 +459,8 @@ Example: NFP surprise may vary ±20% depending on consensus source, but directio
 
 ---
 
-### P2 ISSUE: 15m Dataset Purpose Unclear Across Specs
-**Status:** YELLOW ⚠️  
-**Severity:** P2 — Dependency clarification
-
-❌ **CONFLICTING DEFINITIONS:**
-
-**ML Research Report:**
-> "15m dataset: Entry-timing model for precise setup confirmation"
-
-**Feature Engineering Spec:**
-> "15m builder: Parallel full-feature dataset (same columns as 1h, indexed to 15m bars)"
-
-**Trade Feedback Spec:**
-> "[No explicit timeframe mentioned; assumes features feed wherever they're queried]"
-
-**ARCHITECTURAL QUESTION:**
-Do rolling features feed:
-- **Option A:** 15m model only (BHG fires on 15m, makes sense)
-- **Option B:** Both 1h + 15m models (redundant computation)
-- **Option C:** 1h model only, with 15m aggregation (loses granularity)
-
-**Current spec implies Option A is correct** — BHG setup fires on 15m, so rolling stats should feed 15m model.
-
-**ACTION REQUIRED:** Explicit reconciliation
-```markdown
-## Timeframe Architecture (Explicit)
-
-1. **15m Intraday Model** (for entry confirmation)
-   - Trained on MktFuturesMes15m candles
-   - All rolling features indexed to 15m bars
-   - Input: 16-week 15m history (~96 bars/day)
-   
-2. **1h Broader Context Model** (optional, future)
-   - Trained on aggregated 1h candles from 15m data
-   - Lower-frequency rolling stats (longer lookback windows)
-   - Input: 1-year 1h history
-
-3. **Daily Cross-Asset Model** (Phase 3+, optional)
-   - Trained on daily multi-asset returns
-   - Economic/regime indicators only (no rolling price stats)
-```
-
-**Action:** Kirk to confirm which models actually needed; document timeframe for each rolling feature.
+### ~~P2 ISSUE: 15m Dataset Purpose Unclear Across Specs~~ ✅ RESOLVED
+**RESOLVED (Kirk, 2026-02-27):** 15m model/horizon dropped entirely. Single model architecture on 1h candles with horizons 1h, 4h, 1d, 1w. No timeframe reconciliation needed.
 
 ---
 
@@ -609,7 +480,7 @@ FROM news_signals
 WHERE tags @> '["SOX"]' OR tags @> '["semiconductor"]'
 ```
 
-If count > 0: Either drop SOX from news tags or replace SOX.c.0 with SMH proxy.
+If count > 0: Update news tags to reference SMH (SOX.c.0 → SMH decision made, Kirk 2026-02-27).
 
 ---
 
@@ -617,23 +488,25 @@ If count > 0: Either drop SOX from news tags or replace SOX.c.0 with SMH proxy.
 
 ### Phase Gates (Must Complete Before Each Phase)
 
-| Priority | Issue | Blocker | Owner | Timeline |
-|----------|-------|---------|-------|----------|
-| **P0** | SOX.c.0: Replace with SMH or drop | Phase 3 | Kirk | **Before Phase 1** |
-| **P0** | Prisma error type: Fix `PrismaClientConnectedError` → `PrismaClientInitializationError` | Audit | Kirk | **Before implementing audits** |
-| **P1** | Activity series: Confirm 5 vs 6 count | Phase 1 scope | Kirk | **Before Phase 1 starts** |
-| **P1** | Vectorize rolling helpers | Phase 2 performance | Dev | **Before Phase 2 starts** |
-| **P1** | FRED point-in-time refactor: Architecture spike | Phase 2 blocker | Dev | **1-week spike, before Phase 2** |
-| **P1** | event_price_velocity_1h: Add mid-bar release guards | Model integrity | Dev | **Impl guardrail in Phase 1** |
-| **P1** | BHG streak timing: Use completedAt, not goTime | Feature correctness | Dev | **Impl guardrail in Phase 4** |
-| **P1** | Accelerate timeout: Add batch pre-checks | Silent failure | Dev | **Before ingestion at scale** |
-| **P2** | Canonical column inventory | Planning clarity | Kirk | **Before all phases start** |
-| **P2** | 15m vs 1h model timeframe reconciliation | Design clarity | Kirk | **Before Phase 2 feature eng** |
-| **P2** | RealMLP/TabM inference latency benchmark | Phase 4 feasibility | Dev | **Before Phase 4 experiments** |
-| **P2** | 15m dataset memory benchmark | Phase 2 feasibility | Dev | **Before Phase 2 build script** |
-| **P2** | FRED revision cycles: Document vintage logic | Data integrity | Dev | **Impl doc in Phase 1** |
-| **P2** | contextSnapshot JSON enforcement | Guardrail | Dev | **Add validation in Phase 4** |
-| **P2** | SOX news signal scan | Data quality | Dev | **Before Phase 3** |
+| Priority | Issue | Blocker | Owner | Timeline | Status |
+|----------|-------|---------|-------|----------|--------|
+| ~~**P0**~~ | ~~SOX.c.0: Replace with SMH or drop~~ | ~~Phase 3~~ | ~~Kirk~~ | ~~Before Phase 1~~ | **RESOLVED → SMH** |
+| **P0** | Prisma error type: Fix `PrismaClientConnectedError` → `PrismaClientInitializationError` | Audit | Dev | Before implementing audits | OPEN |
+| ~~**P1**~~ | ~~Activity series: Confirm 5 vs 6 count~~ | ~~Phase 1 scope~~ | ~~Kirk~~ | ~~Before Phase 1~~ | **RESOLVED → 6** |
+| ~~**P1**~~ | ~~Vectorize rolling helpers (15m)~~ | ~~Phase 2~~ | ~~Dev~~ | ~~Before Phase 2~~ | **RESOLVED — 15m dropped** |
+| **P1** | FRED point-in-time refactor: Architecture spike | Phase 2 blocker | Dev | 1-week spike, before Phase 2 | OPEN |
+| **P1** | event_price_velocity_1h: Add mid-bar release guards | Model integrity | Dev | Impl guardrail in Phase 1 | OPEN |
+| **P1** | BHG streak timing: Use completedAt, not goTime | Feature correctness | Dev | Impl guardrail in Phase 4 | OPEN |
+| **P1** | Accelerate timeout: Add batch pre-checks | Silent failure | Dev | Before ingestion at scale | OPEN |
+| **P2** | Canonical column inventory | Planning clarity | Kirk | Before all phases start | OPEN |
+| ~~**P2**~~ | ~~15m vs 1h model timeframe reconciliation~~ | ~~Design clarity~~ | ~~Kirk~~ | ~~Before Phase 2~~ | **RESOLVED — 15m dropped** |
+| **P2** | RealMLP/TabM inference latency benchmark | Phase 4 feasibility | Dev | Before Phase 4 experiments | OPEN |
+| ~~**P2**~~ | ~~15m dataset memory benchmark~~ | ~~Phase 2~~ | ~~Dev~~ | ~~Before Phase 2~~ | **RESOLVED — 15m dropped** |
+| **P2** | FRED revision cycles: Document vintage logic | Data integrity | Dev | Impl doc in Phase 1 | OPEN |
+| **P2** | contextSnapshot JSON enforcement | Guardrail | Dev | Add validation in Phase 4 | OPEN |
+| **P2** | SOX news signal scan | Data quality | Dev | Before Phase 3 | OPEN |
+
+**Training config update (Kirk, 2026-02-27):** Folds reduced from 5 to 2–3 with significantly more time per fold. Use `dev` profile (3 folds/1800s) as starting point, increase `--time-limit` as needed.
 
 ---
 
@@ -641,34 +514,34 @@ If count > 0: Either drop SOX from news tags or replace SOX.c.0 with SMH proxy.
 
 ### Immediate (Before Any Development Starts)
 
-- [ ] **Kirk:** Resolve SOX.c.0 (replace with SMH or drop)
-- [ ] **Kirk:** Confirm Activity series count (5 or 6?)
+- [x] **Kirk:** Resolve SOX.c.0 → **SMH** (2026-02-27)
+- [x] **Kirk:** Confirm Activity series count → **6 confirmed** (2026-02-27)
 - [ ] **Kirk:** Create canonical column inventory spreadsheet
-- [ ] **Kirk:** Reconcile 15m vs 1h model timeframe architecture
+- [x] **Kirk:** ~~Reconcile 15m vs 1h model timeframe architecture~~ → **15m dropped** (2026-02-27)
 - [ ] **Audit:** Update Recommendation #8 with correct Prisma error types
 - [ ] **Audit:** Reframe Finding #5 (non-unique index gap)
 - [ ] **Audit:** Clarify Rec #2 (pool config in connection string, not schema)
 
 ### Phase 1 Setup (Feature Engineering — Before Implementation)
 
-- [ ] **Dev:** Design & implement vectorized rolling stat computation
+- ~~[ ] **Dev:** Design & implement vectorized rolling stat computation~~ (15m dropped — optional for 1h)
 - [ ] **Dev:** Spike FRED point-in-time → indexed-array refactor (3–5 days)
 - [ ] **Dev:** Add mid-bar release guards to event_price_velocity implementation
-- [ ] **Dev:** Design 15m vs 1h column allocation strategy
-- [ ] **Dev:** Document Sahm Rule sparsity (choose null-handling approach)
+- ~~[ ] **Dev:** Design 15m vs 1h column allocation strategy~~ (15m dropped)
+- ~~[ ] **Dev:** Document Sahm Rule sparsity~~ (15m dropped — 1h lookback manageable)
 - [ ] **Dev:** Add fast-path implementation for econIndicators lookups
 
 ### Phase 2 (Dataset Building)
 
-- [ ] **Dev:** Benchmark 15m dataset memory & build time on Apple Silicon
+- ~~[ ] **Dev:** Benchmark 15m dataset memory & build time~~ (15m dropped)
 - [ ] **Dev:** Implement Accelerate batch pre-checks (max size validation)
 - [ ] **Dev:** Add transaction timeout monitoring (4.5s explicit timeout)
 - [ ] **Dev:** Document FRED vintage retrieval for GDPC1/IMPCH series
-- [ ] **Dev:** Implement streaming/chunking if memory exceeds 500 MB
+- ~~[ ] **Dev:** Implement streaming/chunking if memory exceeds 500 MB~~ (15m dropped — 1h is fine)
 
 ### Phase 3 (Cross-Asset Features)
 
-- [ ] **Dev:** Replace SOX.c.0 with SMH in `crossAssetSymbols` (or remove)
+- [ ] **Dev:** Replace SOX.c.0 with SMH in `crossAssetSymbols` and symbol registry
 - [ ] **Dev:** Scan `news_signals` for orphaned SOX/semiconductor tags
 - [ ] **Dev:** Update cross-asset feature registration (adjust baseline count)
 
@@ -683,15 +556,15 @@ If count > 0: Either drop SOX from news tags or replace SOX.c.0 with SMH proxy.
 
 ## SIGN-OFF CHECKLIST
 
-- [ ] Kirk reviewed & approved all P0 resolutions
+- [x] Kirk reviewed & approved all P0 resolutions (SOX → SMH, 2026-02-27)
 - [ ] Kirk confirmed canonical column inventory
-- [ ] Kirk decided 15m vs 1h model architecture
+- [x] ~~Kirk decided 15m vs 1h model architecture~~ → 15m dropped (2026-02-27)
 - [ ] Dev completed FRED refactor spike (or decided to defer)
 - [ ] Audit corrections merged into recommendation docs
-- [ ] All blocking issues resolved; implementation can begin
+- [ ] Remaining open issues resolved; implementation can begin
 
 ---
 
-**Last updated:** 2026-02-27  
-**Status:** ACTIVE — All issues tracked, no implementation until gate items cleared  
+**Last updated:** 2026-02-27 (evening — Kirk decisions applied)
+**Status:** PARTIALLY RESOLVED — 6 of 15 items resolved, 9 remaining
 **Owner:** Kirk (approval); Dev team (execution)
