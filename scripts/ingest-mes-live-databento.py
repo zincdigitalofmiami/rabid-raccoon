@@ -365,19 +365,20 @@ def main():
     except Exception as e:
         print(f"[mes-live-databento] WARNING: Could not create IngestionRun: {e}")
 
-    # Backfill recent data first
-    backfill_rows = 0
-    if backfill_minutes > 0:
-        try:
-            backfill_rows = backfill_recent(engine, db.Live, symbol, backfill_minutes)
-        except Exception as e:
-            print(f"[mes-live-databento] Backfill failed (non-fatal): {e}")
-
     # Set up live client
     aggregator = CandleAggregator()
-    total_upserted = backfill_rows
     total_records = 0
+    total_upserted = 0
     running = True
+    error_msg = None
+    client = None
+
+    # Backfill recent data first
+    if backfill_minutes > 0:
+        try:
+            total_upserted += backfill_recent(engine, db.Live, symbol, backfill_minutes)
+        except Exception as e:
+            print(f"[mes-live-databento] Backfill failed (non-fatal): {e}")
 
     def on_signal(signum, frame):
         nonlocal running
@@ -420,40 +421,45 @@ def main():
                 except Exception as e:
                     print(f"[mes-live-databento] flush error: {e}")
 
-    flush_thread = threading.Thread(target=flush_loop, daemon=True)
-    flush_thread.start()
-
-    # Connect and subscribe
-    print(f"[mes-live-databento] Connecting to Databento Live gateway...")
-    client = db.Live(key=api_key)
-    client.subscribe(
-        dataset=DATASET,
-        schema="ohlcv-1m",
-        symbols=symbol,
-        stype_in="continuous",
-    )
-    client.add_callback(record_callback)
-
-    print(f"[mes-live-databento] Starting live stream (flush every {FLUSH_INTERVAL_SEC}s)...")
-    client.start()
-
-    # Block until signal
     try:
+        flush_thread = threading.Thread(target=flush_loop, daemon=True)
+        flush_thread.start()
+
+        # Connect and subscribe
+        print(f"[mes-live-databento] Connecting to Databento Live gateway...")
+        client = db.Live(key=api_key)
+        client.subscribe(
+            dataset=DATASET,
+            schema="ohlcv-1m",
+            symbols=symbol,
+            stype_in="continuous",
+        )
+        client.add_callback(record_callback)
+
+        print(f"[mes-live-databento] Starting live stream (flush every {FLUSH_INTERVAL_SEC}s)...")
+        client.start()
+
+        # Block until signal
         while running:
             time.sleep(1)
     except KeyboardInterrupt:
         running = False
+    except Exception as e:
+        error_msg = str(e)
+        running = False
+        print(f"[mes-live-databento] ERROR: {error_msg}", file=sys.stderr)
 
-    # Shutdown
+    # Shutdown and finalize
     print("[mes-live-databento] Stopping live client...")
-    try:
-        client.stop()
-        client.block_for_close(timeout=5)
-    except Exception:
+    if client is not None:
         try:
-            client.terminate()
+            client.stop()
+            client.block_for_close(timeout=5)
         except Exception:
-            pass
+            try:
+                client.terminate()
+            except Exception:
+                pass
 
     # Final flush
     candles = aggregator.drain()
@@ -461,20 +467,25 @@ def main():
         try:
             n = flush_candles(engine, candles)
             total_upserted += n
-        except Exception:
-            pass
+        except Exception as e:
+            if error_msg is None:
+                error_msg = f"final flush failed: {e}"
+            print(f"[mes-live-databento] WARNING: {error_msg}")
 
     # Finalize ingestion run
     if run_id:
         try:
             with engine.begin() as conn:
-                finalize_ingestion_run(conn, run_id, "COMPLETED", total_upserted)
+                status = "FAILED" if error_msg else "COMPLETED"
+                finalize_ingestion_run(conn, run_id, status, total_upserted, error_msg)
         except Exception as e:
             print(f"[mes-live-databento] WARNING: Could not finalize IngestionRun: {e}")
 
     print(
         f"[mes-live-databento] Stopped. total_records={total_records} total_upserted={total_upserted}"
     )
+    if error_msg:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

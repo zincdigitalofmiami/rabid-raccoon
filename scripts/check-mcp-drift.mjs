@@ -51,7 +51,7 @@ function validateServersObject(servers, fileLabel) {
     fail(`${fileLabel} missing memory server`)
   } else {
     if (memory.type !== 'sse') fail(`${fileLabel} memory must use sse`)
-    const pattern = /^http:\/\/localhost:8765\/mcp\/claude\/sse\/[a-zA-Z0-9_-]+$/
+    const pattern = /^http:\/\/localhost:8765\/mcp\/[a-zA-Z0-9_-]+\/sse\/[a-zA-Z0-9_-]+$/
     if (!pattern.test(memory.url || '')) {
       fail(`${fileLabel} memory url must match OpenMemory SSE format`)
     }

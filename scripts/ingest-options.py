@@ -15,6 +15,7 @@ Uses LOCAL_DATABASE_URL only.
 
 Usage:
   .venv-finance/bin/python scripts/ingest-options.py
+  .venv-finance/bin/python scripts/ingest-options.py --with-stats
   .venv-finance/bin/python scripts/ingest-options.py --ohlcv-only
   .venv-finance/bin/python scripts/ingest-options.py --stats-only
   .venv-finance/bin/python scripts/ingest-options.py --stats-only --stats-live
@@ -552,10 +553,25 @@ def main():
     """CLI entrypoint — parse args and run OHLCV/statistics ingestion."""
     t0 = time.time()
 
-    do_ohlcv = "--ohlcv-only" in sys.argv or "--stats-only" not in sys.argv
-    do_stats = "--stats-only" in sys.argv or "--ohlcv-only" not in sys.argv
+    ohlcv_only = "--ohlcv-only" in sys.argv
+    stats_only = "--stats-only" in sys.argv
+    with_stats = "--with-stats" in sys.argv
+
+    if ohlcv_only and stats_only:
+        raise ValueError("Cannot combine --ohlcv-only and --stats-only")
+    if ohlcv_only and with_stats:
+        raise ValueError("Cannot combine --ohlcv-only and --with-stats")
+
+    do_ohlcv = not stats_only
+    do_stats = stats_only or with_stats
+    if ohlcv_only:
+        do_ohlcv = True
+        do_stats = False
     stats_live = "--stats-live" in sys.argv
     dry_run = "--dry-run" in sys.argv
+
+    if stats_live and not do_stats:
+        raise ValueError("--stats-live requires --with-stats or --stats-only")
 
     target_parent = _arg_value("--parent")
     db_target = _arg_value("--db-target") or "auto"
@@ -574,6 +590,10 @@ def main():
         print("  MODE: DRY RUN (no writes)")
     if target_parent:
         print(f"  TARGET: {target_parent}")
+    if not do_stats:
+        print("  STATS: DISABLED (default). Use --with-stats or --stats-only to enable.")
+    else:
+        print("  STATS: ENABLED")
     if stats_live:
         print("  STATS SOURCE: Databento live pull")
         print(f"  WINDOW: {start_date.isoformat()} → {(end_exclusive - timedelta(days=1)).isoformat()} (inclusive)")
