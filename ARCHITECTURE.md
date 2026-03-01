@@ -309,7 +309,7 @@ Prisma provides type-safe database access, automatic migration management, and a
 | Component | Detail |
 |-----------|--------|
 | Database | PostgreSQL via Prisma Accelerate (`prisma+postgres://`) |
-| Direct DB access | Requires `DIRECT_DATABASE_URL` (direct `postgres://` string) for migrations |
+| Direct DB access | Requires `DIRECT_URL` (direct `postgres://` string) for migrations and direct pg workloads |
 | Hosting | Vercel (dashboard) |
 | Scheduling | Inngest (managed, event-driven) |
 | Market data | Databento (REST, requires `DATABENTO_API_KEY`) |

@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # ── CLI ───────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument("--phase", type=int, default=1, choices=[1, 2])
-parser.add_argument("--horizons", default="1h,4h")
+parser.add_argument("--horizons", default="1h,4h,1d,1w")
 parser.add_argument("--time-limit", type=int, default=None)
 parser.add_argument("--clean", action="store_true")
 args = parser.parse_args()
@@ -99,6 +99,8 @@ OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "lean_oof_1h.csv"
 HORIZONS = {
     "1h": {"target": "target_dir_1h", "purge": 1,  "embargo": 2},
     "4h": {"target": "target_dir_4h", "purge": 4,  "embargo": 8},
+    "1d": {"target": "target_dir_1d", "purge": 24, "embargo": 48},
+    "1w": {"target": "target_dir_1w", "purge": 120, "embargo": 240},
 }
 
 # Filter horizons
@@ -152,9 +154,20 @@ def main():
 
     # Load data
     print(f"\nLoading {DATASET_PATH.name}...")
+    if not DATASET_PATH.exists():
+        print(f"ERROR: Dataset not found at {DATASET_PATH}")
+        print("Run: npx tsx scripts/build-lean-dataset.ts --timeframe=1h")
+        sys.exit(1)
     df = pd.read_csv(DATASET_PATH)
     df = df.sort_values("timestamp").reset_index(drop=True)
     print(f"  Raw: {len(df):,} rows x {len(df.columns)} cols")
+
+    required_targets = sorted({cfg["target"] for cfg in HORIZONS.values()})
+    missing_targets = [col for col in required_targets if col not in df.columns]
+    if missing_targets:
+        print(f"ERROR: Dataset missing target columns for requested horizons: {missing_targets}")
+        print("Run: npx tsx scripts/build-lean-dataset.ts --timeframe=1h")
+        sys.exit(1)
 
     # Validate features exist
     available = [f for f in LEAN_FEATURES if f in df.columns]
