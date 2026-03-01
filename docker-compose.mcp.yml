@@ -1,0 +1,45 @@
+# MCP Servers Docker Compose Configuration
+# Auto-starts all MCP servers needed for Rabid Raccoon
+# Run with: docker compose up -d
+# To auto-start on Docker Desktop: enable in Docker Desktop Settings > General > "Start Docker Desktop when you log in"
+
+services:
+  # OpenMemory SSE Server - persistent memory across all AI tools
+  # Serves at: http://localhost:8765/mcp/{client}/sse/zincdigital
+  openmemory-mcp:
+    image: openmemory/mcp-server:latest
+    container_name: openmemory-openmemory-mcp-1
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      - IDENTITY=zincdigital
+      # Storage backend (using in-memory by default, can persist to volume)
+    volumes:
+      - openmemory-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Context7 - code context server
+  context7:
+    image: mcp/context7
+    container_name: mcp-context7-1
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+  # Sequential Thinking - reasoning enhancement
+  sequentialthinking:
+    image: mcp/sequentialthinking
+    container_name: mcp-sequentialthinking-1
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+volumes:
+  openmemory-data:
+    driver: local
