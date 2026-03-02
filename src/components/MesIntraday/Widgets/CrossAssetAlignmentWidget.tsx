@@ -38,10 +38,12 @@ function MiniChartCell({ symbol, rValue, isAligned }: MiniChartCellProps) {
 
 interface Props {
   correlation?: CorrelationResponse | null;
+  direction?: string;
 }
 
-export function CrossAssetAlignmentWidget({ correlation }: Props) {
-  const alignment = correlation?.bullish; // Primary directional alignment
+export function CrossAssetAlignmentWidget({ correlation, direction }: Props) {
+  const isBullishTarget = direction === "BULLISH" || direction === "LONG" || !direction;
+  const alignment = isBullishTarget ? correlation?.bullish : correlation?.bearish;
   const isAligned = alignment?.isAligned ?? false;
   const score = alignment?.composite
     ? (Math.abs(alignment.composite) * 100).toFixed(0)
@@ -85,9 +87,9 @@ export function CrossAssetAlignmentWidget({ correlation }: Props) {
           isAligned={isIndividualAligned(alignment?.dxy)}
         />
         <MiniChartCell
-          symbol="GC1!"
-          rValue={getRValue(alignment?.gc)}
-          isAligned={isIndividualAligned(alignment?.gc)}
+          symbol="COMPOSITE"
+          rValue={getRValue(alignment?.composite)}
+          isAligned={isIndividualAligned(alignment?.composite)}
         />
       </div>
     </div>

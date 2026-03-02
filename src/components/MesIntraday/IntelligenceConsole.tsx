@@ -50,7 +50,7 @@ export default function IntelligenceConsole() {
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 md:gap-8">
           <ForecastMomentumWidget forecast={forecast} setupsData={setupsData} />
-          <CrossAssetAlignmentWidget correlation={correlation} />
+          <CrossAssetAlignmentWidget correlation={correlation} direction={dir} />
           <RiskEventWidget risk={risk} eventContext={eventContext} />
         </div>
       </div>
