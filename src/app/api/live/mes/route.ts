@@ -1,33 +1,33 @@
-import { prisma } from '@/lib/prisma'
-import { toNum } from '@/lib/decimal'
-import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
-import type { Decimal } from '@prisma/client/runtime/client'
+import { prisma } from "@/lib/prisma";
+import { toNum } from "@/lib/decimal";
+import { refreshMes15mFromDatabento } from "@/lib/mes15m-refresh";
+import type { Decimal } from "@prisma/client/runtime/client";
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-export const maxDuration = 300
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 interface MesPricePoint {
-  time: number
-  open: number
-  high: number
-  low: number
-  close: number
-  volume?: number
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
 }
 
 interface MesRow {
-  eventTime: Date
-  open: Decimal | number
-  high: Decimal | number
-  low: Decimal | number
-  close: Decimal | number
-  volume: bigint | null
+  eventTime: Date;
+  open: Decimal | number;
+  high: Decimal | number;
+  low: Decimal | number;
+  close: Decimal | number;
+  volume: bigint | null;
 }
 
 function encodeSse(event: string, payload: unknown): Uint8Array {
-  const body = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
-  return new TextEncoder().encode(body)
+  const body = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+  return new TextEncoder().encode(body);
 }
 
 function asPoint(row: MesRow): MesPricePoint {
@@ -38,7 +38,7 @@ function asPoint(row: MesRow): MesPricePoint {
     low: toNum(row.low),
     close: toNum(row.close),
     volume: row.volume == null ? 0 : Number(row.volume),
-  }
+  };
 }
 
 function rowFingerprint(row: MesRow): string {
@@ -49,124 +49,125 @@ function rowFingerprint(row: MesRow): string {
     toNum(row.low),
     toNum(row.close),
     row.volume == null ? 0 : Number(row.volume),
-  ].join('|')
+  ].join("|");
 }
 
 export async function GET(request: Request): Promise<Response> {
-  const url = new URL(request.url)
-  const backfill = Number(url.searchParams.get('backfill') || '160')
+  const url = new URL(request.url);
+  const backfill = Number(url.searchParams.get("backfill") || "160");
   const backfillCount = Number.isFinite(backfill)
     ? Math.max(40, Math.min(1200, Math.trunc(backfill)))
-    : 160
+    : 160;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      let closed = false
-      const knownRows = new Map<number, string>()
+      let closed = false;
+      const knownRows = new Map<number, string>();
 
       const pushErrorAndClose = (message: string) => {
-        if (closed) return
-        controller.enqueue(encodeSse('error', { error: message }))
-        controller.close()
-        closed = true
-      }
+        if (closed) return;
+        controller.enqueue(encodeSse("error", { error: message }));
+        controller.close();
+        closed = true;
+      };
 
       try {
-        await refreshMes15mFromDatabento({ force: true })
+        await refreshMes15mFromDatabento({ force: true });
 
         const initial = await prisma.mktFuturesMes15m.findMany({
-          orderBy: { eventTime: 'desc' },
+          orderBy: { eventTime: "desc" },
           take: backfillCount,
-        })
+        });
 
         if (initial.length === 0) {
           pushErrorAndClose(
-            'No MES 15m data in DB yet. Start local live ingestion: npm run ingest:mes:live -- --once=true'
-          )
-          return
+            "No MES 15m data in DB yet. Start local live ingestion: npm run ingest:mes:live -- --once=true",
+          );
+          return;
         }
 
-        const sorted = [...initial].reverse()
+        const sorted = [...initial].reverse();
         for (const row of sorted) {
-          knownRows.set(row.eventTime.getTime(), rowFingerprint(row))
+          knownRows.set(row.eventTime.getTime(), rowFingerprint(row));
         }
 
         controller.enqueue(
-          encodeSse('snapshot', {
+          encodeSse("snapshot", {
             points: sorted.map(asPoint),
-          })
-        )
+          }),
+        );
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        pushErrorAndClose(`Failed to load MES live snapshot: ${message}`)
-        return
+        const message = error instanceof Error ? error.message : String(error);
+        pushErrorAndClose(`Failed to load MES live snapshot: ${message}`);
+        return;
       }
 
       const interval = setInterval(async () => {
-        if (closed) return
+        if (closed) return;
         try {
-          await refreshMes15mFromDatabento({ force: false })
+          await refreshMes15mFromDatabento({ force: false });
 
           const latest = await prisma.mktFuturesMes15m.findMany({
-            orderBy: { eventTime: 'desc' },
+            orderBy: { eventTime: "desc" },
             take: Math.max(80, Math.min(400, backfillCount)),
-          })
+          });
 
           if (latest.length === 0) {
-            controller.enqueue(encodeSse('ping', { ts: Date.now() }))
-            return
+            controller.enqueue(encodeSse("ping", { ts: Date.now() }));
+            return;
           }
 
-          const sorted = [...latest].reverse()
+          const sorted = [...latest].reverse();
           const changed = sorted.filter((row) => {
-            const key = row.eventTime.getTime()
-            const next = rowFingerprint(row)
-            const prev = knownRows.get(key)
-            if (prev === next) return false
-            knownRows.set(key, next)
-            return true
-          })
+            const key = row.eventTime.getTime();
+            const next = rowFingerprint(row);
+            const prev = knownRows.get(key);
+            if (prev === next) return false;
+            knownRows.set(key, next);
+            return true;
+          });
 
-          const keep = new Set(sorted.map((r) => r.eventTime.getTime()))
+          const keep = new Set(sorted.map((r) => r.eventTime.getTime()));
           if (knownRows.size > 800) {
             for (const key of knownRows.keys()) {
-              if (!keep.has(key)) knownRows.delete(key)
+              if (!keep.has(key)) knownRows.delete(key);
             }
           }
 
           if (changed.length === 0) {
-            controller.enqueue(encodeSse('ping', { ts: Date.now() }))
-            return
+            controller.enqueue(encodeSse("ping", { ts: Date.now() }));
+            return;
           }
 
           controller.enqueue(
-            encodeSse('update', {
+            encodeSse("update", {
               points: changed.map(asPoint),
-            })
-          )
+            }),
+          );
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          pushErrorAndClose(`Live stream query failed: ${message}`)
+          const message =
+            error instanceof Error ? error.message : String(error);
+          pushErrorAndClose(`Live stream query failed: ${message}`);
         }
-      }, 2000)
+      }, 15_000); // Was 2s — raised to 15s to reduce Accelerate ops (~28K → ~1.9K/day)
 
       const abortListener = () => {
-        if (closed) return
-        clearInterval(interval)
-        controller.close()
-        closed = true
-      }
+        if (closed) return;
+        clearInterval(interval);
+        controller.close();
+        closed = true;
+      };
 
-      request.signal.addEventListener('abort', abortListener)
+      request.signal.addEventListener("abort", abortListener);
     },
-  })
+  });
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
-  })
+  });
 }
