@@ -9,13 +9,14 @@
  * is computeTradeFeatures() which queries news_signals for 24h volume.
  */
 
-import { prisma } from '@/lib/prisma'
-import type { BhgSetup } from '@/lib/bhg-engine'
-import type { RiskResult } from '@/lib/risk-engine'
-import type { EventContext } from '@/lib/event-awareness'
-import type { MarketContext } from '@/lib/market-context'
-import type { CorrelationAlignment } from '@/lib/correlation-filter'
-import type { CandleData, MeasuredMove } from '@/lib/types'
+import { prisma } from "@/lib/prisma";
+import { toNum } from "@/lib/decimal";
+import type { BhgSetup } from "@/lib/bhg-engine";
+import type { RiskResult } from "@/lib/risk-engine";
+import type { EventContext } from "@/lib/event-awareness";
+import type { MarketContext } from "@/lib/market-context";
+import type { CorrelationAlignment } from "@/lib/correlation-filter";
+import type { CandleData, MeasuredMove } from "@/lib/types";
 
 // ─────────────────────────────────────────────
 // Exported interfaces
@@ -23,42 +24,50 @@ import type { CandleData, MeasuredMove } from '@/lib/types'
 
 export interface TradeFeatureVector {
   // BHG features
-  fibRatio: number
-  goType: string
-  hookQuality: number
-  measuredMoveAligned: boolean
-  measuredMoveQuality: number | null
-  stopDistancePts: number
-  rrRatio: number
-  riskGrade: string
+  fibRatio: number;
+  goType: string;
+  hookQuality: number;
+  measuredMoveAligned: boolean;
+  measuredMoveQuality: number | null;
+  stopDistancePts: number;
+  rrRatio: number;
+  riskGrade: string;
 
   // Event features
-  eventPhase: string
-  minutesToNextEvent: number | null
-  minutesSinceEvent: number | null
-  confidenceAdjustment: number
+  eventPhase: string;
+  minutesToNextEvent: number | null;
+  minutesSinceEvent: number | null;
+  confidenceAdjustment: number;
 
   // Market context
-  vixLevel: number | null
-  vixPercentile: number | null
-  regime: string
-  themeScores: Record<string, number>
+  vixLevel: number | null;
+  vixPercentile: number | null;
+  vixIntradayRange: number | null;
+  gprLevel: number | null;
+  gprChange1d: number | null;
+  trumpEoCount7d: number;
+  trumpTariffFlag: boolean;
+  trumpPolicyVelocity7d: number;
+  federalRegisterVelocity7d: number;
+  epuTrumpPremium: number | null;
+  regime: string;
+  themeScores: Record<string, number>;
 
   // Correlation
-  compositeAlignment: number
-  isAligned: boolean
+  compositeAlignment: number;
+  isAligned: boolean;
 
   // Technical (from current candles)
-  sqzMom: number | null
-  sqzState: number | null
-  wvfValue: number | null
-  wvfPercentile: number | null
-  macdHist: number | null
-  macdHistColor: number | null
+  sqzMom: number | null;
+  sqzState: number | null;
+  wvfValue: number | null;
+  wvfPercentile: number | null;
+  macdHist: number | null;
+  macdHistColor: number | null;
 
   // News
-  newsVolume24h: number
-  policyNewsVolume24h: number
+  newsVolume24h: number;
+  policyNewsVolume24h: number;
 }
 
 // ─────────────────────────────────────────────
@@ -67,72 +76,77 @@ export interface TradeFeatureVector {
 
 /** Simple moving average — returns null until window is filled. */
 function computeSMA(values: number[], window: number): (number | null)[] {
-  const result: (number | null)[] = new Array(values.length).fill(null)
-  let sum = 0
+  const result: (number | null)[] = new Array(values.length).fill(null);
+  let sum = 0;
   for (let i = 0; i < values.length; i++) {
-    sum += values[i]
-    if (i >= window) sum -= values[i - window]
-    if (i >= window - 1) result[i] = sum / window
+    sum += values[i];
+    if (i >= window) sum -= values[i - window];
+    if (i >= window - 1) result[i] = sum / window;
   }
-  return result
+  return result;
 }
 
 /** Rolling highest value in window. */
 function rollingHighest(values: number[], window: number): (number | null)[] {
-  const result: (number | null)[] = new Array(values.length).fill(null)
+  const result: (number | null)[] = new Array(values.length).fill(null);
   for (let i = window - 1; i < values.length; i++) {
-    let max = -Infinity
+    let max = -Infinity;
     for (let j = i - window + 1; j <= i; j++) {
-      if (values[j] > max) max = values[j]
+      if (values[j] > max) max = values[j];
     }
-    result[i] = max
+    result[i] = max;
   }
-  return result
+  return result;
 }
 
 /** Rolling lowest value in window. */
 function rollingLowest(values: number[], window: number): (number | null)[] {
-  const result: (number | null)[] = new Array(values.length).fill(null)
+  const result: (number | null)[] = new Array(values.length).fill(null);
   for (let i = window - 1; i < values.length; i++) {
-    let min = Infinity
+    let min = Infinity;
     for (let j = i - window + 1; j <= i; j++) {
-      if (values[j] < min) min = values[j]
+      if (values[j] < min) min = values[j];
     }
-    result[i] = min
+    result[i] = min;
   }
-  return result
+  return result;
 }
 
 /** Rolling linear regression — returns endpoint value (offset=0). */
 function linreg(values: (number | null)[], window: number): (number | null)[] {
-  const result: (number | null)[] = new Array(values.length).fill(null)
+  const result: (number | null)[] = new Array(values.length).fill(null);
   for (let i = window - 1; i < values.length; i++) {
-    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, count = 0
+    let sumX = 0,
+      sumY = 0,
+      sumXY = 0,
+      sumX2 = 0,
+      count = 0;
     for (let j = 0; j < window; j++) {
-      const v = values[i - window + 1 + j]
-      if (v == null) continue
-      sumX += j
-      sumY += v
-      sumXY += j * v
-      sumX2 += j * j
-      count++
+      const v = values[i - window + 1 + j];
+      if (v == null) continue;
+      sumX += j;
+      sumY += v;
+      sumXY += j * v;
+      sumX2 += j * j;
+      count++;
     }
-    if (count < window * 0.8) continue
-    const denom = count * sumX2 - sumX * sumX
-    if (denom === 0) continue
-    const slope = (count * sumXY - sumX * sumY) / denom
-    const intercept = (sumY - slope * sumX) / count
-    result[i] = intercept + slope * (window - 1)
+    if (count < window * 0.8) continue;
+    const denom = count * sumX2 - sumX * sumX;
+    if (denom === 0) continue;
+    const slope = (count * sumXY - sumX * sumY) / denom;
+    const intercept = (sumY - slope * sumX) / count;
+    result[i] = intercept + slope * (window - 1);
   }
-  return result
+  return result;
 }
 
 /** Population standard deviation. */
 function stdDev(values: number[]): number | null {
-  if (values.length < 2) return null
-  const mean = values.reduce((sum, v) => sum + v, 0) / values.length
-  const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length
-  return Math.sqrt(variance)
+  if (values.length < 2) return null;
+  const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+  const variance =
+    values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
 }
 
 // ─────────────────────────────────────────────
@@ -140,8 +154,8 @@ function stdDev(values: number[]): number | null {
 // ─────────────────────────────────────────────
 
 export interface SqueezeProResult {
-  mom: number | null
-  state: number | null // 0=none, 1=wide, 2=normal, 3=narrow, 4=fired
+  mom: number | null;
+  state: number | null; // 0=none, 1=wide, 2=normal, 3=narrow, 4=fired
 }
 
 /**
@@ -152,64 +166,69 @@ export function computeSqueezeProLatest(
   candles: CandleData[],
   length = 20,
 ): SqueezeProResult {
-  if (candles.length < length + 1) return { mom: null, state: null }
+  if (candles.length < length + 1) return { mom: null, state: null };
 
-  const closes = candles.map(c => c.close)
-  const highs = candles.map(c => c.high)
-  const lows = candles.map(c => c.low)
+  const closes = candles.map((c) => c.close);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
 
   // SMA of closes
-  const sma = computeSMA(closes, length)
+  const sma = computeSMA(closes, length);
 
   // True Range
-  const tr: number[] = [highs[0] - lows[0]]
+  const tr: number[] = [highs[0] - lows[0]];
   for (let i = 1; i < candles.length; i++) {
-    tr.push(Math.max(
-      highs[i] - lows[i],
-      Math.abs(highs[i] - closes[i - 1]),
-      Math.abs(lows[i] - closes[i - 1]),
-    ))
+    tr.push(
+      Math.max(
+        highs[i] - lows[i],
+        Math.abs(highs[i] - closes[i - 1]),
+        Math.abs(lows[i] - closes[i - 1]),
+      ),
+    );
   }
 
   // Keltner Channel deviation (SMA of TR)
-  const kcDev = computeSMA(tr, length)
+  const kcDev = computeSMA(tr, length);
 
   // Bollinger Band deviation (population stdev of closes)
-  const bbDev: (number | null)[] = new Array(candles.length).fill(null)
+  const bbDev: (number | null)[] = new Array(candles.length).fill(null);
   for (let i = length - 1; i < candles.length; i++) {
-    const window = closes.slice(i - length + 1, i + 1)
-    bbDev[i] = stdDev(window)
+    const window = closes.slice(i - length + 1, i + 1);
+    bbDev[i] = stdDev(window);
   }
 
   // Momentum: linreg(close - midline, length)
-  const highest = rollingHighest(highs, length)
-  const lowest = rollingLowest(lows, length)
-  const delta: (number | null)[] = new Array(candles.length).fill(null)
+  const highest = rollingHighest(highs, length);
+  const lowest = rollingLowest(lows, length);
+  const delta: (number | null)[] = new Array(candles.length).fill(null);
   for (let i = 0; i < candles.length; i++) {
-    if (highest[i] == null || lowest[i] == null || sma[i] == null) continue
-    const midline = ((highest[i]! + lowest[i]!) / 2 + sma[i]!) / 2
-    delta[i] = closes[i] - midline
+    if (highest[i] == null || lowest[i] == null || sma[i] == null) continue;
+    const midline = ((highest[i]! + lowest[i]!) / 2 + sma[i]!) / 2;
+    delta[i] = closes[i] - midline;
   }
-  const mom = linreg(delta, length)
+  const mom = linreg(delta, length);
 
   // Squeeze state at last bar
-  const last = candles.length - 1
+  const last = candles.length - 1;
   if (bbDev[last] == null || kcDev[last] == null || kcDev[last] === 0) {
-    return { mom: mom[last] ?? null, state: null }
+    return { mom: mom[last] ?? null, state: null };
   }
 
-  const bb = bbDev[last]! * 2 // BB uses 2x stdev
-  const kc1 = kcDev[last]! * 1.0
-  const kc15 = kcDev[last]! * 1.5
-  const kc2 = kcDev[last]! * 2.0
+  const bb = bbDev[last]! * 2; // BB uses 2x stdev
+  const kc1 = kcDev[last]! * 1.0;
+  const kc15 = kcDev[last]! * 1.5;
+  const kc2 = kcDev[last]! * 2.0;
 
-  let state: number
-  if (bb < kc1) state = 3       // narrow (yellow)
-  else if (bb < kc15) state = 2 // normal (red)
-  else if (bb < kc2) state = 1  // wide (orange)
-  else state = 4                // fired (green)
+  let state: number;
+  if (bb < kc1)
+    state = 3; // narrow (yellow)
+  else if (bb < kc15)
+    state = 2; // normal (red)
+  else if (bb < kc2)
+    state = 1; // wide (orange)
+  else state = 4; // fired (green)
 
-  return { mom: mom[last] ?? null, state }
+  return { mom: mom[last] ?? null, state };
 }
 
 // ─────────────────────────────────────────────
@@ -217,9 +236,9 @@ export function computeSqueezeProLatest(
 // ─────────────────────────────────────────────
 
 export interface WvfResult {
-  value: number | null
-  percentile: number | null // 0–2 scale
-  signal: boolean           // true = fear spike
+  value: number | null;
+  percentile: number | null; // 0–2 scale
+  signal: boolean; // true = fear spike
 }
 
 /**
@@ -234,49 +253,51 @@ export function computeWvfLatest(
   lb = 50,
   ph = 0.85,
 ): WvfResult {
-  const minBars = Math.max(pd, bbl, lb) + 10
-  if (candles.length < minBars) return { value: null, percentile: null, signal: false }
+  const minBars = Math.max(pd, bbl, lb) + 10;
+  if (candles.length < minBars)
+    return { value: null, percentile: null, signal: false };
 
-  const closes = candles.map(c => c.close)
-  const lows = candles.map(c => c.low)
+  const closes = candles.map((c) => c.close);
+  const lows = candles.map((c) => c.low);
 
   // Highest close over pd bars
-  const hc = rollingHighest(closes, pd)
+  const hc = rollingHighest(closes, pd);
 
   // Raw WVF
-  const wvf: (number | null)[] = new Array(candles.length).fill(null)
+  const wvf: (number | null)[] = new Array(candles.length).fill(null);
   for (let i = pd - 1; i < candles.length; i++) {
-    if (hc[i] == null || hc[i] === 0) continue
-    wvf[i] = ((hc[i]! - lows[i]) / hc[i]!) * 100
+    if (hc[i] == null || hc[i] === 0) continue;
+    wvf[i] = ((hc[i]! - lows[i]) / hc[i]!) * 100;
   }
 
   // BB on WVF
-  const wvfNums = wvf.map(v => v ?? 0)
-  const wvfSma = computeSMA(wvfNums, bbl)
+  const wvfNums = wvf.map((v) => v ?? 0);
+  const wvfSma = computeSMA(wvfNums, bbl);
 
   // Range percentile
-  const rangeHigh = rollingHighest(wvfNums, lb)
+  const rangeHigh = rollingHighest(wvfNums, lb);
 
-  const last = candles.length - 1
-  const wvfVal = wvf[last]
-  if (wvfVal == null) return { value: null, percentile: null, signal: false }
+  const last = candles.length - 1;
+  const wvfVal = wvf[last];
+  if (wvfVal == null) return { value: null, percentile: null, signal: false };
 
   // BB upper band
-  let upperBand: number | null = null
+  let upperBand: number | null = null;
   if (last >= bbl - 1) {
-    const window = wvfNums.slice(last - bbl + 1, last + 1)
-    const sd = stdDev(window)
+    const window = wvfNums.slice(last - bbl + 1, last + 1);
+    const sd = stdDev(window);
     if (sd != null && wvfSma[last] != null) {
-      upperBand = wvfSma[last]! + mult * sd
+      upperBand = wvfSma[last]! + mult * sd;
     }
   }
 
-  const rh = rangeHigh[last]
-  const pct = (rh != null && rh > 0) ? Math.min(wvfVal / rh, 2.0) : null
-  const sig = (upperBand != null && wvfVal >= upperBand) ||
-              (rh != null && wvfVal >= rh * ph)
+  const rh = rangeHigh[last];
+  const pct = rh != null && rh > 0 ? Math.min(wvfVal / rh, 2.0) : null;
+  const sig =
+    (upperBand != null && wvfVal >= upperBand) ||
+    (rh != null && wvfVal >= rh * ph);
 
-  return { value: wvfVal, percentile: pct, signal: sig }
+  return { value: wvfVal, percentile: pct, signal: sig };
 }
 
 // ─────────────────────────────────────────────
@@ -284,8 +305,8 @@ export function computeWvfLatest(
 // ─────────────────────────────────────────────
 
 export interface MacdResult {
-  hist: number | null
-  histColor: number | null // 0=aqua, 1=blue, 2=red, 3=maroon
+  hist: number | null;
+  histColor: number | null; // 0=aqua, 1=blue, 2=red, 3=maroon
 }
 
 /**
@@ -298,42 +319,46 @@ export function computeMacdLatest(
   slowLength = 26,
   signalLength = 9,
 ): MacdResult {
-  const warmup = slowLength + signalLength - 1
-  if (candles.length < warmup + 2) return { hist: null, histColor: null }
+  const warmup = slowLength + signalLength - 1;
+  if (candles.length < warmup + 2) return { hist: null, histColor: null };
 
-  const closes = candles.map(c => c.close)
-  const fastMult = 2 / (fastLength + 1)
-  const slowMult = 2 / (slowLength + 1)
+  const closes = candles.map((c) => c.close);
+  const fastMult = 2 / (fastLength + 1);
+  const slowMult = 2 / (slowLength + 1);
 
   // EMA computation
-  let fastEma = closes[0]
-  let slowEma = closes[0]
-  const macdLine: number[] = []
+  let fastEma = closes[0];
+  let slowEma = closes[0];
+  const macdLine: number[] = [];
 
   for (let i = 0; i < closes.length; i++) {
-    fastEma = (closes[i] - fastEma) * fastMult + fastEma
-    slowEma = (closes[i] - slowEma) * slowMult + slowEma
-    macdLine.push(fastEma - slowEma)
+    fastEma = (closes[i] - fastEma) * fastMult + fastEma;
+    slowEma = (closes[i] - slowEma) * slowMult + slowEma;
+    macdLine.push(fastEma - slowEma);
   }
 
   // Signal = SMA of MACD line
-  const signal = computeSMA(macdLine, signalLength)
+  const signal = computeSMA(macdLine, signalLength);
 
-  const last = closes.length - 1
-  const prev = last - 1
-  if (signal[last] == null || signal[prev] == null) return { hist: null, histColor: null }
+  const last = closes.length - 1;
+  const prev = last - 1;
+  if (signal[last] == null || signal[prev] == null)
+    return { hist: null, histColor: null };
 
-  const hist = macdLine[last] - signal[last]!
-  const prevHist = macdLine[prev] - signal[prev]!
-  const rising = hist > prevHist
+  const hist = macdLine[last] - signal[last]!;
+  const prevHist = macdLine[prev] - signal[prev]!;
+  const rising = hist > prevHist;
 
-  let color: number
-  if (hist > 0 && rising) color = 0       // aqua — bullish momentum growing
-  else if (hist > 0 && !rising) color = 1  // blue — bullish but fading
-  else if (hist <= 0 && !rising) color = 2 // red — bearish momentum growing
-  else color = 3                           // maroon — bearish but recovering
+  let color: number;
+  if (hist > 0 && rising)
+    color = 0; // aqua — bullish momentum growing
+  else if (hist > 0 && !rising)
+    color = 1; // blue — bullish but fading
+  else if (hist <= 0 && !rising)
+    color = 2; // red — bearish momentum growing
+  else color = 3; // maroon — bearish but recovering
 
-  return { hist, histColor: color }
+  return { hist, histColor: color };
 }
 
 // ─────────────────────────────────────────────
@@ -347,36 +372,39 @@ export function computeMacdLatest(
  *  - Hook in direction of setup = better
  *  - Multiple hook bars = better confirmation
  */
-export function scoreHookQuality(setup: BhgSetup, candles: CandleData[]): number {
-  if (!setup.hookBarIndex || !setup.touchBarIndex) return 0.5
+export function scoreHookQuality(
+  setup: BhgSetup,
+  candles: CandleData[],
+): number {
+  if (!setup.hookBarIndex || !setup.touchBarIndex) return 0.5;
 
-  const hookBars = setup.hookBarIndex - setup.touchBarIndex
-  if (hookBars <= 0) return 0.5
+  const hookBars = setup.hookBarIndex - setup.touchBarIndex;
+  if (hookBars <= 0) return 0.5;
 
-  let score = 0.5
+  let score = 0.5;
 
   // Tighter hooks are better (fewer bars between touch and hook)
-  if (hookBars <= 3) score += 0.2
-  else if (hookBars <= 5) score += 0.1
+  if (hookBars <= 3) score += 0.2;
+  else if (hookBars <= 5) score += 0.1;
 
   // Check hook candle body size vs average
-  const hookCandle = candles[setup.hookBarIndex]
+  const hookCandle = candles[setup.hookBarIndex];
   if (hookCandle) {
-    const bodySize = Math.abs(hookCandle.close - hookCandle.open)
-    const rangeSize = hookCandle.high - hookCandle.low
+    const bodySize = Math.abs(hookCandle.close - hookCandle.open);
+    const rangeSize = hookCandle.high - hookCandle.low;
     if (rangeSize > 0 && bodySize / rangeSize < 0.3) {
-      score += 0.15 // small body = indecision = good hook
+      score += 0.15; // small body = indecision = good hook
     }
   }
 
   // Hook direction alignment
   if (hookCandle) {
-    const bullishCandle = hookCandle.close > hookCandle.open
-    if (setup.direction === 'BULLISH' && bullishCandle) score += 0.15
-    if (setup.direction === 'BEARISH' && !bullishCandle) score += 0.15
+    const bullishCandle = hookCandle.close > hookCandle.open;
+    if (setup.direction === "BULLISH" && bullishCandle) score += 0.15;
+    if (setup.direction === "BEARISH" && !bullishCandle) score += 0.15;
   }
 
-  return Math.min(score, 1.0)
+  return Math.min(score, 1.0);
 }
 
 // ─────────────────────────────────────────────
@@ -391,19 +419,19 @@ export function checkMeasuredMoveAlignment(
   measuredMoves: MeasuredMove[],
 ): { aligned: boolean; quality: number | null } {
   if (!measuredMoves || measuredMoves.length === 0) {
-    return { aligned: false, quality: null }
+    return { aligned: false, quality: null };
   }
 
   // Find the best active measured move matching setup direction
   const matching = measuredMoves.filter(
-    mm => mm.direction === setup.direction && mm.status === 'ACTIVE',
-  )
+    (mm) => mm.direction === setup.direction && mm.status === "ACTIVE",
+  );
 
-  if (matching.length === 0) return { aligned: false, quality: null }
+  if (matching.length === 0) return { aligned: false, quality: null };
 
   // Pick the highest quality one
-  const best = matching.reduce((a, b) => a.quality > b.quality ? a : b)
-  return { aligned: true, quality: best.quality }
+  const best = matching.reduce((a, b) => (a.quality > b.quality ? a : b));
+  return { aligned: true, quality: best.quality };
 }
 
 // ─────────────────────────────────────────────
@@ -415,18 +443,18 @@ export function checkMeasuredMoveAlignment(
  * We approximate from the VIX level using historical distribution.
  */
 export function vixPercentile(vixLevel: number | null): number | null {
-  if (vixLevel == null) return null
+  if (vixLevel == null) return null;
   // Approximate historical VIX percentiles (based on 1990-2024 data)
   // These are rough bucket boundaries — BACKTEST-TBD
-  if (vixLevel <= 12) return 0.10
-  if (vixLevel <= 14) return 0.25
-  if (vixLevel <= 16) return 0.40
-  if (vixLevel <= 18) return 0.50
-  if (vixLevel <= 20) return 0.60
-  if (vixLevel <= 25) return 0.75
-  if (vixLevel <= 30) return 0.85
-  if (vixLevel <= 40) return 0.93
-  return 0.98
+  if (vixLevel <= 12) return 0.1;
+  if (vixLevel <= 14) return 0.25;
+  if (vixLevel <= 16) return 0.4;
+  if (vixLevel <= 18) return 0.5;
+  if (vixLevel <= 20) return 0.6;
+  if (vixLevel <= 25) return 0.75;
+  if (vixLevel <= 30) return 0.85;
+  if (vixLevel <= 40) return 0.93;
+  return 0.98;
 }
 
 // ─────────────────────────────────────────────
@@ -434,22 +462,34 @@ export function vixPercentile(vixLevel: number | null): number | null {
 // ─────────────────────────────────────────────
 
 interface NewsVolume {
-  total: number
-  policy: number
+  total: number;
+  policy: number;
+}
+
+interface WarbirdMacroFeatures {
+  vixLevel: number | null;
+  vixIntradayRange: number | null;
+  gprLevel: number | null;
+  gprChange1d: number | null;
+  trumpEoCount7d: number;
+  trumpTariffFlag: boolean;
+  trumpPolicyVelocity7d: number;
+  federalRegisterVelocity7d: number;
+  epuTrumpPremium: number | null;
 }
 
 /**
  * Count news signals in the last 24 hours. Cached per minute.
  */
-let newsVolumeCache: { time: number; data: NewsVolume } | null = null
+let newsVolumeCache: { time: number; data: NewsVolume } | null = null;
 
 async function getNewsVolume24h(): Promise<NewsVolume> {
-  const now = Date.now()
+  const now = Date.now();
   if (newsVolumeCache && now - newsVolumeCache.time < 60_000) {
-    return newsVolumeCache.data
+    return newsVolumeCache.data;
   }
 
-  const since = new Date(now - 24 * 60 * 60 * 1000)
+  const since = new Date(now - 24 * 60 * 60 * 1000);
 
   const [total, policy] = await Promise.all([
     prisma.newsSignal.count({
@@ -458,19 +498,147 @@ async function getNewsVolume24h(): Promise<NewsVolume> {
     prisma.newsSignal.count({
       where: {
         pubDate: { gte: since },
-        layer: 'trump_policy',
+        layer: "trump_policy",
       },
     }),
-  ])
+  ]);
 
-  const data = { total, policy }
-  newsVolumeCache = { time: now, data }
-  return data
+  const data = { total, policy };
+  newsVolumeCache = { time: now, data };
+  return data;
 }
 
 /** Reset cache — for testing. */
 export function resetNewsVolumeCache(): void {
-  newsVolumeCache = null
+  newsVolumeCache = null;
+}
+
+function getUtcDayStart(date: Date): Date {
+  return new Date(
+    Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      0,
+      0,
+      0,
+      0,
+    ),
+  );
+}
+
+async function getWarbirdMacroFeatures(
+  candles: CandleData[],
+): Promise<WarbirdMacroFeatures> {
+  const latest = candles[candles.length - 1];
+  const now = latest ? new Date(latest.time * 1000) : new Date();
+  const dayStart = getUtcDayStart(now);
+  const priorDayStart = new Date(dayStart.getTime() - 24 * 60 * 60 * 1000);
+  const weekStart = new Date(dayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const [
+    vixLatest,
+    epuDailyLatest,
+    epuOverallLatest,
+    gprLatest,
+    gprPrev,
+    trump7d,
+    trumpTariff7d,
+  ] = await Promise.all([
+    prisma.econVolIndices1d.findFirst({
+      where: {
+        seriesId: "VIXCLS",
+        eventDate: { lte: dayStart },
+      },
+      orderBy: { eventDate: "desc" },
+      select: { value: true },
+    }),
+    prisma.econVolIndices1d.findFirst({
+      where: {
+        seriesId: "USEPUINDXD",
+        eventDate: { lte: dayStart },
+      },
+      orderBy: { eventDate: "desc" },
+      select: { value: true },
+    }),
+    prisma.econVolIndices1d.findFirst({
+      where: {
+        seriesId: "USEPUINDXM",
+        eventDate: { lte: dayStart },
+      },
+      orderBy: { eventDate: "desc" },
+      select: { value: true },
+    }),
+    prisma.$queryRaw<Array<{ value: number }>>`
+        SELECT value::double precision as value
+        FROM "geopolitical_risk_1d"
+        WHERE "indexName" = ${"GPR"}
+          AND "eventDate" <= ${dayStart}
+        ORDER BY "eventDate" DESC
+        LIMIT 1
+      `,
+    prisma.$queryRaw<Array<{ value: number }>>`
+        SELECT value::double precision as value
+        FROM "geopolitical_risk_1d"
+        WHERE "indexName" = ${"GPR"}
+          AND "eventDate" <= ${priorDayStart}
+        ORDER BY "eventDate" DESC
+        LIMIT 1
+      `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*)::bigint as count
+        FROM "trump_effect_1d"
+        WHERE "eventDate" >= ${weekStart}
+          AND "eventDate" <= ${dayStart}
+          AND "eventType" = ${"executive_order"}
+      `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(*)::bigint as count
+        FROM "trump_effect_1d"
+        WHERE "eventDate" >= ${weekStart}
+          AND "eventDate" <= ${dayStart}
+          AND (
+            "eventType" = ${"tariff"}
+            OR title ILIKE ${"%tariff%"}
+            OR COALESCE(summary, '') ILIKE ${"%tariff%"}
+          )
+      `,
+  ]);
+
+  const vixLevel = vixLatest?.value != null ? toNum(vixLatest.value) : null;
+  const epuDailyLevel =
+    epuDailyLatest?.value != null ? toNum(epuDailyLatest.value) : null;
+  const epuOverallLevel =
+    epuOverallLatest?.value != null ? toNum(epuOverallLatest.value) : null;
+  const epuTrumpPremium =
+    epuDailyLevel != null && epuOverallLevel != null
+      ? epuDailyLevel - epuOverallLevel
+      : null;
+
+  const gprLevel = gprLatest[0]?.value ?? null;
+  const gprPrevValue = gprPrev[0]?.value ?? null;
+  const gprChange1d =
+    gprLevel != null && gprPrevValue != null ? gprLevel - gprPrevValue : null;
+
+  let vixIntradayRange: number | null = null;
+  const latestCandle = candles[candles.length - 1];
+  if (latestCandle && vixLevel != null && vixLevel > 0) {
+    vixIntradayRange = (latestCandle.high - latestCandle.low) / vixLevel;
+  }
+
+  const trumpEoCount7d = Number(trump7d[0]?.count ?? 0n);
+
+  return {
+    vixLevel,
+    vixIntradayRange,
+    gprLevel,
+    gprChange1d,
+    trumpEoCount7d,
+    trumpTariffFlag: Number(trumpTariff7d[0]?.count ?? 0n) > 0,
+    trumpPolicyVelocity7d: trumpEoCount7d,
+    federalRegisterVelocity7d: trumpEoCount7d,
+    epuTrumpPremium,
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -501,29 +669,25 @@ export async function computeTradeFeatures(
   measuredMoves: MeasuredMove[],
 ): Promise<TradeFeatureVector> {
   // Technical indicators (pure, computed from candle window)
-  const squeeze = computeSqueezeProLatest(candles)
-  const wvf = computeWvfLatest(candles)
-  const macd = computeMacdLatest(candles)
+  const squeeze = computeSqueezeProLatest(candles);
+  const wvf = computeWvfLatest(candles);
+  const macd = computeMacdLatest(candles);
 
   // Hook quality (pure)
-  const hookQuality = scoreHookQuality(setup, candles)
+  const hookQuality = scoreHookQuality(setup, candles);
 
   // Measured move alignment (pure)
-  const mmAlign = checkMeasuredMoveAlignment(setup, measuredMoves)
+  const mmAlign = checkMeasuredMoveAlignment(setup, measuredMoves);
 
-  // VIX — extract from market context correlations
-  const _vixCorr = marketContext.correlations.find(c => c.pair.includes('VX'))
-  // VIX level approximated from breakout7000 or yield context
-  // The actual VIX spot is not stored directly — we use correlation as proxy
-  const vixLvl: number | null = null // BACKTEST-TBD: wire VIX spot from data source
+  const macro = await getWarbirdMacroFeatures(candles);
 
   // News volume (async, cached)
-  const newsVol = await getNewsVolume24h()
+  const newsVol = await getNewsVolume24h();
 
   return {
     // BHG
     fibRatio: setup.fibRatio,
-    goType: setup.goType ?? 'BREAK',
+    goType: setup.goType ?? "BREAK",
     hookQuality,
     measuredMoveAligned: mmAlign.aligned,
     measuredMoveQuality: mmAlign.quality,
@@ -538,8 +702,16 @@ export async function computeTradeFeatures(
     confidenceAdjustment: eventContext.confidenceAdjustment,
 
     // Market
-    vixLevel: vixLvl,
-    vixPercentile: vixPercentile(vixLvl),
+    vixLevel: macro.vixLevel,
+    vixPercentile: vixPercentile(macro.vixLevel),
+    vixIntradayRange: macro.vixIntradayRange,
+    gprLevel: macro.gprLevel,
+    gprChange1d: macro.gprChange1d,
+    trumpEoCount7d: macro.trumpEoCount7d,
+    trumpTariffFlag: macro.trumpTariffFlag,
+    trumpPolicyVelocity7d: macro.trumpPolicyVelocity7d,
+    federalRegisterVelocity7d: macro.federalRegisterVelocity7d,
+    epuTrumpPremium: macro.epuTrumpPremium,
     regime: marketContext.regime,
     themeScores: marketContext.themeScores as unknown as Record<string, number>,
 
@@ -558,5 +730,5 @@ export async function computeTradeFeatures(
     // News
     newsVolume24h: newsVol.total,
     policyNewsVolume24h: newsVol.policy,
-  }
+  };
 }
