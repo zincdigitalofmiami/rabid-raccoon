@@ -52,7 +52,6 @@ export default function Header() {
 
   const navItems = [
     { href: '/', label: 'Markets' },
-    { href: '/mes', label: 'MES Intraday' },
   ]
 
   return (

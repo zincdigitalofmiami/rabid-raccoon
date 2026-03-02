@@ -26,6 +26,10 @@ import { computeTradeFeatures } from "@/lib/trade-features";
 import { getMlBaseline } from "@/lib/ml-baseline";
 import { computeCompositeScore } from "@/lib/composite-score";
 import { getTradeReasoning } from "@/lib/trade-reasoning";
+import { fetchDailyCandlesForSymbol } from "@/lib/fetch-candles";
+import { getSymbolsByRole } from "@/lib/symbol-registry";
+import { buildMarketContext } from "@/lib/market-context";
+import { computeAlignmentScore } from "@/lib/correlation-filter";
 import type { Decimal } from "@prisma/client/runtime/client";
 import type { CandleData } from "@/lib/types";
 import type { BhgSetup } from "@/lib/bhg-engine";
@@ -88,14 +92,12 @@ function rowToCandle(row: {
 }
 
 /**
- * Lightweight market context stub for when full context is unavailable.
- * The full buildMarketContext() requires cross-asset candle data which
- * we'll wire in Task 17. For now, provide a minimal context.
+ * Fallback market context used if upstream market context wiring fails.
  */
-function minimalMarketContext(): MarketContext {
+function fallbackMarketContext(reason: string): MarketContext {
   return {
     regime: "MIXED" as const,
-    regimeFactors: [],
+    regimeFactors: [reason],
     correlations: [],
     headlines: [],
     goldContext: null,
@@ -123,16 +125,48 @@ function minimalMarketContext(): MarketContext {
   };
 }
 
-/** Minimal alignment stub — wire full computation in Task 17. */
-function minimalAlignment(): CorrelationAlignment {
+function fallbackAlignment(
+  direction: BhgSetup["direction"],
+  reason: string,
+): CorrelationAlignment {
   return {
     vix: 0,
     dxy: 0,
     nq: 0,
     composite: 0,
     isAligned: true,
-    details: "Alignment pending — cross-asset data not loaded",
+    details: `${direction} neutral fallback: ${reason}`,
   };
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function percentChange(series: CandleData[]): number {
+  if (series.length < 2) return 0;
+  const first = series[0]?.close;
+  const last = series[series.length - 1]?.close;
+  if (
+    first == null ||
+    last == null ||
+    !Number.isFinite(first) ||
+    !Number.isFinite(last) ||
+    first === 0
+  ) {
+    return 0;
+  }
+  return ((last - first) / first) * 100;
+}
+
+function buildPriceChanges(
+  symbolBars: Map<string, CandleData[]>,
+): Map<string, number> {
+  const changes = new Map<string, number>();
+  for (const [symbolCode, bars] of symbolBars.entries()) {
+    changes.set(symbolCode, percentChange(bars));
+  }
+  return changes;
 }
 
 // ─────────────────────────────────────────────
@@ -204,9 +238,81 @@ export async function GET(): Promise<Response> {
     const todayEvents = await loadTodayEvents();
     const eventContext = getEventContext(new Date(), todayEvents);
 
-    // 4. Market context and alignment (minimal stubs — full wiring in Task 17)
-    const marketContext = minimalMarketContext();
-    const alignment = minimalAlignment();
+    // 4. Market context and alignment (symbol-registry + daily cross-asset bars)
+    const symbolBars = new Map<string, CandleData[]>();
+    let marketContext = fallbackMarketContext(
+      "Cross-asset context unavailable; using fallback",
+    );
+
+    try {
+      const analysisSymbols = await getSymbolsByRole("ANALYSIS_DEFAULT");
+      const loadResults = await Promise.allSettled(
+        analysisSymbols.map(async (symbol) => {
+          const bars = await fetchDailyCandlesForSymbol(symbol.code);
+          return { symbolCode: symbol.code, bars };
+        }),
+      );
+
+      for (const result of loadResults) {
+        if (result.status === "rejected") {
+          console.warn(
+            "[trades/upcoming] Symbol bar load failed:",
+            toErrorMessage(result.reason),
+          );
+          continue;
+        }
+
+        const { symbolCode, bars } = result.value;
+        if (bars.length < 2) continue;
+        symbolBars.set(symbolCode, bars);
+      }
+
+      if (symbolBars.size > 0) {
+        const priceChanges = buildPriceChanges(symbolBars);
+        marketContext = await buildMarketContext(symbolBars, priceChanges);
+      } else {
+        console.warn(
+          "[trades/upcoming] No usable symbol bars loaded; keeping fallback market context",
+        );
+      }
+    } catch (error) {
+      console.warn(
+        "[trades/upcoming] Market context wiring failed; keeping fallback market context:",
+        toErrorMessage(error),
+      );
+    }
+
+    const alignmentByDirection = new Map<
+      BhgSetup["direction"],
+      CorrelationAlignment
+    >();
+
+    const getAlignmentForDirection = (
+      direction: BhgSetup["direction"],
+    ): CorrelationAlignment => {
+      const cached = alignmentByDirection.get(direction);
+      if (cached) return cached;
+
+      const mesSeries = symbolBars.get("MES");
+      if (!mesSeries || mesSeries.length < 20) {
+        const fallback = fallbackAlignment(
+          direction,
+          "insufficient MES daily bars for directional correlation",
+        );
+        alignmentByDirection.set(direction, fallback);
+        return fallback;
+      }
+
+      try {
+        const computed = computeAlignmentScore(symbolBars, direction);
+        alignmentByDirection.set(direction, computed);
+        return computed;
+      } catch (error) {
+        const fallback = fallbackAlignment(direction, toErrorMessage(error));
+        alignmentByDirection.set(direction, fallback);
+        return fallback;
+      }
+    };
 
     // 5. Score each TRIGGERED setup
     const triggeredSetups = setups.filter((s) => s.phase === "TRIGGERED");
@@ -276,6 +382,8 @@ export async function GET(): Promise<Response> {
             },
           };
         }
+
+        const alignment = getAlignmentForDirection(setup.direction);
 
         // Feature vector
         const features = await computeTradeFeatures(
