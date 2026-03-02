@@ -23,7 +23,7 @@ export function AiSynthesisBillboard({
             AI Synthesis Engine
           </h2>
         </div>
-        <div className="text-[var(--zf-text)] text-2xl md:text-3xl leading-relaxed min-h-[70px]">
+        <div className="text-[var(--zf-text)] text-lg md:text-2xl leading-relaxed min-h-[70px]">
           {loading ? (
             <span className="text-[var(--zf-text-muted)] animate-pulse">
               Model synthesizing multi-asset alignment...

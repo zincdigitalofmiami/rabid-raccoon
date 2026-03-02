@@ -1,9 +1,31 @@
+import { useMemo, useState } from "react";
 import type {
   CorrelationResponse,
   CorrelationSymbolDetail,
 } from "@/hooks/useCorrelation";
 
-// ── Symbol display config ────────────────────────────────────────────────────
+type ZlOutlook = "BULLISH" | "NEUTRAL" | "CAUTIOUS" | "BEARISH";
+
+interface ComprehensiveReport {
+  tldr: string;
+  currentSnapshot: string;
+  keyDrivers: string;
+  forecasts: string;
+  correlations: string;
+  technicalOutlook: string;
+}
+
+interface IntelligenceDriver {
+  label: string;
+  outlook: string;
+  detail: string;
+}
+
+interface Props {
+  correlation?: CorrelationResponse | null;
+  direction?: string;
+}
+
 const DISPLAY_MAP: Record<string, { ticker: string; inverse: boolean }> = {
   NQ: { ticker: "NQ", inverse: false },
   VX: { ticker: "VIX", inverse: true },
@@ -13,184 +35,283 @@ const DISPLAY_MAP: Record<string, { ticker: string; inverse: boolean }> = {
   GC: { ticker: "GC", inverse: false },
 };
 
-// Preferred display order
 const DISPLAY_ORDER = ["NQ", "VX", "DX", "CL", "ZN", "GC"];
 
-// ── Sub-components ───────────────────────────────────────────────────────────
-
-interface AssetCellProps {
-  detail: CorrelationSymbolDetail;
+function isTargetAligned(
+  detail: CorrelationSymbolDetail,
+  isBullishTarget: boolean,
+) {
+  return isBullishTarget ? detail.bullishAligned : !detail.bullishAligned;
 }
 
-function AssetCell({ detail }: AssetCellProps) {
-  const config = DISPLAY_MAP[detail.symbol] ?? {
-    ticker: detail.symbol,
-    inverse: false,
+function getOutlookColor(outlook: ZlOutlook): string {
+  if (outlook === "BULLISH") return "#22C55E";
+  if (outlook === "BEARISH") return "#EF4444";
+  if (outlook === "CAUTIOUS") return "#F59E0B";
+  return "#94A3B8";
+}
+
+function ReportSection({
+  title,
+  content,
+  icon,
+  color,
+}: {
+  title: string;
+  content: string;
+  icon: string;
+  color: "slate" | "amber" | "green" | "blue" | "purple";
+}) {
+  const colorClasses = {
+    slate: "border-slate-600 text-slate-400",
+    amber: "border-amber-600 text-amber-400",
+    green: "border-green-600 text-green-400",
+    blue: "border-cyan-600 text-cyan-400",
+    purple: "border-violet-600 text-violet-400",
   };
-  const r = detail.correlation;
-  const rStr = (r > 0 ? "+" : "") + r.toFixed(3);
-  const strength =
-    Math.abs(r) >= 0.6 ? "Strong" : Math.abs(r) >= 0.3 ? "Moderate" : "Weak";
-
-  const aligned = detail.bullishAligned;
-  const colorClass = aligned ? "text-[var(--zf-green)]" : "text-red-400";
-  const bgClass = aligned
-    ? "bg-[rgba(34,197,94,0.08)] border-[rgba(34,197,94,0.2)]"
-    : "bg-red-500/10 border-red-500/20";
-  const tagBg = aligned
-    ? "bg-[rgba(34,197,94,0.12)] text-[var(--zf-green)] border-[rgba(34,197,94,0.24)]"
-    : "bg-red-500/10 text-red-400 border-red-500/20";
-
-  // Rolling trend indicator (30d vs 180d)
-  const r30 = detail.rolling30d;
-  const r180 = detail.rolling180d;
-  let trendArrow = "";
-  let trendColor = "text-[var(--zf-text-muted)]";
-  if (r30 !== null && r180 !== null) {
-    const diff = Math.abs(r30) - Math.abs(r180);
-    if (diff > 0.05) {
-      trendArrow = "▲";
-      trendColor = "text-[rgba(34,197,94,0.7)]";
-    } else if (diff < -0.05) {
-      trendArrow = "▼";
-      trendColor = "text-red-400/70";
-    } else {
-      trendArrow = "—";
-      trendColor = "text-[var(--zf-text-muted)]";
-    }
-  }
 
   return (
-    <div className={`border rounded-xl p-7 flex flex-col gap-5 ${bgClass}`}>
-      <div className="flex justify-between items-start">
-        <div>
-          <div className="font-black text-4xl text-white tracking-tight font-mono leading-none">
-            {config.ticker}
-          </div>
-          <div className="text-sm text-white/85 uppercase tracking-wider mt-1 font-semibold">
-            {detail.label}
-            {config.inverse ? " (inverse)" : ""}
-          </div>
-        </div>
-        <div
-          className={`px-2.5 py-1 text-[10px] font-black rounded-md border tracking-[0.08em] uppercase ${tagBg}`}
-        >
-          {aligned ? "Aligned" : "Divergent"}
-        </div>
+    <div className={`border-l-2 pl-4 ${colorClasses[color]}`}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-sm">{icon}</span>
+        <span className="text-xs font-bold uppercase tracking-wider">
+          {title}
+        </span>
       </div>
-
-      <div>
-        <div className="flex items-baseline gap-2">
-          <span
-            className={`text-5xl font-mono font-black tabular-nums tracking-tight ${colorClass}`}
-          >
-            {rStr}
-          </span>
-          {trendArrow && (
-            <span
-              className={`text-base font-black ${trendColor}`}
-              title="30d vs 180d trend"
-            >
-              {trendArrow}
-            </span>
-          )}
-          <span className="text-xs text-white/50 font-semibold uppercase tracking-wider">
-            {strength}
-          </span>
-        </div>
-
-        <div className="flex gap-3 mt-3 text-[11px] font-mono text-white/70 tabular-nums">
-          {detail.rolling30d !== null && (
-            <span>
-              30D {detail.rolling30d > 0 ? "+" : ""}
-              {detail.rolling30d.toFixed(3)}
-            </span>
-          )}
-          {detail.rolling90d !== null && (
-            <span>
-              90D {detail.rolling90d > 0 ? "+" : ""}
-              {detail.rolling90d.toFixed(3)}
-            </span>
-          )}
-        </div>
-
-        <div className="flex gap-4 mt-2 text-[10px] text-white/55 uppercase tracking-wider">
-          <span>Wt {(detail.weight * 100).toFixed(0)}%</span>
-          <span>Obs {detail.observations}</span>
-        </div>
-      </div>
+      <p className="text-sm md:text-base text-slate-300 leading-relaxed whitespace-pre-line">
+        {content}
+      </p>
     </div>
   );
 }
 
-// ── Main widget ──────────────────────────────────────────────────────────────
+function ComprehensiveReportSection({
+  report,
+}: {
+  report: ComprehensiveReport;
+}) {
+  const [expanded, setExpanded] = useState(false);
 
-interface Props {
-  correlation?: CorrelationResponse | null;
-  direction?: string;
+  return (
+    <div className="mt-6 border-t border-slate-800 pt-6">
+      <div className="mb-4">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-1 h-4 bg-cyan-500 rounded-full" />
+          <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider">
+            TL;DR
+          </span>
+        </div>
+        <p className="text-base text-slate-300 leading-relaxed">{report.tldr}</p>
+      </div>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/50 transition-all text-sm font-medium text-slate-400 hover:text-slate-200"
+      >
+        <span>{expanded ? "▼" : "▶"}</span>
+        <span>{expanded ? "Hide Full Analysis" : "Show Full Market Analysis"}</span>
+        <span className="px-2 py-0.5 rounded text-xs bg-violet-500/20 text-violet-400 ml-1">
+          AI
+        </span>
+      </button>
+      {expanded && (
+        <div className="mt-5 space-y-5 animate-in slide-in-from-top-2 duration-300">
+          <ReportSection
+            title="Current Market Snapshot"
+            content={report.currentSnapshot}
+            icon="📊"
+            color="slate"
+          />
+          <ReportSection
+            title="Key Drivers Analysis"
+            content={report.keyDrivers}
+            icon="⚡"
+            color="amber"
+          />
+          <ReportSection
+            title="Time-Horizon Forecasts"
+            content={report.forecasts}
+            icon="📈"
+            color="green"
+          />
+          <ReportSection
+            title="Market Connections"
+            content={report.correlations}
+            icon="🔗"
+            color="blue"
+          />
+          <ReportSection
+            title="Key Price Levels"
+            content={report.technicalOutlook}
+            icon="📉"
+            color="purple"
+          />
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function CrossAssetAlignmentWidget({ correlation, direction }: Props) {
   const isBullishTarget =
     direction === "BULLISH" || direction === "LONG" || !direction;
-  const alignment = isBullishTarget
-    ? correlation?.bullish
-    : correlation?.bearish;
+  const alignment = isBullishTarget ? correlation?.bullish : correlation?.bearish;
   const isAligned = alignment?.isAligned ?? false;
-  const pct = alignment?.composite
-    ? (Math.abs(alignment.composite) * 100).toFixed(0)
-    : "--";
+  const compositePct =
+    alignment?.composite !== undefined
+      ? Math.round(Math.abs(alignment.composite) * 100)
+      : null;
 
-  // Sort symbols into display order
-  const orderedSymbols = (correlation?.symbols ?? []).sort((a, b) => {
-    const ai = DISPLAY_ORDER.indexOf(a.symbol);
-    const bi = DISPLAY_ORDER.indexOf(b.symbol);
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-  });
+  const orderedSymbols = useMemo(
+    () =>
+      (correlation?.symbols ?? []).slice().sort((a, b) => {
+        const ai = DISPLAY_ORDER.indexOf(a.symbol);
+        const bi = DISPLAY_ORDER.indexOf(b.symbol);
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      }),
+    [correlation?.symbols],
+  );
+
+  const strongest = useMemo(
+    () =>
+      orderedSymbols
+        .slice()
+        .sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation)),
+    [orderedSymbols],
+  );
+
+  const supportDrivers = strongest
+    .filter((detail) => isTargetAligned(detail, isBullishTarget))
+    .slice(0, 3);
+  const riskDrivers = strongest
+    .filter((detail) => !isTargetAligned(detail, isBullishTarget))
+    .slice(0, 3);
+
+  const zlOutlook: ZlOutlook = isAligned
+    ? isBullishTarget
+      ? "BULLISH"
+      : "BEARISH"
+    : "CAUTIOUS";
+  const zlColor = getOutlookColor(zlOutlook);
+
+  const headline = `Cross-Asset ${isBullishTarget ? "Bull" : "Bear"} Regime ${compositePct !== null ? `${compositePct}%` : ""}`.trim();
+  const summary =
+    alignment?.details ||
+    "Cross-asset alignment is still warming up. The basket will populate as enough observations are ingested.";
+
+  const tradingImplication = isAligned
+    ? `Cross-asset drivers are confirming this ${isBullishTarget ? "bullish" : "bearish"} setup.`
+    : `Cross-asset drivers are split against this ${isBullishTarget ? "bullish" : "bearish"} setup.`;
+
+  const toDriverDetail = (detail: CorrelationSymbolDetail) => {
+    const cfg = DISPLAY_MAP[detail.symbol] ?? {
+      ticker: detail.symbol,
+      inverse: false,
+    };
+    const relation = detail.correlation >= 0 ? "moves with MES" : "moves opposite MES";
+    return `${cfg.ticker} ${detail.correlation >= 0 ? "+" : ""}${detail.correlation.toFixed(3)} (${relation}${cfg.inverse ? ", inverse lens" : ""})`;
+  };
+
+  const drivers: IntelligenceDriver[] = [
+    ...riskDrivers.map((driver) => ({
+      label: DISPLAY_MAP[driver.symbol]?.ticker ?? driver.symbol,
+      outlook: "PRESSURE",
+      detail: toDriverDetail(driver),
+    })),
+    ...supportDrivers.map((driver) => ({
+      label: DISPLAY_MAP[driver.symbol]?.ticker ?? driver.symbol,
+      outlook: "SUPPORTIVE",
+      detail: toDriverDetail(driver),
+    })),
+  ];
+
+  const currentSnapshot =
+    alignment?.details ||
+    "No stable snapshot yet. Cross-asset matrix is waiting on fresh observations.";
+
+  const keyDrivers = [
+    `Support: ${supportDrivers.length > 0 ? supportDrivers.map(toDriverDetail).join(" | ") : "No active support drivers."}`,
+    `Risk: ${riskDrivers.length > 0 ? riskDrivers.map(toDriverDetail).join(" | ") : "No active risk drivers."}`,
+  ].join("\n");
+
+  const forecasts = `Composite alignment is ${compositePct ?? "--"}%. Signal state is ${isAligned ? "aligned" : "divergent"} for the ${isBullishTarget ? "bullish" : "bearish"} regime.`;
+
+  const correlations =
+    orderedSymbols.length > 0
+      ? orderedSymbols.map(toDriverDetail).join("\n")
+      : "No market connections available yet.";
+
+  const technicalOutlook =
+    strongest.length > 0
+      ? `Highest transmission is ${toDriverDetail(strongest[0])}. Monitor correlation stability before increasing risk.`
+      : "No key transmission leader is available yet.";
+
+  const report: ComprehensiveReport = {
+    tldr: summary,
+    currentSnapshot,
+    keyDrivers,
+    forecasts,
+    correlations,
+    technicalOutlook,
+  };
 
   return (
-    <div className="bg-[var(--zf-surface-elev)] border border-[var(--zf-border)] rounded-xl p-8 xl:col-span-1 shadow-lg shadow-black/20 flex flex-col">
-      <div className="flex flex-col gap-5 mb-7">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h3 className="text-white text-4xl md:text-5xl font-black uppercase tracking-[0.12em] leading-none">
-              Cross-Asset Engine
-            </h3>
-            {correlation?.meta && (
-              <div className="text-base text-white/85 mt-3 font-mono">
-                {correlation.meta.observations} observations ·{" "}
-                {correlation.meta.dateRange?.start} →{" "}
-                {correlation.meta.dateRange?.end}
-              </div>
-            )}
-          </div>
-          <div className="text-right">
-            <div className="text-white text-6xl font-black tabular-nums leading-none">
-              {pct}%
-            </div>
-            <div
-              className={`mt-2 text-xs font-black uppercase tracking-[0.1em] ${
-                isAligned ? "text-[var(--zf-green)]" : "text-red-400"
-              }`}
-            >
-              {isBullishTarget ? "Bull" : "Bear"} {isAligned ? "Aligned" : "Divergent"}
-            </div>
-          </div>
+    <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl p-6 md:p-8 xl:col-span-1">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <div className="w-1 h-6 rounded-full" style={{ backgroundColor: zlColor }} />
+          <h4 className="text-2xl md:text-3xl font-semibold text-white">{headline}</h4>
+          <span className="px-2 py-0.5 rounded text-xs font-bold bg-violet-500/20 text-violet-400 border border-violet-500/30">
+            AI
+          </span>
         </div>
-        <div className="h-px bg-[var(--zf-border-soft)]" />
+        <span
+          className="px-3 py-1.5 rounded text-xs font-bold tracking-wider"
+          style={{
+            backgroundColor: `${zlColor}20`,
+            color: zlColor,
+            border: `1px solid ${zlColor}40`,
+          }}
+        >
+          MES {zlOutlook}
+        </span>
       </div>
 
-      {alignment?.details && (
-        <p className="text-base text-white/80 mb-6 leading-relaxed">
-          {alignment.details}
-        </p>
+      <p className="text-base text-slate-400 leading-relaxed mb-4">{summary}</p>
+
+      {correlation?.meta && (
+        <div className="mb-4 text-xs text-slate-500">
+          {correlation.meta.observations} observations |{" "}
+          {correlation.meta.dateRange.start} -&gt; {correlation.meta.dateRange.end}
+        </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
-        {orderedSymbols.map((sym) => (
-          <AssetCell key={sym.symbol} detail={sym} />
-        ))}
+      <div className="mb-4 px-4 py-3 rounded-lg bg-slate-800/50 border border-slate-700/50">
+        <span className="text-xs text-slate-500 uppercase tracking-wider">
+          What This Means For You
+        </span>
+        <p className="text-base text-slate-300 mt-1">{tradingImplication}</p>
       </div>
+
+      {drivers.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {drivers.map((driver, idx) => (
+            <div key={`${driver.label}-${idx}`} className="flex items-start gap-2 text-sm">
+              <span
+                className={`px-2 py-0.5 rounded text-xs font-bold shrink-0 ${
+                  driver.outlook === "PRESSURE"
+                    ? "bg-red-500/20 text-red-400"
+                    : "bg-green-500/20 text-green-400"
+                }`}
+              >
+                {driver.outlook === "PRESSURE" ? "Risk" : "Support"}
+              </span>
+              <span className="text-slate-500">{driver.detail}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ComprehensiveReportSection report={report} />
     </div>
   );
 }
