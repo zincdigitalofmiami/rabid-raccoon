@@ -36,7 +36,7 @@ export function useCorrelation(pollInterval = 60000) {
 
   const fetchCorrelation = useCallback(async () => {
     try {
-      const res = await fetch("/api/mes/correlation");
+      const res = await fetch("/api/correlation");
       if (!res.ok) {
         const err = await res
           .json()

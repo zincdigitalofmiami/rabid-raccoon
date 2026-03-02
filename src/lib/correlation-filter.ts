@@ -15,6 +15,9 @@ export interface CorrelationAlignment {
   vix: number        // raw MES-VIX correlation
   dxy: number        // raw MES-DXY correlation
   nq: number         // raw MES-NQ correlation
+  cl?: number        
+  zn?: number
+  gc?: number
   composite: number  // -1 (short-aligned) to +1 (long-aligned)
   isAligned: boolean // composite agrees with setup direction
   details: string    // human-readable summary

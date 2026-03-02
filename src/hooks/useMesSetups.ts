@@ -29,7 +29,7 @@ export function useMesSetups(pollInterval = 30000) {
 
   const fetchSetups = useCallback(async () => {
     try {
-      const res = await fetch('/api/mes/setups')
+      const res = await fetch('/api/setups')
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: res.statusText }))
         throw new Error(errData.error || `HTTP ${res.status}`)
