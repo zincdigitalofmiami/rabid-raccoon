@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "root": {
-      "type": "sse",
-      "url": "http://localhost:8765/mcp/claude/sse/zincdigital"
-    },
     "memory": {
       "type": "sse",
       "url": "http://localhost:8765/mcp/claude/sse/zincdigital"
