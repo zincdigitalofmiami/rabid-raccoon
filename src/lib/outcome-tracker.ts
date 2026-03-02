@@ -8,10 +8,12 @@
  *   - Stop loss was hit
  *   - Max favorable excursion (MFE) and max adverse excursion (MAE)
  *
- * Uses DIRECT_URL to bypass Prisma Accelerate, same as trade-recorder.
+ * Uses local-first pg URL selection:
+ * LOCAL_DATABASE_URL → DIRECT_URL.
  */
 
 import pg from 'pg'
+import { logResolvedDbTarget, resolveDirectPgUrl } from './db-url'
 
 // ─────────────────────────────────────────────
 // Connection pool
@@ -21,9 +23,9 @@ let pool: pg.Pool | null = null
 
 function getPool(): pg.Pool {
   if (!pool) {
-    const url = process.env.DIRECT_URL
-    if (!url) throw new Error('DIRECT_URL not set')
-    pool = new pg.Pool({ connectionString: url, max: 2 })
+    const target = resolveDirectPgUrl()
+    logResolvedDbTarget('outcome-tracker:getPool', target)
+    pool = new pg.Pool({ connectionString: target.url, max: 2 })
   }
   return pool
 }
@@ -158,11 +160,15 @@ function evaluateOutcome(
  * Returns count of trades updated.
  */
 export async function checkTradeOutcomes(): Promise<number> {
-  const directUrl = process.env.DIRECT_URL
-  if (!directUrl) {
-    console.warn('[outcome-tracker] DIRECT_URL not set, skipping')
+  let target
+  try {
+    target = resolveDirectPgUrl()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[outcome-tracker] DB URL resolution failed, skipping: ${message}`)
     return 0
   }
+  logResolvedDbTarget('checkTradeOutcomes', target)
 
   const db = getPool()
 

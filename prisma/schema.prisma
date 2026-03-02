@@ -48,6 +48,7 @@ enum Timeframe {
   H1
   H4
   D1
+  W1
 }
 
 enum SignalDirection {
@@ -208,6 +209,47 @@ model MktFuturesMes1d {
   @@unique([eventDate], map: "mkt_futures_mes_1d_event_date_key")
   @@index([eventDate], map: "mkt_futures_mes_1d_date_idx")
   @@map("mkt_futures_mes_1d")
+}
+
+model MktFuturesMes4h {
+  id            BigInt     @id @default(autoincrement())
+  eventTime     DateTime   @db.Timestamptz(6)
+  open          Decimal    @db.Decimal(18, 6)
+  high          Decimal    @db.Decimal(18, 6)
+  low           Decimal    @db.Decimal(18, 6)
+  close         Decimal    @db.Decimal(18, 6)
+  volume        BigInt?
+  source        DataSource @default(DATABENTO)
+  sourceDataset String?    @db.VarChar(64)
+  sourceSchema  String?    @db.VarChar(32)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([eventTime], map: "mkt_futures_mes_4h_event_time_key")
+  @@map("mkt_futures_mes_4h")
+}
+
+model MktFuturesMes1w {
+  id            BigInt     @id @default(autoincrement())
+  eventDate     DateTime   @db.Date
+  open          Decimal    @db.Decimal(18, 6)
+  high          Decimal    @db.Decimal(18, 6)
+  low           Decimal    @db.Decimal(18, 6)
+  close         Decimal    @db.Decimal(18, 6)
+  volume        BigInt?
+  source        DataSource @default(DATABENTO)
+  sourceDataset String?    @db.VarChar(64)
+  sourceSchema  String?    @db.VarChar(32)
+  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
+  rowHash       String?    @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([eventDate], map: "mkt_futures_mes_1w_event_date_key")
+  @@index([eventDate], map: "mkt_futures_mes_1w_date_idx")
+  @@map("mkt_futures_mes_1w")
 }
 
 model MktFutures1h {

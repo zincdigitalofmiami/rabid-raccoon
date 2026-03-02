@@ -1,15 +1,16 @@
 /**
  * trade-recorder.ts — Persist scored trades to the database for training.
  *
- * Uses a direct pg connection (DIRECT_URL) to bypass Prisma Accelerate
- * schema caching. The scored_trades table is created by
- * scripts/create-scored-trades.ts.
+ * Uses pg connection in local-first order:
+ * LOCAL_DATABASE_URL → DIRECT_URL.
+ * The scored_trades table is created by scripts/create-scored-trades.ts.
  */
 
 import pg from 'pg'
 import { createHash } from 'crypto'
 import type { ScoredTrade } from '@/app/api/trades/upcoming/route'
 import type { EventContext } from '@/lib/event-awareness'
+import { logResolvedDbTarget, resolveDirectPgUrl } from './db-url'
 
 // ─────────────────────────────────────────────
 // Connection pool (reused across requests)
@@ -19,9 +20,9 @@ let pool: pg.Pool | null = null
 
 function getPool(): pg.Pool {
   if (!pool) {
-    const url = process.env.DIRECT_URL
-    if (!url) throw new Error('DIRECT_URL not set — cannot record trades')
-    pool = new pg.Pool({ connectionString: url, max: 2 })
+    const target = resolveDirectPgUrl()
+    logResolvedDbTarget('trade-recorder:getPool', target)
+    pool = new pg.Pool({ connectionString: target.url, max: 2 })
   }
   return pool
 }
@@ -81,11 +82,15 @@ export async function recordScoredTrades(
 ): Promise<number> {
   if (trades.length === 0) return 0
 
-  const directUrl = process.env.DIRECT_URL
-  if (!directUrl) {
-    console.warn('[trade-recorder] DIRECT_URL not set, skipping')
+  let target
+  try {
+    target = resolveDirectPgUrl()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[trade-recorder] DB URL resolution failed, skipping: ${message}`)
     return 0
   }
+  logResolvedDbTarget('recordScoredTrades', target)
 
   const db = getPool()
   const now = new Date()

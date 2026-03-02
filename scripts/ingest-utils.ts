@@ -3,7 +3,7 @@ import path from 'node:path'
 import { Timeframe } from '@prisma/client'
 import { CandleData } from '../src/lib/types'
 
-export type CliTimeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d'
+export type CliTimeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d' | '1w'
 
 const TF_MINUTES: Record<CliTimeframe, number> = {
   '1m': 1,
@@ -12,6 +12,7 @@ const TF_MINUTES: Record<CliTimeframe, number> = {
   '1h': 60,
   '4h': 240,
   '1d': 1440,
+  '1w': 10080,
 }
 
 export function loadDotEnvFiles(): void {
@@ -61,6 +62,7 @@ export function timeframeToPrisma(tf: CliTimeframe): Timeframe {
     '1h': Timeframe.H1,
     '4h': Timeframe.H4,
     '1d': Timeframe.D1,
+    '1w': Timeframe.W1,
   }
   return map[tf]
 }
@@ -139,4 +141,3 @@ export function safeOutputPath(raw: string, projectRoot: string): string {
   }
   return resolved
 }
-

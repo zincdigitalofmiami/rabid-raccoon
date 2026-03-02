@@ -37,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 parser = argparse.ArgumentParser(description="MES Directional Bias Model v2")
 parser.add_argument("--phase", type=int, default=1, choices=[1, 2])
-parser.add_argument("--horizons", default=None, help="Comma-separated: 1h,4h")
+parser.add_argument("--horizons", default=None, help="Comma-separated: 1h,4h,1d,1w")
 parser.add_argument("--clean", action="store_true", help="Delete old model dirs first")
 args = parser.parse_args()
 
@@ -50,6 +50,8 @@ OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "directional_v2_oof.csv"
 HORIZONS = {
     "1h": {"target": "target_dir_1h", "purge": 1, "embargo": 2},
     "4h": {"target": "target_dir_4h", "purge": 4, "embargo": 8},
+    "1d": {"target": "target_dir_1d", "purge": 24, "embargo": 48},
+    "1w": {"target": "target_dir_1w", "purge": 120, "embargo": 240},
 }
 
 if args.horizons:
@@ -65,9 +67,9 @@ cfg = PHASE_CFG[args.phase]
 # Identity + target columns — NEVER used as features
 TARGET_COLS = {
     "item_id", "timestamp", "target",
-    "target_ret_1h", "target_ret_4h",
-    "target_dir_1h", "target_dir_4h",
-    "target_ret_norm_1h", "target_ret_norm_4h",
+    "target_ret_1h", "target_ret_4h", "target_ret_1d", "target_ret_1w",
+    "target_dir_1h", "target_dir_4h", "target_dir_1d", "target_dir_1w",
+    "target_ret_norm_1h", "target_ret_norm_4h", "target_ret_norm_1d", "target_ret_norm_1w",
 }
 
 # ─── Curated Feature Set ─────────────────────────────────────────────────────
@@ -243,6 +245,13 @@ def main():
     print(f"\nDataset: {DATASET_PATH.name}")
     print(f"  Rows: {len(df):,}  |  Columns: {len(df.columns)}")
     print(f"  Range: {df['timestamp'].iloc[0][:10]} → {df['timestamp'].iloc[-1][:10]}")
+
+    required_targets = sorted({cfg["target"] for cfg in HORIZONS.values()})
+    missing_targets = [col for col in required_targets if col not in df.columns]
+    if missing_targets:
+        print(f"ERROR: Dataset missing target columns for requested horizons: {missing_targets}")
+        print("Run: npx tsx scripts/build-lean-dataset.ts --timeframe=1h")
+        sys.exit(1)
 
     # ─── Feature Selection ────────────────────────────────────────────────────
     # Use only curated features that exist in the dataset

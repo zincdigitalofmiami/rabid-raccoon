@@ -1,7 +1,9 @@
 # Project: Rabid Raccoon
 
 - TypeScript/Next.js application with Prisma ORM
-- Prisma Accelerate for connection pooling (DATABASE_URL ≠ DIRECT_URL is NORMAL)
+- Three-URL pattern: LOCAL_DATABASE_URL (dev/CLI default) · DIRECT_URL (migrations/CLI override) · DATABASE_URL (Accelerate, Vercel production)
+- DATABASE_URL ≠ DIRECT_URL is NORMAL — different protocols/endpoints by design
+- `prisma.config.ts` resolves CLI URL with priority LOCAL_DATABASE_URL → DIRECT_URL → DATABASE_URL (non-throwing)
 - Inngest for serverless function orchestration
 - FRED API for economic data ingestion
 - Symbol registry pattern: symbols have roles (INGESTION_ACTIVE, etc.)

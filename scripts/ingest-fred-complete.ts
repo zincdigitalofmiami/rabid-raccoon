@@ -2,10 +2,10 @@
  * ingest-fred-complete.ts
  *
  * Comprehensive FRED ingestion — pulls ALL economic series from FRED API,
- * upserts into domain-specific tables via direct pg (bypasses Accelerate).
+ * upserts into domain-specific tables via pg.
  *
- * Uses DIRECT_URL for writes (same pattern as trade-recorder.ts).
- * Prisma Accelerate times out on batch createMany — direct pg does not.
+ * Uses local-first URL selection:
+ * LOCAL_DATABASE_URL → DIRECT_URL.
  *
  * Usage:
  *   npx tsx scripts/ingest-fred-complete.ts                # full fresh 2y pull
@@ -15,6 +15,7 @@
 
 import { createHash } from 'node:crypto'
 import pg from 'pg'
+import { logResolvedDbTarget, resolveDirectPgUrl } from '../src/lib/db-url'
 import { fetchFredSeries } from '../src/lib/fred'
 import { loadDotEnvFiles } from './ingest-utils'
 
@@ -44,15 +45,15 @@ function hashRow(seriesId: string, eventDate: string, value: number, source: str
     .digest('hex')
 }
 
-// ─── DIRECT PG POOL (bypasses Prisma Accelerate) ─────────────────────────
+// ─── PG POOL (local-first) ────────────────────────────────────────────────
 
 let pool: pg.Pool | null = null
 
 function getPool(): pg.Pool {
   if (!pool) {
-    const url = process.env.DIRECT_URL || process.env.DATABASE_URL
-    if (!url) throw new Error('Neither DIRECT_URL nor DATABASE_URL is set')
-    pool = new pg.Pool({ connectionString: url, max: 3 })
+    const target = resolveDirectPgUrl()
+    logResolvedDbTarget('ingest-fred-complete:getPool', target)
+    pool = new pg.Pool({ connectionString: target.url, max: 3 })
   }
   return pool
 }
@@ -400,7 +401,9 @@ async function truncateEconTables(): Promise<void> {
 async function run() {
   loadDotEnvFiles()
   if (!process.env.FRED_API_KEY) throw new Error('FRED_API_KEY is required')
-  if (!process.env.DIRECT_URL && !process.env.DATABASE_URL) throw new Error('DIRECT_URL or DATABASE_URL is required')
+
+  const target = resolveDirectPgUrl()
+  logResolvedDbTarget('ingest-fred-complete:run', target)
 
   const args = process.argv.slice(2)
   const daysBack = Number(args.find((a) => a.startsWith('--days-back='))?.split('=')[1] ?? '730')
@@ -409,7 +412,7 @@ async function run() {
   const startDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   const endDate = new Date().toISOString().slice(0, 10)
 
-  console.log(`[fred-complete] ${FRED_SERIES.length} FRED series, direct pg (no Accelerate)`)
+  console.log(`[fred-complete] ${FRED_SERIES.length} FRED series, local-first pg routing (no Accelerate writes)`)
   console.log(`[fred-complete] range: ${startDate} → ${endDate} (${daysBack} days)`)
   console.log(`[fred-complete] truncate: ${!noTruncate}`)
 

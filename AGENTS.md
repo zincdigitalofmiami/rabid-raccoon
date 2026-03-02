@@ -280,7 +280,6 @@ The Memory MCP is pre-configured for each agent platform:
 |----------|-------------|------------|
 | Claude Code / Desktop | `.mcp.json` (repo root) | `mcpServers.memory` |
 | VS Code Copilot | `.vscode/mcp.json` | `servers.memory` |
-| Cline | `.clinerules` + `.mcp.json` | Uses `.mcp.json` |
 | Cursor | `.mcp.json` | Uses `.mcp.json` |
 
 ### Rules
@@ -318,5 +317,5 @@ When you receive a task:
 
 ---
 
-*Last updated: 2026-02-22*
+*Last updated: 2026-03-02*
 *Maintained by: Kirk (architect) with Claude (governance)*

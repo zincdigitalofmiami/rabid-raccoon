@@ -7,7 +7,7 @@ Reads:
   datasets/options-statistics/{PARENT}/YYYY-MM.parquet → mkt_options_agg_1d
 
 Aggregates per day per parent, inserts via UPSERT (ON CONFLICT UPDATE).
-Uses DIRECT_URL from .env.local for Postgres connection.
+Uses LOCAL_DATABASE_URL first, then DIRECT_URL fallback for Postgres connection.
 
 Usage:
   .venv-finance/bin/python scripts/ingest-options.py
@@ -21,6 +21,7 @@ import numpy as np
 from pathlib import Path
 from decimal import Decimal
 from hashlib import sha256
+from urllib.parse import urlparse
 import sys
 import time
 import json
@@ -36,7 +37,8 @@ STAT_VOLUME = 6
 STAT_OI = 9
 STAT_IV = 14
 
-BATCH_SIZE = 500  # Direct Postgres connection via DIRECT_URL — no Accelerate timeout
+BATCH_SIZE = 500  # Local/direct Postgres path (no Accelerate timeout)
+_DB_TARGET_LOGGED = False
 
 
 # ─── Shared Helpers ────────────────────────────────────────────────────────
@@ -55,8 +57,8 @@ def create_ingestion_run(conn, job: str, details: dict | None = None) -> int:
     """Create an IngestionRun record and return its ID."""
     from sqlalchemy import text
     result = conn.execute(text("""
-        INSERT INTO "ingestionRun" (job, status, details, "createdAt", "updatedAt")
-        VALUES (:job, 'RUNNING', :details::jsonb, NOW(), NOW())
+        INSERT INTO "ingestion_runs" (job, status, details, "startedAt")
+        VALUES (:job, 'RUNNING', :details::jsonb, NOW())
         RETURNING id
     """), {"job": job, "details": json.dumps(details) if details else None})
     row = result.fetchone()
@@ -68,12 +70,11 @@ def finalize_ingestion_run(conn, run_id: int, status: str, rows_inserted: int = 
     from sqlalchemy import text
     details = {"error": error} if error else {}
     conn.execute(text("""
-        UPDATE "ingestionRun"
+        UPDATE "ingestion_runs"
         SET status = :status,
             "finishedAt" = NOW(),
-            "updatedAt" = NOW(),
             "rowsInserted" = :rows_inserted,
-            details = details || :details::jsonb
+            details = COALESCE(details, '{}'::jsonb) || :details::jsonb
         WHERE id = :id
     """), {
         "id": run_id,
@@ -110,10 +111,16 @@ def get_engine():
     """Create SQLAlchemy engine. Uses LOCAL_DATABASE_URL when available
     (local dev, zero Accelerate cost), falls back to DIRECT_URL (production)."""
     from sqlalchemy import create_engine
+    global _DB_TARGET_LOGGED
     env = load_env()
+    source = "LOCAL_DATABASE_URL" if env.get("LOCAL_DATABASE_URL") else "DIRECT_URL"
     url = env.get("LOCAL_DATABASE_URL") or env.get("DIRECT_URL")
     if not url:
         raise RuntimeError("Neither LOCAL_DATABASE_URL nor DIRECT_URL found in .env.local")
+    parsed = urlparse(url)
+    if not _DB_TARGET_LOGGED:
+        print(f"[db-target] ingest-options source={source} protocol={parsed.scheme or 'unknown'} host={parsed.netloc.split('@')[-1]}")
+        _DB_TARGET_LOGGED = True
     # SQLAlchemy requires postgresql:// not postgres://
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]

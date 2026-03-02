@@ -456,7 +456,9 @@ async function finalizeAltNewsRun(
 
 export async function runIngestAltNewsFeeds(): Promise<RunStats> {
   loadDotEnvFiles()
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!process.env.LOCAL_DATABASE_URL && !process.env.DATABASE_URL) {
+    throw new Error('LOCAL_DATABASE_URL or DATABASE_URL is required')
+  }
 
   await upsertRegistry()
 

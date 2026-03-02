@@ -17,6 +17,7 @@ const RG_BASE = [
   '--hidden',
   '--glob', '!node_modules',
   '--glob', '!.next',
+  '--glob', '!scripts/lint-baselines/**',
   '--glob', '!prisma/migrations/**',
   '--glob', '!src/lib/symbol-registry/**',
   '--glob', '!**/*.test.ts',

@@ -1,4 +1,4 @@
-t# Safety Constraints
+# Safety Constraints
 
 ## Database Rules
 
