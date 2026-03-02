@@ -312,7 +312,6 @@ Prisma provides type-safe database access, automatic migration management, and a
 | Database (local dev) | Direct PostgreSQL via `LOCAL_DATABASE_URL = postgresql://localhost:5432/rabid_raccoon` |
 | Database (migrations/direct) | Direct PostgreSQL via `DIRECT_URL = postgres://db.prisma.io:5432/...` |
 | Prisma CLI routing | `prisma.config.ts` — priority: `LOCAL_DATABASE_URL → DIRECT_URL → DATABASE_URL`. Falls back gracefully; never throws on missing vars during `prisma generate`. |
-| Prisma schema `url` | `datasource db { url = env("DATABASE_URL") }` — standard tooling fallback for Studio, `db pull`, schema linting. `prisma.config.ts` overrides this for CLI operations. |
 | Hosting | Vercel (dashboard) |
 | Scheduling | Inngest (managed, event-driven) |
 | Market data | Databento (REST, requires `DATABENTO_API_KEY`) |

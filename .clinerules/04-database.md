@@ -8,7 +8,7 @@
 - LOCAL_DATABASE_URL = Local Postgres — `next dev`, local batch scripts, Prisma CLI (default)
 - Different tenant IDs / user IDs is NORMAL, not a bug
 - `prisma.config.ts` resolves CLI URL: LOCAL_DATABASE_URL → DIRECT_URL → DATABASE_URL (non-throwing, falls back gracefully during `prisma generate`)
-- `prisma/schema.prisma` has `url = env("DATABASE_URL")` for tooling compatibility (Studio, db pull, schema linting)
+- `prisma/schema.prisma` datasource block has NO `url` field — Prisma 7 forbids it; all URL config lives in `prisma.config.ts`
 
 ## Symbol Registry
 
