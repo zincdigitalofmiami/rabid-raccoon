@@ -1,8 +1,102 @@
 {
-  "cl": 0.083,
-  "dx": -0.115,
-  "gc": 0.152,
-  "nq": 0.907,
-  "vx": -0.727,
-  "zn": -0.321
+  "generatedAt": "2026-03-02T19:39:19.350471Z",
+  "lookbackDays": 180,
+  "observations": 154,
+  "dateRange": {
+    "start": "2025-09-03",
+    "end": "2026-03-01"
+  },
+  "symbols": {
+    "nq": {
+      "symbol": "NQ",
+      "label": "Nasdaq 100",
+      "correlation": 0.9069,
+      "rollingCorrelations": {
+        "30d": 0.7603,
+        "90d": 0.8659
+      },
+      "bullishAligned": true,
+      "bullishScore": 0.9069,
+      "weight": 0.25,
+      "observations": 154,
+      "status": "OK"
+    },
+    "vx": {
+      "symbol": "VX",
+      "label": "VIX (CBOE)",
+      "correlation": -0.7232,
+      "rollingCorrelations": {
+        "30d": -0.6259,
+        "90d": -0.6932
+      },
+      "bullishAligned": true,
+      "bullishScore": 0.7232,
+      "weight": 0.25,
+      "observations": 154,
+      "status": "OK"
+    },
+    "dx": {
+      "symbol": "DX",
+      "label": "US Dollar Index",
+      "correlation": -0.1148,
+      "rollingCorrelations": {
+        "30d": -0.2348,
+        "90d": -0.1748
+      },
+      "bullishAligned": true,
+      "bullishScore": 0.1148,
+      "weight": 0.15,
+      "observations": 154,
+      "status": "OK"
+    },
+    "gc": {
+      "symbol": "GC",
+      "label": "Gold",
+      "correlation": 0.1521,
+      "rollingCorrelations": {
+        "30d": 0.238,
+        "90d": 0.1765
+      },
+      "bullishAligned": true,
+      "bullishScore": 0.1521,
+      "weight": 0.1,
+      "observations": 154,
+      "status": "OK"
+    },
+    "cl": {
+      "symbol": "CL",
+      "label": "Crude Oil WTI",
+      "correlation": 0.0877,
+      "rollingCorrelations": {
+        "30d": 0.0545,
+        "90d": -0.0394
+      },
+      "bullishAligned": true,
+      "bullishScore": 0.0877,
+      "weight": 0.15,
+      "observations": 154,
+      "status": "OK"
+    },
+    "zn": {
+      "symbol": "ZN",
+      "label": "10Y Treasury Note",
+      "correlation": -0.3217,
+      "rollingCorrelations": {
+        "30d": -0.5798,
+        "90d": -0.3053
+      },
+      "bullishAligned": true,
+      "bullishScore": 0.3217,
+      "weight": 0.1,
+      "observations": 154,
+      "status": "OK"
+    }
+  },
+  "composite": {
+    "bullishScore": 0.4853,
+    "bearishScore": -0.4853,
+    "bullishAligned": true,
+    "bearishAligned": false,
+    "pctAligned": 48.5
+  }
 }
