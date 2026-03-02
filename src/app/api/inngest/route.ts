@@ -1,5 +1,5 @@
-import { serve } from 'inngest/next'
-import { inngest } from '@/inngest/client'
+import { serve } from "inngest/next";
+import { inngest } from "@/inngest/client";
 import {
   // Market Data (Databento) — 6 functions
   ingestMktMes15m,
@@ -26,17 +26,20 @@ import {
   ingestFredNews,
   // Signals — 1 function
   ingestMeasuredMoves,
+  // Geopolitical / policy — 2 functions
+  ingestGprIndex,
+  ingestTrumpEffect,
   // Coverage audit — 1 function (weekly)
   checkSymbolCoverage,
   // Backfill — 1 function (event-triggered)
   backfillMesAllTimeframes,
-} from '@/inngest'
+} from "@/inngest";
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-export const maxDuration = 300
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
-const serveHost = process.env.INNGEST_SERVE_HOST || ''
+const serveHost = process.env.INNGEST_SERVE_HOST || "";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -44,7 +47,7 @@ export const { GET, POST, PUT } = serve({
   functions: [
     // Market Data (Databento)
     ingestMktMes15m, // every hour at :05
-    ingestMktMes1h,  // daily at 00:00 UTC
+    ingestMktMes1h, // daily at 00:00 UTC
     ingestMktEquityIndices,
     ingestMktTreasuries,
     ingestMktCommodities,
@@ -64,12 +67,15 @@ export const { GET, POST, PUT } = serve({
     ingestEconCalendar,
     ingestNewsSignals,
     ingestAltNews,
-    ingestFredNews,    // daily at 17:15 UTC
+    ingestFredNews, // daily at 17:15 UTC
     // Signals (18:00 UTC)
     ingestMeasuredMoves,
+    // Geopolitical / policy (19:00–19:30 UTC)
+    ingestGprIndex,
+    ingestTrumpEffect,
     // Coverage audit (weekly Sun 06:00 UTC)
     checkSymbolCoverage,
     // Backfill (event-triggered)
     backfillMesAllTimeframes,
   ],
-})
+});

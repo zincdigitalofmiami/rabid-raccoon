@@ -852,3 +852,46 @@ model MktOptionsOhlcv1d {
   @@index([parentSymbol], map: "mkt_options_ohlcv_1d_parent_idx")
   @@map("mkt_options_ohlcv_1d")
 }
+
+model GeopoliticalRisk {
+  id            BigInt   @id @default(autoincrement())
+  eventDate     DateTime @db.Date
+  indexName     String   @db.VarChar(32)
+  value         Decimal  @db.Decimal(14, 6)
+  source        String   @db.VarChar(64)
+  sourceUrl     String?
+  ingestedAt    DateTime @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime @default(now()) @db.Timestamptz(6)
+  rowHash       String   @unique(map: "geopolitical_risk_1d_row_hash_key") @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([eventDate, indexName, source], map: "geopolitical_risk_1d_date_index_source_key")
+  @@index([eventDate], map: "geopolitical_risk_1d_date_idx")
+  @@index([indexName], map: "geopolitical_risk_1d_index_name_idx")
+  @@index([source], map: "geopolitical_risk_1d_source_idx")
+  @@map("geopolitical_risk_1d")
+}
+
+model TrumpEffect {
+  id            BigInt   @id @default(autoincrement())
+  eventDate     DateTime @db.Date
+  eventType     String   @db.VarChar(32)
+  title         String
+  summary       String?
+  marketImpact  String?  @db.VarChar(16)
+  sector        String?  @db.VarChar(64)
+  source        String   @db.VarChar(64)
+  sourceId      String?  @db.VarChar(128)
+  sourceUrl     String?
+  ingestedAt    DateTime @default(now()) @db.Timestamptz(6)
+  knowledgeTime DateTime @default(now()) @db.Timestamptz(6)
+  rowHash       String   @unique(map: "trump_effect_1d_row_hash_key") @db.VarChar(64)
+  metadata      Json?
+
+  @@unique([eventDate, eventType, title, source], map: "trump_effect_1d_date_type_title_source_key")
+  @@index([eventDate], map: "trump_effect_1d_date_idx")
+  @@index([eventType], map: "trump_effect_1d_event_type_idx")
+  @@index([marketImpact], map: "trump_effect_1d_market_impact_idx")
+  @@index([source], map: "trump_effect_1d_source_idx")
+  @@map("trump_effect_1d")
+}
