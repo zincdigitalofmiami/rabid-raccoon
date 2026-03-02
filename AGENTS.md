@@ -309,6 +309,65 @@ When you receive a task:
 9. **Verify your work.** Run the build. Run the linter. Check for regressions.
 10. **Store new decisions/corrections to memory** before ending the session.
 
+## WARBIRD Model Training — Hard Rules
+
+These are Kirk's decisions. They override any conflicting information in plan files, memory, or prior conversations.
+
+### Architecture
+
+- **ONE unified MES model** — NOT separate models per symbol. MES is the ONLY prediction target.
+- All other symbols (63 in the DB, 39 active) are **features** — same as FRED, news, GPR, Trump data. They are inputs, not targets.
+- One flat dataset per horizon/target. One row per timestamp. All data sources as columns.
+
+### Dataset
+
+- **EVERYTHING in the database goes into the dataset.** All 63 symbols, all 10 econ tables, all FRED series, all news/GPR/Trump, calendar, options — no pre-filtering.
+- Feature count will be 400-600+ columns. The IC ranking + cluster dedup (top 30 per fold) handles pruning.
+- Feature priority: macro baselines (yields, rates, gold, credit, VIX) are mandatory for regime context. Reaction features (news shocks, vol spikes, policy actions, cross-asset velocity) provide the intraday edge.
+- Cross-asset symbols are features for their **intraday reactions**, not long-term trends. How NQ/CL/ZN/GC move in the same hour tells the model what regime MES is in.
+
+### AutoGluon Settings
+
+```python
+AG_SETTINGS = {
+    'presets': 'best_quality',
+    'num_bag_folds': 5,                    # MAX 5 — not 8
+    'num_stack_levels': 2,
+    'dynamic_stacking': 'auto',
+    'excluded_model_types': [],            # ALL model types included
+    'ag_args_fit': {
+        'num_early_stopping_rounds': 50,
+        'ag.max_memory_usage_ratio': 0.8,
+    },
+    'ag_args_ensemble': {
+        'fold_fitting_strategy': 'sequential_local',
+    },
+}
+```
+
+### Hardware & Training
+
+- **Machine**: Mac Mini M4 Pro, 24GB RAM, 12 CPU cores
+- **Peak RAM**: 8-10GB (NOT 2-4GB)
+- **Bottleneck**: CPU, NOT RAM
+- **Training sequence**: 1 horizon → 1 target → 1 fold at a time (strictly sequential)
+- **Time limits**: 14400s (4h) per fold for price, 7200s (2h) for MAE/MFE
+- **NEVER run Ollama or local AI during training** — M4 Pro reserved for AutoGluon
+
+### Targets
+
+- **Regression** (price prediction), NOT classification
+- 3 targets: price, MAE (max adverse excursion), MFE (max favorable excursion)
+- 4 horizons: 1h, 4h, 1d, 1w → 12 models total (3 targets × 4 horizons)
+- Targets derived from MES data: `close.shift(-N)` for price, trailing high/low for MAE/MFE
+
+### Feature Selection (per fold)
+
+- IC ranking (Spearman correlation with target)
+- Hierarchical cluster dedup (|r| > 0.85, keep IC-best per cluster)
+- Top 30 features per fold
+- Walk-forward CV with purge/embargo (Lopez de Prado)
+
 ## What NOT to Do
 
 - Do not create additional agent instruction files.

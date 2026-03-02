@@ -304,6 +304,78 @@ The codebase accumulated 211 hardcoded symbol references across 30+ files becaus
 
 Prisma provides type-safe database access, automatic migration management, and a schema-as-code that serves as living documentation. The tradeoff is less control over advanced PostgreSQL features (check constraints are added via raw SQL in migrations and Prisma warns about but doesn't model them).
 
+## WARBIRD Model Architecture
+
+WARBIRD replaces the deprecated core_forecaster v2.1. It is a regression-based MES price prediction system.
+
+### Model Structure
+
+- **ONE unified model per horizon/target** — MES is the only prediction target
+- **12 models total**: 3 targets (price, MAE, MFE) × 4 horizons (1h, 4h, 1d, 1w)
+- All other symbols, FRED data, news, GPR, Trump Effect, econ tables = **input features**
+- No separate per-symbol models. Cross-asset data tells the model what regime MES is in.
+
+### Dataset Structure
+
+One flat CSV per horizon. One row per timestamp. All data sources as columns:
+
+```
+timestamp | MES OHLCV+technicals | 63 symbols (OHLCV+velocity) | 31 FRED series | 10 econ tables | news signals | GPR index | Trump Effect | calendar proximity | options data | target_price | target_mae | target_mfe
+```
+
+- **Feature count**: 400-600+ columns (not ~148)
+- **Everything in the DB goes in** — no pre-filtering. IC ranking + cluster dedup prunes per fold.
+- **Feature priority**: macro baselines (yields, rates, gold, credit, VIX) + reaction features (news shocks, vol spikes, policy actions, cross-asset intraday velocity)
+
+### Training Pipeline
+
+```
+build-lean-dataset.ts (or build-warbird-dataset.ts)
+    │ loads ALL DB tables → engineers features → writes CSV
+    ▼
+train-warbird.py
+    │ AutoGluon TabularPredictor
+    │ best_quality, 5 folds, 2 stack levels
+    │ Walk-forward CV with purge/embargo
+    │ Per-fold IC ranking + cluster dedup → top 30 features
+    ▼
+models/warbird/{horizon}/
+    │ Trained model artifacts
+    ▼
+predict.py / warbird-signal.ts
+    │ Live inference → target zones + risk gates
+    ▼
+/api/forecast → Dashboard
+```
+
+### AutoGluon Settings
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| `presets` | `best_quality` | Safe for 12GB free RAM |
+| `num_bag_folds` | 5 | Max allowed (not 8) |
+| `num_stack_levels` | 2 | Kirk: more than 1 stack |
+| `fold_fitting_strategy` | `sequential_local` | 1 fold at a time, peak RAM 8-10GB |
+| `excluded_model_types` | `[]` | ALL types — let AG decide |
+| Time limit (price) | 14400s (4h) | Per fold |
+| Time limit (MAE/MFE) | 7200s (2h) | Per fold |
+
+### Hardware Constraints
+
+- Mac Mini M4 Pro, 24GB RAM, 12 CPU cores
+- CPU-bound, NOT RAM-bound
+- Peak RAM: 8-10GB during training
+- Strictly sequential: 1 horizon → 1 target → 1 fold
+- NEVER run Ollama/local AI during training
+
+### Signal Pipeline (Post-Training)
+
+1. **GJR-GARCH(1,1)** — conditional volatility estimation, 5 vol states
+2. **Monte Carlo** — 10K paths, war-regime-aware tail behavior
+3. **Target Zones** — Fibonacci-anchored horizontal price levels
+4. **Risk Gates** — 1% risk per trade, war regime position caps
+5. **War Regime Classifier** — geopolitical risk overlay
+
 ## Environment & Infrastructure
 
 | Component        | Detail                                                                      |
