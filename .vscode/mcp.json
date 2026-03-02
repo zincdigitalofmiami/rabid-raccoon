@@ -1,27 +1,30 @@
 {
   "servers": {
     "memory": {
-      "type": "sse",
-      "url": "http://localhost:8765/mcp/claude/sse/zincdigital"
+      "type": "stdio",
+      "command": "/opt/homebrew/bin/npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "env": {
+        "MEMORY_FILE_PATH": "/Volumes/Satechi Hub/rabid-raccoon/.claude/memory.jsonl"
+      }
     },
     "sequentialthinking": {
       "type": "stdio",
-      "command": "docker",
+      "command": "/opt/homebrew/bin/npx",
       "args": [
-        "run",
-        "-i",
-        "--rm",
-        "mcp/sequentialthinking"
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
       ]
     },
     "context7": {
       "type": "stdio",
-      "command": "docker",
+      "command": "/opt/homebrew/bin/npx",
       "args": [
-        "run",
-        "-i",
-        "--rm",
-        "mcp/context7"
+        "-y",
+        "@upstash/context7-mcp@2.1.2"
       ]
     }
   }
