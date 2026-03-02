@@ -19,6 +19,7 @@ This is a monorepo with three distinct domains. Each has clear ownership of its 
 **Purpose**: Real-time display of market analysis, forecasts, BHG setups, correlation data, and news signals.
 
 **Owns**:
+
 - `src/app/` (pages and API routes)
 - `src/components/`
 - `src/lib/` (analysis, forecast, signals, market-context, fetch-candles)
@@ -32,6 +33,7 @@ This is a monorepo with three distinct domains. Each has clear ownership of its 
 **Purpose**: Dataset construction, feature engineering, model training, and model registry management.
 
 **Owns**:
+
 - `scripts/build-*.ts` (dataset builders)
 - `models/`
 - `datasets/`
@@ -49,6 +51,7 @@ This is a monorepo with three distinct domains. Each has clear ownership of its 
 **Purpose**: Renders predictions on TradingView charts via Pine Script, consuming webhook data from the dashboard.
 
 **Owns**:
+
 - `indicators/` (Pine Script source)
 
 **Reads from**: Webhook payloads pushed from the dashboard
@@ -100,7 +103,7 @@ The symbol registry is the single source of truth for all symbol definitions.
 
 ### 4. Document Your Reasoning
 
-- Every design decision gets a *why*, not just a *what*.
+- Every design decision gets a _why_, not just a _what_.
 - Commit messages explain what changed and why. Not "fix stuff" or "update schema."
 - If you make an assumption, call it out explicitly as an assumption.
 
@@ -117,7 +120,7 @@ The symbol registry is the single source of truth for all symbol definitions.
 
 - `AGENTS.md` is the only agent instruction file in this repo.
 - Do not create `CLAUDE.md`, `CODEX.md`, `CURSOR.md`, or any other agent-specific instruction file.
-- If a tool requires a local config (e.g., `.cursorrules`), it must contain only: *Read and follow AGENTS.md at the repository root.*
+- If a tool requires a local config (e.g., `.cursorrules`), it must contain only: _Read and follow AGENTS.md at the repository root._
 
 ### 7. Respect Domain Boundaries
 
@@ -148,24 +151,24 @@ The symbol registry is a DB-authoritative system with a generated code fallback:
 
 ### Database (Prisma Schema)
 
-| Element | Convention | Example |
-|---------|-----------|---------|
-| Models | PascalCase | `MktFuturesMes1h` |
-| Table names (`@@map`) | snake_case | `mkt_futures_mes_1h` |
-| Columns | camelCase in Prisma, snake_case in DB via `@map` | `eventTime` → `event_time` |
-| Enums | PascalCase | `DataSource`, `EconCategory` |
-| Enum values | SCREAMING_SNAKE | `DATABENTO`, `TARGET_HIT` |
-| Indexes | snake_case descriptive | `mkt_futures_mes_1h_event_time_key` |
+| Element               | Convention                                       | Example                             |
+| --------------------- | ------------------------------------------------ | ----------------------------------- |
+| Models                | PascalCase                                       | `MktFuturesMes1h`                   |
+| Table names (`@@map`) | snake_case                                       | `mkt_futures_mes_1h`                |
+| Columns               | camelCase in Prisma, snake_case in DB via `@map` | `eventTime` → `event_time`          |
+| Enums                 | PascalCase                                       | `DataSource`, `EconCategory`        |
+| Enum values           | SCREAMING_SNAKE                                  | `DATABENTO`, `TARGET_HIT`           |
+| Indexes               | snake_case descriptive                           | `mkt_futures_mes_1h_event_time_key` |
 
 ### TypeScript
 
-| Element | Convention | Example |
-|---------|-----------|---------|
-| Files | kebab-case | `symbol-registry.ts` |
-| Variables/functions | camelCase | `getSymbolsByRole()` |
-| Constants | SCREAMING_SNAKE | `PRIMARY_SYMBOL` |
-| Types/interfaces | PascalCase | `IngestionSymbol` |
-| Enums (TS) | PascalCase + PascalCase values | Prefer Prisma enums over TS enums |
+| Element             | Convention                     | Example                           |
+| ------------------- | ------------------------------ | --------------------------------- |
+| Files               | kebab-case                     | `symbol-registry.ts`              |
+| Variables/functions | camelCase                      | `getSymbolsByRole()`              |
+| Constants           | SCREAMING_SNAKE                | `PRIMARY_SYMBOL`                  |
+| Types/interfaces    | PascalCase                     | `IngestionSymbol`                 |
+| Enums (TS)          | PascalCase + PascalCase values | Prefer Prisma enums over TS enums |
 
 ### Timestamps
 
@@ -225,6 +228,7 @@ Options market data is pulled via the **Databento Python SDK** (`databento` pack
 **15 CME option parents**: ES.OPT, NQ.OPT, OG.OPT, SO.OPT, LO.OPT, OKE.OPT, ON.OPT, OH.OPT, OB.OPT, HXE.OPT, OZN.OPT, OZB.OPT, OZF.OPT, EUU.OPT, JPU.OPT
 
 **Critical knowledge:**
+
 - `stype_in='parent'` returns ALL child contracts (~3K for ES.OPT = ~288K stat rows/day). Use `batch.submit_job()` or weekly streaming chunks for ES/NQ. Monthly works for the rest.
 - `statistics` schema stat_types: 3=Settlement, 6=Volume, 9=OI, 14=IV, 15=Delta. Filter early to reduce storage.
 - Definition files (strikes, expirations, put/call class) are on disk at the Databento Data Dump: `/Volumes/Satechi Hub/Databento Data Dump/Options/definitions/` (2010–2026, `.dbn.zst` format).
@@ -276,12 +280,12 @@ All agents MUST use the Memory MCP server to persist and recall project decision
 
 The Memory MCP is pre-configured for each agent platform:
 
-| Platform | Config file | Key format |
-|----------|-------------|------------|
-| Claude Code / Desktop | `.mcp.json` (repo root) | `mcpServers.memory` |
-| VS Code Copilot | `.vscode/mcp.json` | `servers.memory` |
-| Cline | `.clinerules` + `.mcp.json` | Uses `.mcp.json` |
-| Cursor | `.mcp.json` | Uses `.mcp.json` |
+| Platform              | Config file                 | Key format          |
+| --------------------- | --------------------------- | ------------------- |
+| Claude Code / Desktop | `.mcp.json` (repo root)     | `mcpServers.memory` |
+| VS Code Copilot       | `.vscode/mcp.json`          | `servers.memory`    |
+| Cline                 | `.clinerules` + `.mcp.json` | Uses `.mcp.json`    |
+| Cursor                | `.mcp.json`                 | Uses `.mcp.json`    |
 
 ### Rules
 
@@ -318,5 +322,5 @@ When you receive a task:
 
 ---
 
-*Last updated: 2026-02-22*
-*Maintained by: Kirk (architect) with Claude (governance)*
+_Last updated: 2026-02-22_
+_Maintained by: Kirk (architect) with Claude (governance)_

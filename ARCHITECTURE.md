@@ -96,13 +96,13 @@ To answer that, it:
 
 #### Market Data (`mkt_*`)
 
-| Table | Key | Granularity | Notes |
-|-------|-----|-------------|-------|
-| `mkt_futures_mes_15m` | `eventTime` unique | 15-min | MES intraday — primary trading timeframe |
-| `mkt_futures_mes_1h` | `eventTime` unique | Hourly | MES hourly candles |
-| `mkt_futures_mes_1d` | `eventDate` unique | Daily | MES daily candles |
-| `mkt_futures_1h` | `(symbolCode, eventTime)` unique | Hourly | Non-MES futures, FK to symbols |
-| `mkt_futures_1d` | `(symbolCode, eventDate)` unique | Daily | Non-MES futures, FK to symbols |
+| Table                 | Key                              | Granularity | Notes                                    |
+| --------------------- | -------------------------------- | ----------- | ---------------------------------------- |
+| `mkt_futures_mes_15m` | `eventTime` unique               | 15-min      | MES intraday — primary trading timeframe |
+| `mkt_futures_mes_1h`  | `eventTime` unique               | Hourly      | MES hourly candles                       |
+| `mkt_futures_mes_1d`  | `eventDate` unique               | Daily       | MES daily candles                        |
+| `mkt_futures_1h`      | `(symbolCode, eventTime)` unique | Hourly      | Non-MES futures, FK to symbols           |
+| `mkt_futures_1d`      | `(symbolCode, eventDate)` unique | Daily       | Non-MES futures, FK to symbols           |
 
 Check constraints: `mkt_futures_1h` and `mkt_futures_1d` have DB-level check constraints preventing `symbolCode = 'MES'` to enforce MES isolation.
 
@@ -110,59 +110,59 @@ Check constraints: `mkt_futures_1h` and `mkt_futures_1d` have DB-level check con
 
 All econ domain tables share identical structure: `(seriesId, eventDate)` unique, FK to `economic_series`.
 
-| Table | Category | Source |
-|-------|----------|--------|
-| `econ_rates_1d` | RATES | FRED |
-| `econ_yields_1d` | YIELDS | FRED |
-| `econ_fx_1d` | FX | FRED |
-| `econ_vol_indices_1d` | VOLATILITY | FRED |
-| `econ_inflation_1d` | INFLATION | FRED |
-| `econ_labor_1d` | LABOR | FRED |
-| `econ_activity_1d` | ACTIVITY | FRED |
-| `econ_money_1d` | MONEY | FRED |
-| `econ_commodities_1d` | COMMODITIES | FRED |
-| `econ_indexes_1d` | EQUITY | FRED |
+| Table                 | Category    | Source |
+| --------------------- | ----------- | ------ |
+| `econ_rates_1d`       | RATES       | FRED   |
+| `econ_yields_1d`      | YIELDS      | FRED   |
+| `econ_fx_1d`          | FX          | FRED   |
+| `econ_vol_indices_1d` | VOLATILITY  | FRED   |
+| `econ_inflation_1d`   | INFLATION   | FRED   |
+| `econ_labor_1d`       | LABOR       | FRED   |
+| `econ_activity_1d`    | ACTIVITY    | FRED   |
+| `econ_money_1d`       | MONEY       | FRED   |
+| `econ_commodities_1d` | COMMODITIES | FRED   |
+| `econ_indexes_1d`     | EQUITY      | FRED   |
 
 #### News & Macro
 
-| Table | Key | Purpose |
-|-------|-----|---------|
-| `econ_news_1d` | `rowHash` unique | Economic news articles |
-| `policy_news_1d` | `rowHash` unique | Policy/political news |
+| Table              | Key                              | Purpose                        |
+| ------------------ | -------------------------------- | ------------------------------ |
+| `econ_news_1d`     | `rowHash` unique                 | Economic news articles         |
+| `policy_news_1d`   | `rowHash` unique                 | Policy/political news          |
 | `macro_reports_1d` | `(reportCode, eventDate)` unique | Macro economic report releases |
-| `econ_calendar` | `(eventDate, eventName)` unique | Economic event calendar |
-| `news_signals` | `link` unique | RSS-sourced news signals |
+| `econ_calendar`    | `(eventDate, eventName)` unique  | Economic event calendar        |
+| `news_signals`     | `link` unique                    | RSS-sourced news signals       |
 
 #### Signals & Models
 
-| Table | Key | Purpose |
-|-------|-----|---------|
-| `bhg_setups` | `setupId` unique | Break-Hook-Go trade setups with outcome tracking |
-| `measured_move_signals` | `(symbolCode, timeframe, timestamp, direction)` unique | Measured move pattern detection |
-| `mes_model_registry` | `(modelName, version)` unique | Trained model metadata and metrics |
+| Table                   | Key                                                    | Purpose                                          |
+| ----------------------- | ------------------------------------------------------ | ------------------------------------------------ |
+| `bhg_setups`            | `setupId` unique                                       | Break-Hook-Go trade setups with outcome tracking |
+| `measured_move_signals` | `(symbolCode, timeframe, timestamp, direction)` unique | Measured move pattern detection                  |
+| `mes_model_registry`    | `(modelName, version)` unique                          | Trained model metadata and metrics               |
 
 #### Reference & Meta
 
-| Table | Purpose |
-|-------|---------|
-| `symbols` | Canonical symbol identity (code, display name, tick size, data source) |
-| `symbol_mappings` | Maps symbols to provider-specific identifiers |
-| `economic_series` | Canonical economic series identity (FRED series, category, frequency) |
-| `data_source_registry` | Tracks all data sources, their target tables, and ingestion scripts |
-| `ingestion_runs` | Audit log for every ingestion execution |
+| Table                  | Purpose                                                                |
+| ---------------------- | ---------------------------------------------------------------------- |
+| `symbols`              | Canonical symbol identity (code, display name, tick size, data source) |
+| `symbol_mappings`      | Maps symbols to provider-specific identifiers                          |
+| `economic_series`      | Canonical economic series identity (FRED series, category, frequency)  |
+| `data_source_registry` | Tracks all data sources, their target tables, and ingestion scripts    |
+| `ingestion_runs`       | Audit log for every ingestion execution                                |
 
 ## Ingestion Architecture
 
 ### Data Sources
 
-| Source | Provider | What It Feeds | Ingestion Path |
-|--------|----------|---------------|----------------|
-| Databento | REST API | MES candles (15m, 1h, 1d), non-MES futures | `ingest-market-prices.ts`, `ingest-market-prices-daily.ts`, `backfill-*.ts` |
-| Databento | Python SDK (batch) | Options statistics (OI, volume, IV, delta, settlement) for 15 CME parents | `pull-options-statistics.py`, `pull-options-ohlcv.py` |
-| FRED | REST API | All `econ_*_1d` tables via `economic_series` | `ingest-fred-complete.ts`, `ingest-macro-indicators.ts` |
-| Yahoo | REST API | Supplemental market data | `ingest-macro-indicators.ts` |
-| Google News | RSS | `news_signals` | `src/lib/news-scrape.ts` |
-| Alt News Feeds | RSS/API | `econ_news_1d`, `policy_news_1d`, `macro_reports_1d` | `ingest-alt-news-feeds.ts` |
+| Source         | Provider           | What It Feeds                                                             | Ingestion Path                                                              |
+| -------------- | ------------------ | ------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Databento      | REST API           | MES candles (15m, 1h, 1d), non-MES futures                                | `ingest-market-prices.ts`, `ingest-market-prices-daily.ts`, `backfill-*.ts` |
+| Databento      | Python SDK (batch) | Options statistics (OI, volume, IV, delta, settlement) for 15 CME parents | `pull-options-statistics.py`, `pull-options-ohlcv.py`                       |
+| FRED           | REST API           | All `econ_*_1d` tables via `economic_series`                              | `ingest-fred-complete.ts`, `ingest-macro-indicators.ts`                     |
+| Yahoo          | REST API           | Supplemental market data                                                  | `ingest-macro-indicators.ts`                                                |
+| Google News    | RSS                | `news_signals`                                                            | `src/lib/news-scrape.ts`                                                    |
+| Alt News Feeds | RSS/API            | `econ_news_1d`, `policy_news_1d`, `macro_reports_1d`                      | `ingest-alt-news-feeds.ts`                                                  |
 
 ### Execution Model
 
@@ -248,31 +248,31 @@ All API routes live under `src/app/api/` following Next.js App Router convention
 
 ### Read-Only Routes (Dashboard)
 
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/api/analyse` | POST | Full multi-symbol analysis |
-| `/api/analyse/ai` | POST | AI-enhanced analysis |
-| `/api/analyse/chart` | POST | Chart data for MES 15m |
-| `/api/analyse/deterministic` | POST | Rule-based analysis |
-| `/api/analyse/market` | POST | Market condition assessment |
-| `/api/analyse/trades` | POST | Trade signal analysis |
-| `/api/forecast` | GET | Multi-symbol forecast |
-| `/api/market-data` | POST | Single-symbol candle data |
-| `/api/market-data/batch` | GET | All-symbol candle data |
-| `/api/mes/correlation` | GET | MES correlation scores |
-| `/api/mes/setups` | GET | Active BHG setups |
-| `/api/mes/setups/history` | GET | Historical BHG setups |
+| Route                        | Method | Purpose                     |
+| ---------------------------- | ------ | --------------------------- |
+| `/api/analyse`               | POST   | Full multi-symbol analysis  |
+| `/api/analyse/ai`            | POST   | AI-enhanced analysis        |
+| `/api/analyse/chart`         | POST   | Chart data for MES 15m      |
+| `/api/analyse/deterministic` | POST   | Rule-based analysis         |
+| `/api/analyse/market`        | POST   | Market condition assessment |
+| `/api/analyse/trades`        | POST   | Trade signal analysis       |
+| `/api/forecast`              | GET    | Multi-symbol forecast       |
+| `/api/market-data`           | POST   | Single-symbol candle data   |
+| `/api/market-data/batch`     | GET    | All-symbol candle data      |
+| `/api/mes/correlation`       | GET    | MES correlation scores      |
+| `/api/mes/setups`            | GET    | Active BHG setups           |
+| `/api/mes/setups/history`    | GET    | Historical BHG setups       |
 
 ### Read-Write Routes (Ingestion + Live)
 
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/api/ingest/econ-calendar` | GET | Trigger econ calendar ingestion |
-| `/api/live/mes` | GET (SSE) | Live MES data stream |
-| `/api/live/mes15m` | GET (SSE) | Live MES 15m data stream |
-| `/api/news/scrape` | GET | Trigger news scrape |
-| `/api/news/scrape-reports` | GET | Trigger news report scrape |
-| `/api/inngest` | GET/POST/PUT | Inngest webhook handler |
+| Route                       | Method       | Purpose                         |
+| --------------------------- | ------------ | ------------------------------- |
+| `/api/ingest/econ-calendar` | GET          | Trigger econ calendar ingestion |
+| `/api/live/mes`             | GET (SSE)    | Live MES data stream            |
+| `/api/live/mes15m`          | GET (SSE)    | Live MES 15m data stream        |
+| `/api/news/scrape`          | GET          | Trigger news scrape             |
+| `/api/news/scrape-reports`  | GET          | Trigger news report scrape      |
+| `/api/inngest`              | GET/POST/PUT | Inngest webhook handler         |
 
 ## Analysis Pipeline
 
@@ -306,17 +306,17 @@ Prisma provides type-safe database access, automatic migration management, and a
 
 ## Environment & Infrastructure
 
-| Component | Detail |
-|-----------|--------|
-| Database | PostgreSQL via Prisma Accelerate (`prisma+postgres://`) |
+| Component        | Detail                                                                      |
+| ---------------- | --------------------------------------------------------------------------- |
+| Database         | PostgreSQL via Prisma Accelerate (`prisma+postgres://`)                     |
 | Direct DB access | Requires `DIRECT_DATABASE_URL` (direct `postgres://` string) for migrations |
-| Hosting | Vercel (dashboard) |
-| Scheduling | Inngest (managed, event-driven) |
-| Market data | Databento (REST, requires `DATABENTO_API_KEY`) |
-| Economic data | FRED (REST, requires `FRED_API_KEY`) |
-| Development | Mac Mini (primary), MacBook Air (secondary), Satechi Hub external drive |
+| Hosting          | Vercel (dashboard)                                                          |
+| Scheduling       | Inngest (managed, event-driven)                                             |
+| Market data      | Databento (REST, requires `DATABENTO_API_KEY`)                              |
+| Economic data    | FRED (REST, requires `FRED_API_KEY`)                                        |
+| Development      | Mac Mini (primary), MacBook Air (secondary), Satechi Hub external drive     |
 
 ---
 
-*Last updated: 2026-02-22*
-*Maintained by: Kirk (architect) with Claude (governance)*
+_Last updated: 2026-02-22_
+_Maintained by: Kirk (architect) with Claude (governance)_
