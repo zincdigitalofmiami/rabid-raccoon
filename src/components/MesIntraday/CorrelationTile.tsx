@@ -50,17 +50,17 @@ export default function CorrelationTile() {
   const alignment = data?.bullish;
 
   return (
-    <div className="rounded-xl border border-[var(--zf-border-soft)] bg-[var(--zf-surface-elev)] p-5 flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <span className="text-[11px] font-mono uppercase tracking-widest text-[var(--zf-gold)]">
-          Correlation
-        </span>
+    <div className="rounded-xl border border-[var(--zf-border)] bg-[var(--zf-surface-elev)] p-8 flex flex-col">
+      <div className="flex items-end justify-between mb-6 gap-3">
+        <h3 className="text-white text-4xl font-black uppercase tracking-[0.12em] leading-none">
+          Correlations
+        </h3>
         {alignment && (
           <span
-            className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+            className={`text-xs font-black px-3 py-1 rounded-md border uppercase tracking-[0.08em] ${
               alignment.isAligned
-                ? "text-[var(--zf-green)] bg-[rgba(34,197,94,0.12)]"
-                : "text-red-400 bg-red-400/10"
+                ? "text-[var(--zf-green)] bg-[rgba(34,197,94,0.12)] border-[rgba(34,197,94,0.24)]"
+                : "text-red-400 bg-red-400/10 border-red-400/20"
             }`}
           >
             {alignment.isAligned ? "ALIGNED" : "CONFLICT"}
@@ -69,7 +69,7 @@ export default function CorrelationTile() {
       </div>
 
       {alignment ? (
-        <div className="space-y-3 mt-1">
+        <div className="space-y-4 mt-1">
           {(
             [
               { label: "VIX", value: alignment.vix },
@@ -85,12 +85,15 @@ export default function CorrelationTile() {
                   ? "text-[var(--zf-green)]"
                   : "text-red-400";
             return (
-              <div key={label} className="flex items-center justify-between">
-                <span className="text-[11px] font-mono text-[var(--zf-text-muted)]">
+              <div
+                key={label}
+                className="flex items-center justify-between border-b border-[var(--zf-border-soft)] pb-2"
+              >
+                <span className="text-sm font-bold uppercase tracking-wider text-white">
                   {label}
                 </span>
                 <span
-                  className={`text-base font-bold font-mono tabular-nums ${color}`}
+                  className={`text-3xl font-black font-mono tabular-nums ${color}`}
                 >
                   {value > 0 ? "+" : ""}
                   {value.toFixed(2)}
@@ -100,16 +103,16 @@ export default function CorrelationTile() {
           })}
         </div>
       ) : error ? (
-        <div className="text-xs text-red-400/70 mt-1">{error}</div>
+        <div className="text-sm text-red-400/90 mt-1">{error}</div>
       ) : (
-        <div className="flex items-center gap-2 mt-2">
-          <div className="w-3 h-3 border border-[var(--zf-border)] border-t-[var(--zf-gold)] rounded-full animate-spin" />
-          <span className="text-xs text-[var(--zf-text-muted)]">Loading...</span>
+        <div className="flex items-center gap-3 mt-2">
+          <div className="w-4 h-4 border-2 border-[var(--zf-border)] border-t-white rounded-full animate-spin" />
+          <span className="text-sm text-white/70">Loading correlations...</span>
         </div>
       )}
 
       {alignment && (
-        <div className="mt-auto pt-3 text-[10px] font-mono text-[var(--zf-text-muted)] border-t border-[var(--zf-border-soft)] mt-4">
+        <div className="mt-auto pt-4 text-xs font-mono text-white/65 border-t border-[var(--zf-border-soft)] mt-5">
           composite {alignment.composite.toFixed(3)} · n=
           {data?.meta.observations ?? 0}
         </div>

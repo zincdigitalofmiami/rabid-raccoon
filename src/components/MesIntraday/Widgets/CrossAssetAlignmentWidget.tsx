@@ -61,13 +61,13 @@ function AssetCell({ detail }: AssetCellProps) {
   }
 
   return (
-    <div className={`border rounded-xl p-6 flex flex-col gap-5 ${bgClass}`}>
+    <div className={`border rounded-xl p-7 flex flex-col gap-5 ${bgClass}`}>
       <div className="flex justify-between items-start">
         <div>
           <div className="font-black text-4xl text-white tracking-tight font-mono leading-none">
             {config.ticker}
           </div>
-          <div className="text-xs text-white/60 uppercase tracking-wider mt-1">
+          <div className="text-sm text-white/85 uppercase tracking-wider mt-1 font-semibold">
             {detail.label}
             {config.inverse ? " (inverse)" : ""}
           </div>
@@ -157,7 +157,7 @@ export function CrossAssetAlignmentWidget({ correlation, direction }: Props) {
               Cross-Asset Engine
             </h3>
             {correlation?.meta && (
-              <div className="text-sm text-white/65 mt-3 font-mono">
+              <div className="text-base text-white/85 mt-3 font-mono">
                 {correlation.meta.observations} observations ·{" "}
                 {correlation.meta.dateRange?.start} →{" "}
                 {correlation.meta.dateRange?.end}
