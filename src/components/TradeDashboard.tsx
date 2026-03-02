@@ -49,13 +49,13 @@ function SectionHeader({ title, badge }: { title: string; badge?: string }) {
   return (
     <div className="flex items-center gap-4 mb-6">
       <div className="flex items-center gap-3">
-        <div className="w-1 h-6 bg-amber-500 rounded-full" />
-        <h2 className="text-sm font-bold uppercase tracking-wider text-white/90">
+        <div className="w-1 h-6 bg-[var(--zf-gold)] rounded-full" />
+        <h2 className="text-sm font-bold uppercase tracking-wider text-[var(--zf-text)]">
           {title}
         </h2>
       </div>
       {badge && (
-        <span className="text-[11px] font-semibold uppercase tracking-wider px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+        <span className="text-[11px] font-semibold uppercase tracking-wider px-3 py-1 rounded-full bg-[rgba(251,191,36,0.12)] text-[var(--zf-gold)] border border-[rgba(251,191,36,0.22)]">
           {badge}
         </span>
       )}
@@ -71,20 +71,20 @@ function TradeCard({ trade }: { trade: ScoredTrade }) {
   const { setup, risk, score, reasoning } = trade;
   const isBullish = setup.direction === "BULLISH";
 
-  const dirColor = isBullish ? "text-emerald-400" : "text-red-400";
+  const dirColor = isBullish ? "text-[var(--zf-green)]" : "text-red-400";
   const dirBg = isBullish
-    ? "bg-emerald-400/10 border-emerald-400/20"
+    ? "bg-[rgba(34,197,94,0.12)] border-[rgba(34,197,94,0.24)]"
     : "bg-red-400/10 border-red-400/20";
 
   const gradeColors: Record<string, string> = {
-    A: "text-emerald-400",
-    B: "text-blue-400",
-    C: "text-yellow-400",
+    A: "text-[var(--zf-green)]",
+    B: "text-[var(--zf-cyan)]",
+    C: "text-[var(--zf-gold)]",
     D: "text-red-400",
   };
 
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#131722] p-6 hover:border-white/[0.12] transition-colors">
+    <div className="rounded-xl border border-[var(--zf-border-soft)] bg-[var(--zf-surface-elev)] p-6 hover:border-[var(--zf-border)] transition-colors">
       {/* Direction + Score header */}
       <div className="flex items-start justify-between mb-5">
         <div>
@@ -93,16 +93,16 @@ function TradeCard({ trade }: { trade: ScoredTrade }) {
           >
             {isBullish ? "▲" : "▼"} {setup.direction}
           </span>
-          <div className="mt-2 text-white/40 text-sm">
+          <div className="mt-2 text-[var(--zf-text-muted)] text-sm">
             {setupLabel(setup.goType, setup.fibRatio)}
           </div>
         </div>
         <div className="text-right">
-          <div className="text-3xl font-bold text-white/90 tabular-nums">
+          <div className="text-3xl font-bold text-[var(--zf-text)] tabular-nums">
             {score.composite}
           </div>
           <div
-            className={`text-sm font-semibold ${gradeColors[score.grade] ?? "text-white/50"}`}
+            className={`text-sm font-semibold ${gradeColors[score.grade] ?? "text-[var(--zf-text-muted)]"}`}
           >
             {gradeLabel(score.grade)}
           </div>
@@ -112,15 +112,15 @@ function TradeCard({ trade }: { trade: ScoredTrade }) {
       {/* Price Levels — big, clean grid */}
       <div className="grid grid-cols-4 gap-4 mb-5">
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-white/30 mb-1">
+          <div className="text-[11px] uppercase tracking-wider text-[var(--zf-text-muted)] mb-1">
             Entry
           </div>
-          <div className="text-lg font-bold text-white/90 tabular-nums">
+          <div className="text-lg font-bold text-[var(--zf-text)] tabular-nums">
             {setup.entry?.toFixed(2) ?? "—"}
           </div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-white/30 mb-1">
+          <div className="text-[11px] uppercase tracking-wider text-[var(--zf-text-muted)] mb-1">
             Stop
           </div>
           <div className="text-lg font-bold text-red-400/80 tabular-nums">
@@ -128,56 +128,56 @@ function TradeCard({ trade }: { trade: ScoredTrade }) {
           </div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-white/30 mb-1">
+          <div className="text-[11px] uppercase tracking-wider text-[var(--zf-text-muted)] mb-1">
             Target 1
           </div>
-          <div className="text-lg font-bold text-emerald-400/90 tabular-nums">
+          <div className="text-lg font-bold text-[var(--zf-green)] tabular-nums">
             {setup.tp1?.toFixed(2) ?? "—"}
           </div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-white/30 mb-1">
+          <div className="text-[11px] uppercase tracking-wider text-[var(--zf-text-muted)] mb-1">
             Target 2
           </div>
-          <div className="text-lg font-bold text-emerald-400/60 tabular-nums">
+          <div className="text-lg font-bold text-[rgba(34,197,94,0.7)] tabular-nums">
             {setup.tp2?.toFixed(2) ?? "—"}
           </div>
         </div>
       </div>
 
       {/* Probability + Risk bar */}
-      <div className="flex items-center gap-6 py-4 border-t border-white/[0.06] mb-4">
+      <div className="flex items-center gap-6 py-4 border-t border-[var(--zf-border-soft)] mb-4">
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-white/30 mb-1">
+          <div className="text-[11px] uppercase tracking-wider text-[var(--zf-text-muted)] mb-1">
             Win Rate
           </div>
-          <div className="text-xl font-bold text-emerald-400 tabular-nums">
+          <div className="text-xl font-bold text-[var(--zf-green)] tabular-nums">
             {(score.pTp1 * 100).toFixed(0)}%
           </div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-white/30 mb-1">
+          <div className="text-[11px] uppercase tracking-wider text-[var(--zf-text-muted)] mb-1">
             Extended
           </div>
-          <div className="text-xl font-bold text-emerald-400/60 tabular-nums">
+          <div className="text-xl font-bold text-[rgba(34,197,94,0.7)] tabular-nums">
             {(score.pTp2 * 100).toFixed(0)}%
           </div>
         </div>
         {risk && (
           <>
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-white/30 mb-1">
+              <div className="text-[11px] uppercase tracking-wider text-[var(--zf-text-muted)] mb-1">
                 Reward
               </div>
-              <div className="text-xl font-bold text-white/80 tabular-nums">
+              <div className="text-xl font-bold text-[var(--zf-text)] tabular-nums">
                 {risk.rr.toFixed(1)}x
               </div>
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-white/30 mb-1">
+              <div className="text-[11px] uppercase tracking-wider text-[var(--zf-text-muted)] mb-1">
                 Risk
               </div>
-              <div className="text-xl font-bold text-amber-400 tabular-nums">
+              <div className="text-xl font-bold text-[var(--zf-gold)] tabular-nums">
                 ${risk.dollarRisk.toFixed(0)}
               </div>
             </div>
@@ -187,11 +187,11 @@ function TradeCard({ trade }: { trade: ScoredTrade }) {
 
       {/* AI Rationale */}
       {reasoning.rationale && reasoning.rationale !== "No risk data" && (
-        <div className="rounded-lg bg-white/[0.02] border border-white/[0.04] p-4">
-          <div className="text-[11px] uppercase tracking-wider text-white/30 mb-2">
+        <div className="rounded-lg bg-[rgba(255,255,255,0.03)] border border-[var(--zf-border-soft)] p-4">
+          <div className="text-[11px] uppercase tracking-wider text-[var(--zf-text-muted)] mb-2">
             Analysis
           </div>
-          <p className="text-sm text-white/60 leading-relaxed">
+          <p className="text-sm text-[var(--zf-text)] leading-relaxed">
             {reasoning.rationale}
           </p>
         </div>
@@ -203,7 +203,7 @@ function TradeCard({ trade }: { trade: ScoredTrade }) {
           {score.flags.map((flag, i) => (
             <span
               key={i}
-              className="text-xs px-2.5 py-1 rounded-lg bg-white/[0.04] text-white/40 border border-white/[0.06]"
+              className="text-xs px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.05)] text-[var(--zf-text-muted)] border border-[var(--zf-border-soft)]"
             >
               {flag.replace(/_/g, " ").replace(/--/g, " ")}
             </span>
@@ -291,10 +291,10 @@ export default function TradeDashboard() {
   const _currentPrice = tradesData.currentPrice;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f]">
+    <div className="min-h-screen bg-[var(--zf-bg)]">
       {/* Chart — very top, flush under site header */}
       <div className="px-4 lg:px-6 pt-4 mb-2">
-        <div className="rounded-xl border border-white/[0.06] bg-[#131722] overflow-hidden">
+        <div className="rounded-xl border border-[var(--zf-border-soft)] bg-[var(--zf-surface-elev)] overflow-hidden">
           <LiveMesChart
             ref={chartRef}
             setups={setupsData?.setups}
@@ -320,13 +320,17 @@ export default function TradeDashboard() {
           />
 
           {tradesLoading && tradeCount === 0 ? (
-            <div className="rounded-xl border border-white/[0.06] bg-[#131722] p-12 text-center">
-              <div className="text-lg text-white/30">Loading trades...</div>
+            <div className="rounded-xl border border-[var(--zf-border-soft)] bg-[var(--zf-surface-elev)] p-12 text-center">
+              <div className="text-lg text-[var(--zf-text-muted)]">
+                Loading trades...
+              </div>
             </div>
           ) : tradeCount === 0 ? (
-            <div className="rounded-xl border border-white/[0.06] bg-[#131722] p-12 text-center">
-              <div className="text-lg text-white/40 mb-2">No Active Setups</div>
-              <p className="text-sm text-white/20">
+            <div className="rounded-xl border border-[var(--zf-border-soft)] bg-[var(--zf-surface-elev)] p-12 text-center">
+              <div className="text-lg text-[var(--zf-text)] mb-2">
+                No Active Setups
+              </div>
+              <p className="text-sm text-[var(--zf-text-muted)]">
                 Waiting for price to trigger a fib level. Trades appear
                 automatically.
               </p>

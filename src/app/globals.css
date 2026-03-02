@@ -8,11 +8,28 @@
   --tv-bull: #26a69a;
   --tv-bear: #ef5350;
   --tv-blue: #2962ff;
+
+  /* Zinc Fusion V15 palette */
+  --zf-bg: #000000;
+  --zf-surface: #0a0a0a;
+  --zf-surface-elev: #101418;
+  --zf-header: rgba(0, 0, 0, 0.95);
+  --zf-text: #e2e8f0;
+  --zf-text-muted: #94a3b8;
+  --zf-cyan: #22d3ee;
+  --zf-cyan-2: #26c6da;
+  --zf-gold: #fbbf24;
+  --zf-gold-deep: #eab308;
+  --zf-green: #22c55e;
+  --zf-border: rgba(255, 255, 255, 0.08);
+  --zf-border-soft: rgba(255, 255, 255, 0.05);
+  --zf-chip-cyan: rgba(6, 182, 212, 0.1);
+  --zf-control: rgba(30, 41, 59, 0.8);
 }
 
 body {
-  background: #0a0a0a;
-  color: #d1d4dc;
+  background: var(--zf-bg);
+  color: var(--zf-text);
 }
 
 /* Hide scrollbar but allow scrolling */
