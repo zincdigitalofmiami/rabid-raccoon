@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
+import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 60;
 
@@ -48,6 +47,17 @@ function buildFallbackNarrative(input: {
   return `MES bias is ${direction} (${confidence}). ${alignmentText}; event phase is ${eventPhase} (${eventLabel}), and ${riskText}.`;
 }
 
+function clampToMaxSentences(text: string, maxSentences = 3): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  const parts = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [normalized];
+  return parts
+    .slice(0, maxSentences)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -59,9 +69,9 @@ export async function POST(req: Request) {
       risk,
     });
 
-    const prompt = `You are a quantitative trading system monitor for the MES (Micro E-mini S&P 500) futures market.
-Synthesize the following real-time data into a 2-3 sentence extremely concise, actionable narrative.
-Tone: Institutional, sharp, objective. Use data parameters if relevant.
+    const prompt = `You are a quantitative MES (Micro E-mini S&P 500) market analysis engine.
+Use neural-pattern reasoning and deep chart-structure interpretation from the structured data below.
+Return exactly 2-3 concise institutional sentences (max 3 total), no bullets, no markdown.
 
 Data:
 - Forecast: ${JSON.stringify(forecast)}
@@ -69,8 +79,10 @@ Data:
 - Event Context: ${JSON.stringify(eventContext)}
 - Risk: ${JSON.stringify(risk)}
 
-Format strictly as:
-"MES is [current state based on data]. Alignment is [positive/negative/divergent], [mention event risk if any]. Possible Next Entry Point: [Direction] [Target] (Est. timeframe)."
+Required content:
+1) Current MES directional state and conviction.
+2) Cross-asset alignment quality and macro/event risk implication.
+3) One actionable next-entry framing with direction + target/zone + expected horizon.
 `;
 
     if (!process.env.ANTHROPIC_API_KEY) {
@@ -79,13 +91,26 @@ Format strictly as:
       });
     }
 
-    const { text } = await generateText({
-      model: anthropic("claude-3-5-sonnet-latest"),
-      prompt,
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const response = await client.messages.create({
+      model: "claude-opus-4-6",
+      max_tokens: 280,
       temperature: 0.1,
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: prompt }],
+        },
+      ],
     });
 
-    return NextResponse.json({ narrative: text || fallbackNarrative });
+    const textBlock = response.content.find((b) => b.type === "text");
+    const aiNarrative =
+      textBlock && textBlock.type === "text" ? textBlock.text : "";
+    const narrative = clampToMaxSentences(aiNarrative, 3) || fallbackNarrative;
+
+    return NextResponse.json({ narrative });
   } catch (error) {
     console.error("AI Synthesis error:", error);
     return NextResponse.json({
