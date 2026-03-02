@@ -26,15 +26,15 @@ export function ForecastMomentumWidget({ forecast, setupsData }: Props) {
   }
 
   return (
-    <div className="bg-[var(--zf-surface-elev)] border border-[var(--zf-border)] rounded-xl p-8 flex flex-col justify-between shadow-lg shadow-black/20">
+    <div className="bg-[var(--zf-surface-elev)] border border-[var(--zf-border)] rounded-xl p-10 flex flex-col justify-between shadow-lg shadow-black/20">
       {/* Top Half: Forecast */}
       <div className="mb-8">
-        <h3 className="text-[var(--zf-cyan)] text-sm font-bold tracking-widest uppercase mb-4">
+        <h3 className="text-white text-2xl md:text-3xl font-black tracking-[0.1em] uppercase mb-5 leading-none">
           1H Price Target (Warbird)
         </h3>
         <div className="flex flex-wrap items-baseline gap-3">
           <span
-            className={`text-6xl font-mono font-bold tabular-nums tracking-tighter ${isBullish ? "text-[var(--zf-green)]" : "text-red-400"}`}
+            className={`text-7xl font-mono font-black tabular-nums tracking-tighter ${isBullish ? "text-[var(--zf-green)]" : "text-red-400"}`}
           >
             {typeof primaryTarget === "number"
               ? primaryTarget.toFixed(2)
@@ -42,7 +42,7 @@ export function ForecastMomentumWidget({ forecast, setupsData }: Props) {
           </span>
           {typeof primaryTarget === "number" && (
             <span
-              className={`${isBullish ? "text-[rgba(34,197,94,0.65)]" : "text-red-400/60"} text-xl font-bold tabular-nums tracking-tight`}
+              className={`${isBullish ? "text-[rgba(34,197,94,0.65)]" : "text-red-400/60"} text-2xl font-black tabular-nums tracking-tight`}
             >
               {isBullish ? "▲" : "▼"} {Math.abs(diff).toFixed(2)} pts
             </span>

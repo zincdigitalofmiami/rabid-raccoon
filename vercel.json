@@ -1,3 +1,34 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "regions": ["iad1"],
+  "functions": {
+    "src/app/api/**/*.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "src/app/api/inngest/route.ts": {
+      "memory": 1024,
+      "maxDuration": 300
+    },
+    "src/app/api/live/*/route.ts": {
+      "memory": 512,
+      "maxDuration": 300
+    },
+    "src/app/api/ingest/*/route.ts": {
+      "memory": 1024,
+      "maxDuration": 300
+    },
+    "src/app/api/news/*/route.ts": {
+      "memory": 1024,
+      "maxDuration": 120
+    },
+    "src/app/api/forecast/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "src/app/api/trades/upcoming/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  }
 }

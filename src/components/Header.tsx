@@ -2,12 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 
 export default function Header() {
   const [time, setTime] = useState("");
   const [window, setWindow] = useState("");
-  const pathname = usePathname();
 
   useEffect(() => {
     function update() {
@@ -52,32 +50,15 @@ export default function Header() {
     return () => clearInterval(interval);
   }, []);
 
-  const navItems = [{ href: "/", label: "Markets" }];
-
   return (
-    <header className="flex items-center justify-between px-1 py-4 border-b border-[var(--zf-border-soft)] bg-[var(--zf-header)]">
+    <header className="flex items-center justify-between px-1 py-5 border-b border-[var(--zf-border-soft)] bg-[var(--zf-header)]">
       <div className="flex items-center gap-4">
         <Link
           href="/"
-          className="text-sm font-bold text-[var(--zf-text)] tracking-tight hover:text-[var(--zf-cyan)] transition-colors"
+          className="text-2xl md:text-3xl font-black text-[var(--zf-text)] tracking-[0.08em] uppercase hover:text-white transition-colors leading-none"
         >
           RABID RACCOON
         </Link>
-        <nav className="flex items-center gap-1">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
-                pathname === item.href
-                  ? "bg-[var(--zf-chip-cyan)] text-[var(--zf-cyan)] border border-[rgba(6,182,212,0.2)]"
-                  : "text-[var(--zf-text-muted)] hover:text-[var(--zf-text)] hover:bg-[rgba(255,255,255,0.05)]"
-              }`}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
       </div>
       <div className="flex items-center gap-3">
         {window && (

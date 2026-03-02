@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import fs from 'node:fs'
 import path from 'node:path'
 
+// Serves a static pre-computed file — cache at the edge for 5 minutes
+export const revalidate = 300
+
 /**
  * ML Forecast API — serves pre-computed predictions from public/ml-predictions.json
  *

@@ -40,8 +40,8 @@ type MesPoint = {
 
 type StreamStatus = "connecting" | "live" | "error";
 
-const BAR_INTERVAL_SEC = 900; // 15m
-const GO_RECENT_BARS = 32;
+const BAR_INTERVAL_SEC = 60; // 1m
+const GO_RECENT_BARS = 480; // ~8 hours of 1m bars — same window as old 32×15m
 const MAX_TOUCH_MARKERS = 1;
 const MAX_HOOK_MARKERS = 1;
 
@@ -323,8 +323,8 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           fixLeftEdge: false,
           fixRightEdge: false,
           rightOffset: 16,
-          barSpacing: 12,
-          minBarSpacing: 6,
+          barSpacing: 3,
+          minBarSpacing: 1,
           // Map gap-free sequential times → real CT timestamps for axis labels
           tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) => {
             const realTime = timeMapRef.current.gfToReal.get(time as number);
@@ -379,10 +379,10 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       const series = chart.addSeries(CandlestickSeries, {
         upColor: "#26C6DA",
         downColor: "#FF0000",
-        borderUpColor: "transparent",
-        borderDownColor: "transparent",
-        wickUpColor: "#FFFFFF",
-        wickDownColor: "rgba(178,181,190,0.83)",
+        borderUpColor: "#26C6DA",
+        borderDownColor: "#FF0000",
+        wickUpColor: "#26C6DA",
+        wickDownColor: "#FF0000",
         priceLineVisible: false,
         lastValueVisible: false,
         priceFormat: {
@@ -424,7 +424,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
 
     // --- SSE stream ---
     useEffect(() => {
-      const eventSource = new EventSource("/api/live/mes15m?backfill=672");
+      const eventSource = new EventSource("/api/live/mes1m?backfill=1080");
 
       const updateSessionStats = (points: MesPoint[]) => {
         if (points.length === 0) return;
@@ -486,7 +486,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           updateSessionStats(rawPoints);
 
           // Force barSpacing after setData — LWC auto-fits all bars on first load, overriding spacing
-          chartRef.current?.timeScale().applyOptions({ barSpacing: 12 });
+          chartRef.current?.timeScale().applyOptions({ barSpacing: 3 });
           // Scroll to right edge with whitespace
           chartRef.current?.timeScale().scrollToPosition(16, false);
 
@@ -559,7 +559,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       const onSseError = () => {
         setStatus("error");
         setError(
-          "Live stream disconnected. Verify MES 15m ingestion is running.",
+          "Live stream disconnected. Verify MES ingestion is running.",
         );
       };
 
@@ -671,7 +671,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
               </span>
             </div>
             <span className="text-xs text-white/30 font-medium">
-              Micro E-mini S&P 500 &bull; 15m
+              Micro E-mini S&P 500 &bull; 1m
             </span>
             {eventPhase && eventPhase !== "CLEAR" && (
               <span

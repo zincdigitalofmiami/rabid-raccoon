@@ -29,8 +29,9 @@ function AssetCell({ detail }: AssetCellProps) {
   };
   const r = detail.correlation;
   const rStr = (r > 0 ? "+" : "") + r.toFixed(3);
+  const strength =
+    Math.abs(r) >= 0.6 ? "Strong" : Math.abs(r) >= 0.3 ? "Moderate" : "Weak";
 
-  // Color: aligned = green, divergent = rose
   const aligned = detail.bullishAligned;
   const colorClass = aligned ? "text-[var(--zf-green)]" : "text-red-400";
   const bgClass = aligned
@@ -60,74 +61,62 @@ function AssetCell({ detail }: AssetCellProps) {
   }
 
   return (
-    <div
-      className={`relative border rounded-lg overflow-hidden p-5 flex flex-col justify-between ${bgClass}`}
-    >
-      {/* Huge faded background r-value */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
-        <span
-          className={`text-6xl font-bold font-mono opacity-[0.04] tabular-nums ${colorClass}`}
-        >
-          {rStr}
-        </span>
-      </div>
-
-      {/* Header row */}
-      <div className="flex justify-between items-start z-10 mb-3">
+    <div className={`border rounded-xl p-6 flex flex-col gap-5 ${bgClass}`}>
+      <div className="flex justify-between items-start">
         <div>
-          <div className="font-bold text-xl text-[var(--zf-text)] tracking-tight font-mono">
+          <div className="font-black text-4xl text-white tracking-tight font-mono leading-none">
             {config.ticker}
           </div>
-          <div className="text-[10px] text-[var(--zf-text-muted)] uppercase tracking-wider mt-0.5">
+          <div className="text-xs text-white/60 uppercase tracking-wider mt-1">
             {detail.label}
             {config.inverse ? " (inverse)" : ""}
           </div>
         </div>
         <div
-          className={`px-2 py-0.5 text-[10px] font-bold rounded border tracking-wide uppercase ${tagBg}`}
+          className={`px-2.5 py-1 text-[10px] font-black rounded-md border tracking-[0.08em] uppercase ${tagBg}`}
         >
           {aligned ? "Aligned" : "Divergent"}
         </div>
       </div>
 
-      {/* Correlation value */}
-      <div className="z-10 mt-auto">
+      <div>
         <div className="flex items-baseline gap-2">
           <span
-            className={`text-3xl font-mono font-bold tabular-nums tracking-tighter ${colorClass}`}
+            className={`text-5xl font-mono font-black tabular-nums tracking-tight ${colorClass}`}
           >
-            r={rStr}
+            {rStr}
           </span>
           {trendArrow && (
             <span
-              className={`text-sm font-bold ${trendColor}`}
+              className={`text-base font-black ${trendColor}`}
               title="30d vs 180d trend"
             >
               {trendArrow}
             </span>
           )}
+          <span className="text-xs text-white/50 font-semibold uppercase tracking-wider">
+            {strength}
+          </span>
         </div>
 
-        {/* Rolling values */}
-        <div className="flex gap-3 mt-2 text-[10px] font-mono text-[var(--zf-text-muted)] tabular-nums">
+        <div className="flex gap-3 mt-3 text-[11px] font-mono text-white/70 tabular-nums">
           {detail.rolling30d !== null && (
             <span>
-              30d: {detail.rolling30d > 0 ? "+" : ""}
+              30D {detail.rolling30d > 0 ? "+" : ""}
               {detail.rolling30d.toFixed(3)}
             </span>
           )}
           {detail.rolling90d !== null && (
             <span>
-              90d: {detail.rolling90d > 0 ? "+" : ""}
+              90D {detail.rolling90d > 0 ? "+" : ""}
               {detail.rolling90d.toFixed(3)}
             </span>
           )}
         </div>
 
-        {/* Weight + observations */}
-        <div className="flex gap-3 mt-1.5 text-[10px] text-[var(--zf-text-muted)]">
-          <span>wt: {(detail.weight * 100).toFixed(0)}%</span>
-          <span>obs: {detail.observations}</span>
+        <div className="flex gap-4 mt-2 text-[10px] text-white/55 uppercase tracking-wider">
+          <span>Wt {(detail.weight * 100).toFixed(0)}%</span>
+          <span>Obs {detail.observations}</span>
         </div>
       </div>
     </div>
@@ -161,40 +150,43 @@ export function CrossAssetAlignmentWidget({ correlation, direction }: Props) {
 
   return (
     <div className="bg-[var(--zf-surface-elev)] border border-[var(--zf-border)] rounded-xl p-8 xl:col-span-1 shadow-lg shadow-black/20 flex flex-col">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-5">
-        <div>
-          <h3 className="text-[var(--zf-text-muted)] text-sm font-bold tracking-widest uppercase">
-            Cross-Asset Engine
-          </h3>
-          {correlation?.meta && (
-            <div className="text-[10px] text-[var(--zf-text-muted)] mt-1 font-mono">
-              {correlation.meta.observations} obs ·{" "}
-              {correlation.meta.dateRange?.start} →{" "}
-              {correlation.meta.dateRange?.end}
+      <div className="flex flex-col gap-5 mb-7">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h3 className="text-white text-4xl md:text-5xl font-black uppercase tracking-[0.12em] leading-none">
+              Cross-Asset Engine
+            </h3>
+            {correlation?.meta && (
+              <div className="text-sm text-white/65 mt-3 font-mono">
+                {correlation.meta.observations} observations ·{" "}
+                {correlation.meta.dateRange?.start} →{" "}
+                {correlation.meta.dateRange?.end}
+              </div>
+            )}
+          </div>
+          <div className="text-right">
+            <div className="text-white text-6xl font-black tabular-nums leading-none">
+              {pct}%
             </div>
-          )}
+            <div
+              className={`mt-2 text-xs font-black uppercase tracking-[0.1em] ${
+                isAligned ? "text-[var(--zf-green)]" : "text-red-400"
+              }`}
+            >
+              {isBullishTarget ? "Bull" : "Bear"} {isAligned ? "Aligned" : "Divergent"}
+            </div>
+          </div>
         </div>
-        <span
-          className={`text-sm font-bold px-3 py-1 rounded-full border ${
-            isAligned
-              ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-              : "text-amber-400 bg-amber-500/10 border-amber-500/20"
-          }`}
-        >
-          {pct}% {isBullishTarget ? "Bull" : "Bear"}
-        </span>
+        <div className="h-px bg-[var(--zf-border-soft)]" />
       </div>
 
-      {/* Details string */}
       {alignment?.details && (
-        <p className="text-xs text-[var(--zf-text-muted)] mb-5 leading-relaxed">
+        <p className="text-base text-white/80 mb-6 leading-relaxed">
           {alignment.details}
         </p>
       )}
 
-      {/* 2x3 Asset grid */}
-      <div className="grid grid-cols-2 gap-3 lg:gap-4 flex-1">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
         {orderedSymbols.map((sym) => (
           <AssetCell key={sym.symbol} detail={sym} />
         ))}

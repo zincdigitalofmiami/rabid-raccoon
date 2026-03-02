@@ -5,28 +5,28 @@
  * and adds directional alignment scoring for BHG setups.
  */
 
-import { CandleData } from './types'
-import { computeCorrelations } from './market-context'
-import type { SetupDirection } from './bhg-engine'
+import { CandleData } from "./types";
+import { computeCorrelations } from "./market-context";
+import type { SetupDirection } from "./bhg-engine";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CorrelationAlignment {
-  vix: number        // raw MES-VIX correlation
-  dxy: number        // raw MES-DXY correlation
-  nq: number         // raw MES-NQ correlation
-  cl?: number        
-  zn?: number
-  gc?: number
-  composite: number  // -1 (short-aligned) to +1 (long-aligned)
-  isAligned: boolean // composite agrees with setup direction
-  details: string    // human-readable summary
+  vix: number; // raw MES-VIX correlation
+  dxy: number; // raw MES-DXY correlation
+  nq: number; // raw MES-NQ correlation
+  cl?: number;
+  zn?: number;
+  gc?: number;
+  composite: number; // -1 (short-aligned) to +1 (long-aligned)
+  isAligned: boolean; // composite agrees with setup direction
+  details: string; // human-readable summary
 }
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
 
 function clamp(n: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, n))
+  return Math.max(min, Math.min(max, n));
 }
 
 /**
@@ -42,52 +42,58 @@ function clamp(n: number, min: number, max: number): number {
  */
 export function computeAlignmentScore(
   symbolCandles: Map<string, CandleData[]>,
-  setupDirection: SetupDirection
+  setupDirection: SetupDirection,
 ): CorrelationAlignment {
-  const correlations = computeCorrelations(symbolCandles)
+  const correlations = computeCorrelations(symbolCandles);
 
-  const vixCorr = correlations.find((c) => c.pair === 'MES↔VX')
-  const dxyCorr = correlations.find((c) => c.pair === 'MES↔DX')
-  const nqCorr = correlations.find((c) => c.pair === 'MES↔NQ')
+  const vixCorr = correlations.find((c) => c.pair === "MES↔VX");
+  const dxyCorr = correlations.find((c) => c.pair === "MES↔DX");
+  const nqCorr = correlations.find((c) => c.pair === "MES↔NQ");
 
-  const vixRaw = vixCorr?.value ?? 0
-  const dxyRaw = dxyCorr?.value ?? 0
-  const nqRaw = nqCorr?.value ?? 0
+  const vixRaw = vixCorr?.value ?? 0;
+  const dxyRaw = dxyCorr?.value ?? 0;
+  const nqRaw = nqCorr?.value ?? 0;
 
   // Translate to bullish-alignment scores:
   // VIX inverse: negative correlation = bullish (risk-on)
-  const vixScore = -vixRaw
+  const vixScore = -vixRaw;
   // DXY inverse: negative correlation = bullish (weak dollar)
-  const dxyScore = -dxyRaw
+  const dxyScore = -dxyRaw;
   // NQ positive: positive correlation = bullish (tech confirming)
-  const nqScore = nqRaw
+  const nqScore = nqRaw;
 
   // Weighted composite (bullish-aligned scale: -1 to +1)
   const composite = clamp(
     0.4 * vixScore + 0.3 * nqScore + 0.3 * dxyScore,
     -1,
-    1
-  )
+    1,
+  );
 
   // Alignment with the specific setup direction
   const isAligned =
-    setupDirection === 'BULLISH' ? composite > 0 : composite < 0
+    setupDirection === "BULLISH" ? composite > 0 : composite < 0;
 
   // Human-readable summary
-  const parts: string[] = []
+  const parts: string[] = [];
   if (Math.abs(vixRaw) > 0.3) {
-    parts.push(`VIX ${vixRaw > 0 ? 'positive' : 'inverse'} (${vixRaw.toFixed(2)})`)
+    parts.push(
+      `VIX ${vixRaw > 0 ? "positive" : "inverse"} (${vixRaw.toFixed(2)})`,
+    );
   }
   if (Math.abs(nqRaw) > 0.3) {
-    parts.push(`NQ ${nqRaw > 0 ? 'confirming' : 'diverging'} (${nqRaw.toFixed(2)})`)
+    parts.push(
+      `NQ ${nqRaw > 0 ? "confirming" : "diverging"} (${nqRaw.toFixed(2)})`,
+    );
   }
   if (Math.abs(dxyRaw) > 0.3) {
-    parts.push(`DXY ${dxyRaw > 0 ? 'headwind' : 'tailwind'} (${dxyRaw.toFixed(2)})`)
+    parts.push(
+      `DXY ${dxyRaw > 0 ? "headwind" : "tailwind"} (${dxyRaw.toFixed(2)})`,
+    );
   }
   const details =
     parts.length > 0
-      ? `${isAligned ? 'Aligned' : 'Conflicted'}: ${parts.join(', ')}`
-      : `Neutral cross-asset regime (composite ${composite.toFixed(2)})`
+      ? `${isAligned ? "Aligned" : "Conflicted"}: ${parts.join(", ")}`
+      : `Neutral cross-asset regime (composite ${composite.toFixed(2)})`;
 
   return {
     vix: vixRaw,
@@ -96,5 +102,5 @@ export function computeAlignmentScore(
     composite: Number(composite.toFixed(3)),
     isAligned,
     details,
-  }
+  };
 }

@@ -10,6 +10,8 @@ const FIFTEEN_MIN_SECONDS = 15 * 60;
 const DEFAULT_LOOKBACK_MINUTES = 18 * 60;
 const DEFAULT_MIN_REFRESH_INTERVAL_MS = 30_000;
 const MAX_CANDLES_TO_UPSERT = 500;
+const MAX_1M_CANDLES_TO_UPSERT = 1200; // ~20 hours of 1m bars
+const BATCH_SIZE = 40;
 
 let lastRefreshAttemptAtMs = 0;
 
@@ -28,6 +30,12 @@ function asUtcDateFromUnixSeconds(seconds: number): Date {
 function hashPriceRow(eventTime: Date, close: number): string {
   return createHash("sha256")
     .update(`MES-15M|${eventTime.toISOString()}|${close}`)
+    .digest("hex");
+}
+
+function hash1mRow(eventTime: Date, close: number): string {
+  return createHash("sha256")
+    .update(`MES-1M|${eventTime.toISOString()}|${close}`)
     .digest("hex");
 }
 
@@ -131,7 +139,61 @@ export async function refreshMes15mFromDatabento(options?: {
       maxAttempts: 2,
     });
 
-    const candles15m = aggregateTo15m(dedupeAndSort(toCandles(records))).slice(
+    const sorted1m = dedupeAndSort(toCandles(records));
+
+    // ── Store raw 1m bars (zero extra cost — data already in memory) ────────
+    const candles1m = sorted1m.slice(-MAX_1M_CANDLES_TO_UPSERT);
+    if (candles1m.length > 0) {
+      const UPSERT_1M_SQL = `
+        INSERT INTO "mkt_futures_mes_1m" (
+          "eventTime", "open", "high", "low", "close", "volume",
+          "source", "sourceDataset", "sourceSchema", "rowHash",
+          "ingestedAt", "knowledgeTime"
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'DATABENTO'::"DataSource", $7, $8, $9, NOW(), NOW())
+        ON CONFLICT ("eventTime") DO UPDATE SET
+          "open" = EXCLUDED."open",
+          "high" = EXCLUDED."high",
+          "low" = EXCLUDED."low",
+          "close" = EXCLUDED."close",
+          "volume" = EXCLUDED."volume",
+          "rowHash" = EXCLUDED."rowHash",
+          "ingestedAt" = NOW(),
+          "knowledgeTime" = NOW()
+      `;
+      const pool1m = getDirectPool();
+      const client1m = await pool1m.connect();
+      try {
+        for (let i = 0; i < candles1m.length; i += BATCH_SIZE) {
+          const batch = candles1m.slice(i, i + BATCH_SIZE);
+          await client1m.query("BEGIN");
+          for (const candle of batch) {
+            const eventTime = asUtcDateFromUnixSeconds(candle.time);
+            await client1m.query(UPSERT_1M_SQL, [
+              eventTime,
+              candle.open,
+              candle.high,
+              candle.low,
+              candle.close,
+              Math.max(0, Math.trunc(candle.volume || 0)),
+              MES_DATASET,
+              SOURCE_SCHEMA,
+              hash1mRow(eventTime, candle.close),
+            ]);
+          }
+          await client1m.query("COMMIT");
+        }
+      } catch (err1m) {
+        await client1m.query("ROLLBACK").catch(() => {});
+        // Don't fail the whole refresh if 1m storage fails — 15m is still primary
+        console.error("[mes-refresh] 1m upsert failed:", err1m);
+      } finally {
+        client1m.release();
+      }
+    }
+
+    // ── Aggregate to 15m (existing pipeline) ────────────────────────────────
+    const candles15m = aggregateTo15m(sorted1m).slice(
       -MAX_CANDLES_TO_UPSERT,
     );
     if (candles15m.length === 0) {
@@ -166,7 +228,6 @@ export async function refreshMes15mFromDatabento(options?: {
         "ingestedAt" = NOW(),
         "knowledgeTime" = NOW()
     `;
-    const BATCH_SIZE = 40;
     let rowsUpserted = 0;
     const pool = getDirectPool();
     const client = await pool.connect();

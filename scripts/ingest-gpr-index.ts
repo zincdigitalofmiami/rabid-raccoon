@@ -3,8 +3,12 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/prisma";
 import { loadDotEnvFiles, parseArg } from "./ingest-utils";
 
+// NOTE: The CSV URL was removed ~March 2026. Daily data is now XLS only.
+// This script still works via the CSV parse path if a CSV format is restored.
+// For bulk historical loads, use the Python script (scripts/ingest-gpr-xls.py)
+// which reads the XLS directly via xlrd + psycopg2.
 const GPR_URL =
-  "https://www.matteoiacoviello.com/gpr_files/data_gpr_export.csv";
+  "https://www.matteoiacoviello.com/gpr_files/data_gpr_daily_recent.xls";
 const GPR_SOURCE = "caldara_iacoviello";
 
 interface GprRow {

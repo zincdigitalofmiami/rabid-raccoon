@@ -13,191 +13,221 @@
  *   - Weighted composite score across all 6 cross-asset symbols
  */
 
-import { NextResponse } from 'next/server'
-import * as fs from 'fs'
-import * as path from 'path'
+import { NextResponse } from "next/server";
+import * as fs from "fs";
+import * as path from "path";
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
+export const runtime = "nodejs";
+export const revalidate = 300;
 
 // ── Types (authoritative for this route) ─────────────────────────────────────
 
 interface SymbolCorrelation {
-  symbol: string
-  label: string
-  correlation: number | null
-  rollingCorrelations: Record<string, number>
-  bullishAligned: boolean
-  bullishScore: number
-  weight: number
-  observations: number
-  status: 'OK' | 'NO_DATA'
+  symbol: string;
+  label: string;
+  correlation: number | null;
+  rollingCorrelations: Record<string, number>;
+  bullishAligned: boolean;
+  bullishScore: number;
+  weight: number;
+  observations: number;
+  status: "OK" | "NO_DATA";
 }
 
 interface CompositeScore {
-  bullishScore: number
-  bearishScore: number
-  bullishAligned: boolean
-  bearishAligned: boolean
-  pctAligned: number
+  bullishScore: number;
+  bearishScore: number;
+  bullishAligned: boolean;
+  bearishAligned: boolean;
+  pctAligned: number;
 }
 
 interface PythonOutput {
-  generatedAt: string
-  lookbackDays: number
-  observations: number
-  dateRange: { start: string; end: string }
-  symbols: Record<string, SymbolCorrelation>
-  composite: CompositeScore
+  generatedAt: string;
+  lookbackDays: number;
+  observations: number;
+  dateRange: { start: string; end: string };
+  symbols: Record<string, SymbolCorrelation>;
+  composite: CompositeScore;
 }
 
 // What the frontend consumes
 export interface CorrelationAlignment {
-  nq: number
-  vix: number
-  dxy: number
-  cl: number
-  zn: number
-  gc: number
-  composite: number
-  isAligned: boolean
-  details: string
+  nq: number;
+  vix: number;
+  dxy: number;
+  cl: number;
+  zn: number;
+  gc: number;
+  composite: number;
+  isAligned: boolean;
+  details: string;
 }
 
 interface CorrelationMeta {
-  cadence: 'daily'
-  lookbackDays: number
-  observations: number
-  dateRange: { start: string; end: string }
-  availableSymbols: string[]
-  missingSymbols: string[]
-  generatedAt: string
+  cadence: "daily";
+  lookbackDays: number;
+  observations: number;
+  dateRange: { start: string; end: string };
+  availableSymbols: string[];
+  missingSymbols: string[];
+  generatedAt: string;
 }
 
 interface CorrelationSymbolDetail {
-  symbol: string
-  label: string
-  correlation: number
-  rolling30d: number | null
-  rolling90d: number | null
-  rolling180d: number | null
-  bullishAligned: boolean
-  bullishScore: number
-  weight: number
-  observations: number
+  symbol: string;
+  label: string;
+  correlation: number;
+  rolling30d: number | null;
+  rolling90d: number | null;
+  rolling180d: number | null;
+  bullishAligned: boolean;
+  bullishScore: number;
+  weight: number;
+  observations: number;
 }
 
 interface CorrelationResponse {
-  bullish: CorrelationAlignment
-  bearish: CorrelationAlignment
-  symbols: CorrelationSymbolDetail[]
-  meta: CorrelationMeta
-  timestamp: string
+  bullish: CorrelationAlignment;
+  bearish: CorrelationAlignment;
+  symbols: CorrelationSymbolDetail[];
+  meta: CorrelationMeta;
+  timestamp: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function getCorr(symbols: Record<string, SymbolCorrelation>, key: string): number {
-  return symbols[key]?.correlation ?? 0
+function getCorr(
+  symbols: Record<string, SymbolCorrelation>,
+  key: string,
+): number {
+  return symbols[key]?.correlation ?? 0;
 }
 
 function buildDetails(
   symbols: Record<string, SymbolCorrelation>,
-  isAligned: boolean
+  isAligned: boolean,
 ): string {
-  const parts: string[] = []
+  const parts: string[] = [];
 
-  const nq = symbols['nq']
-  const vx = symbols['vx']
-  const dx = symbols['dx']
-  const cl = symbols['cl']
-  const zn = symbols['zn']
-  const gc = symbols['gc']
+  const nq = symbols["nq"];
+  const vx = symbols["vx"];
+  const dx = symbols["dx"];
+  const cl = symbols["cl"];
+  const zn = symbols["zn"];
+  const gc = symbols["gc"];
 
   if (nq?.correlation && Math.abs(nq.correlation) > 0.3) {
-    parts.push(`NQ ${nq.correlation > 0 ? 'confirming' : 'diverging'} (${nq.correlation.toFixed(2)})`)
+    parts.push(
+      `NQ ${nq.correlation > 0 ? "confirming" : "diverging"} (${nq.correlation.toFixed(2)})`,
+    );
   }
   if (vx?.correlation && Math.abs(vx.correlation) > 0.3) {
-    parts.push(`VIX ${vx.correlation < 0 ? 'inverse (risk-on)' : 'positive (risk-off)'} (${vx.correlation.toFixed(2)})`)
+    parts.push(
+      `VIX ${vx.correlation < 0 ? "inverse (risk-on)" : "positive (risk-off)"} (${vx.correlation.toFixed(2)})`,
+    );
   }
   if (dx?.correlation && Math.abs(dx.correlation) > 0.3) {
-    parts.push(`DXY ${dx.correlation > 0 ? 'headwind' : 'tailwind'} (${dx.correlation.toFixed(2)})`)
+    parts.push(
+      `DXY ${dx.correlation > 0 ? "headwind" : "tailwind"} (${dx.correlation.toFixed(2)})`,
+    );
   }
   if (cl?.correlation && Math.abs(cl.correlation) > 0.3) {
-    parts.push(`CL ${cl.correlation > 0 ? 'confirming' : 'diverging'} (${cl.correlation.toFixed(2)})`)
+    parts.push(
+      `CL ${cl.correlation > 0 ? "confirming" : "diverging"} (${cl.correlation.toFixed(2)})`,
+    );
   }
   if (zn?.correlation && Math.abs(zn.correlation) > 0.3) {
-    parts.push(`ZN ${zn.correlation < 0 ? 'flight-to-safety' : 'risk-appetite'} (${zn.correlation.toFixed(2)})`)
+    parts.push(
+      `ZN ${zn.correlation < 0 ? "flight-to-safety" : "risk-appetite"} (${zn.correlation.toFixed(2)})`,
+    );
   }
   if (gc?.correlation && Math.abs(gc.correlation) > 0.3) {
-    parts.push(`GC ${gc.correlation > 0 ? 'confirming' : 'diverging'} (${gc.correlation.toFixed(2)})`)
+    parts.push(
+      `GC ${gc.correlation > 0 ? "confirming" : "diverging"} (${gc.correlation.toFixed(2)})`,
+    );
   }
 
   if (parts.length === 0) {
-    return 'Neutral cross-asset regime — no strong directional signals.'
+    return "Neutral cross-asset regime — no strong directional signals.";
   }
 
-  return `${isAligned ? 'Aligned' : 'Conflicted'}: ${parts.join(' · ')}`
+  return `${isAligned ? "Aligned" : "Conflicted"}: ${parts.join(" · ")}`;
 }
 
 // ── Route ────────────────────────────────────────────────────────────────────
 
 export async function GET() {
   try {
-    const jsonPath = path.join(process.cwd(), 'public', 'daily-correlations.json')
+    const jsonPath = path.join(
+      process.cwd(),
+      "public",
+      "daily-correlations.json",
+    );
 
     if (!fs.existsSync(jsonPath)) {
       return NextResponse.json(
-        { error: 'Correlations not yet computed. Run: .venv-finance/bin/python scripts/compute-daily-correlations.py' },
-        { status: 503 }
-      )
+        {
+          error:
+            "Correlations not yet computed. Run: .venv-finance/bin/python scripts/compute-daily-correlations.py",
+        },
+        { status: 503 },
+      );
     }
 
-    const raw: PythonOutput = JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
-    const { symbols, composite } = raw
+    const raw: PythonOutput = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+    const { symbols, composite } = raw;
 
-    const constructAlignment = (direction: 'BULLISH' | 'BEARISH'): CorrelationAlignment => {
-      const isBullish = direction === 'BULLISH'
-      const isAligned = isBullish ? composite.bullishAligned : composite.bearishAligned
+    const constructAlignment = (
+      direction: "BULLISH" | "BEARISH",
+    ): CorrelationAlignment => {
+      const isBullish = direction === "BULLISH";
+      const isAligned = isBullish
+        ? composite.bullishAligned
+        : composite.bearishAligned;
 
       return {
-        nq: getCorr(symbols, 'nq'),
-        vix: getCorr(symbols, 'vx'),
-        dxy: getCorr(symbols, 'dx'),
-        cl: getCorr(symbols, 'cl'),
-        zn: getCorr(symbols, 'zn'),
-        gc: getCorr(symbols, 'gc'),
+        nq: getCorr(symbols, "nq"),
+        vix: getCorr(symbols, "vx"),
+        dxy: getCorr(symbols, "dx"),
+        cl: getCorr(symbols, "cl"),
+        zn: getCorr(symbols, "zn"),
+        gc: getCorr(symbols, "gc"),
         composite: isBullish ? composite.bullishScore : composite.bearishScore,
         isAligned,
         details: buildDetails(symbols, isAligned),
-      }
-    }
+      };
+    };
 
     // Build per-symbol detail array for widget consumption
     const symbolDetails: CorrelationSymbolDetail[] = Object.values(symbols)
-      .filter((s) => s.status === 'OK')
+      .filter((s) => s.status === "OK")
       .map((s) => ({
         symbol: s.symbol,
         label: s.label,
         correlation: s.correlation ?? 0,
-        rolling30d: s.rollingCorrelations['30d'] ?? null,
-        rolling90d: s.rollingCorrelations['90d'] ?? null,
-        rolling180d: s.rollingCorrelations['180d'] ?? null,
+        rolling30d: s.rollingCorrelations["30d"] ?? null,
+        rolling90d: s.rollingCorrelations["90d"] ?? null,
+        rolling180d: s.rollingCorrelations["180d"] ?? null,
         bullishAligned: s.bullishAligned,
         bullishScore: s.bullishScore,
         weight: s.weight,
         observations: s.observations,
-      }))
+      }));
 
-    const available = Object.values(symbols).filter(s => s.status === 'OK').map(s => s.symbol)
-    const missing = Object.values(symbols).filter(s => s.status === 'NO_DATA').map(s => s.symbol)
+    const available = Object.values(symbols)
+      .filter((s) => s.status === "OK")
+      .map((s) => s.symbol);
+    const missing = Object.values(symbols)
+      .filter((s) => s.status === "NO_DATA")
+      .map((s) => s.symbol);
 
     const response: CorrelationResponse = {
-      bullish: constructAlignment('BULLISH'),
-      bearish: constructAlignment('BEARISH'),
+      bullish: constructAlignment("BULLISH"),
+      bearish: constructAlignment("BEARISH"),
       symbols: symbolDetails,
       meta: {
-        cadence: 'daily',
+        cadence: "daily",
         lookbackDays: raw.lookbackDays,
         observations: raw.observations,
         dateRange: raw.dateRange,
@@ -206,14 +236,17 @@ export async function GET() {
         generatedAt: raw.generatedAt,
       },
       timestamp: new Date().toISOString(),
-    }
+    };
 
-    return NextResponse.json(response)
+    return NextResponse.json(response);
   } catch (error: unknown) {
-    console.error('Correlation route error:', error)
+    console.error("Correlation route error:", error);
     return NextResponse.json(
-      { error: 'Internal correlation error', details: error instanceof Error ? error.message : 'Unknown' },
-      { status: 500 }
-    )
+      {
+        error: "Internal correlation error",
+        details: error instanceof Error ? error.message : "Unknown",
+      },
+      { status: 500 },
+    );
   }
 }
