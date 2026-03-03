@@ -44,6 +44,10 @@ type StreamStatus = "connecting" | "live" | "error";
 
 const BAR_INTERVAL_SEC = 900; // 15m
 const GO_RECENT_BARS = 32; // ~8 hours of 15m bars
+const INITIAL_VISIBLE_BARS = 120;
+const RIGHT_PADDING_BARS = 16;
+const DEFAULT_BAR_SPACING = 10;
+const MIN_BAR_SPACING = 8;
 const MAX_TOUCH_MARKERS = 1;
 const MAX_HOOK_MARKERS = 1;
 
@@ -240,6 +244,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
     const primitiveRef = useRef<ForecastTargetsPrimitive | null>(null);
     const bhgPrimitiveRef = useRef<BhgMarkersPrimitive | null>(null);
     const pivotPrimitiveRef = useRef<PivotLinesPrimitive | null>(null);
+    const initialViewportAppliedRef = useRef(false);
 
     // Gap-free points (sequential times for chart rendering)
     const pointsRef = useRef<MesPoint[]>([]);
@@ -335,8 +340,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           fixLeftEdge: false,
           fixRightEdge: false,
           rightOffset: 16,
-          barSpacing: 8,
-          minBarSpacing: 4,
+          barSpacing: DEFAULT_BAR_SPACING,
+          minBarSpacing: MIN_BAR_SPACING,
+          lockVisibleTimeRangeOnResize: true,
           // Map gap-free sequential times → real CT timestamps for axis labels
           tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) => {
             const realTime = timeMapRef.current.gfToReal.get(time as number);
@@ -490,7 +496,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           const whitespace = ensureFutureWhitespace(
             lastGfTime,
             BAR_INTERVAL_SEC,
-            16,
+            RIGHT_PADDING_BARS,
           );
 
           // Register whitespace times in the map so axis labels render correctly
@@ -506,10 +512,25 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
 
           updateSessionStats(rawPoints);
 
-          // Force barSpacing after setData — LWC auto-fits all bars on first load, overriding spacing
-          chartRef.current?.timeScale().applyOptions({ barSpacing: 8 });
-          // Scroll to right edge with whitespace
-          chartRef.current?.timeScale().scrollToPosition(16, false);
+          const timeScale = chartRef.current?.timeScale();
+          // Keep desired spacing after setData (LWC may auto-fit on initial snapshot).
+          timeScale?.applyOptions({
+            barSpacing: DEFAULT_BAR_SPACING,
+            minBarSpacing: MIN_BAR_SPACING,
+          });
+
+          if (timeScale && !initialViewportAppliedRef.current) {
+            // Docs-aligned approach: render a fixed logical window so candles are full-width.
+            const totalBars = gfPoints.length;
+            const visibleBars = Math.min(INITIAL_VISIBLE_BARS, totalBars);
+            const from = Math.max(0, totalBars - visibleBars);
+            const to = Math.max(0, totalBars - 1) + RIGHT_PADDING_BARS;
+            timeScale.setVisibleLogicalRange({ from, to });
+            initialViewportAppliedRef.current = true;
+          } else {
+            // Keep view anchored right during reconnect snapshots.
+            timeScale?.scrollToPosition(RIGHT_PADDING_BARS, false);
+          }
 
           setStatus("live");
           setError(null);
@@ -549,7 +570,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           const whitespace = ensureFutureWhitespace(
             lastGfTime,
             BAR_INTERVAL_SEC,
-            16,
+            RIGHT_PADDING_BARS,
           );
           for (let i = 0; i < whitespace.length; i++) {
             const wsGfTime = whitespace[i].time as number;

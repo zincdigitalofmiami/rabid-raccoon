@@ -25,6 +25,15 @@ interface MesRow {
   volume: bigint | null
 }
 
+interface Mes1mRow {
+  eventTime: Date
+  open: Decimal | number
+  high: Decimal | number
+  low: Decimal | number
+  close: Decimal | number
+  volume: bigint | null
+}
+
 function encodeSse(event: string, payload: unknown): Uint8Array {
   const body = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
   return new TextEncoder().encode(body)
@@ -75,6 +84,49 @@ function rowFingerprint(row: MesRow): string {
   ].join('|')
 }
 
+const FIFTEEN_MIN_SECONDS = 15 * 60
+
+function aggregateTo15mFrom1m(rows: Mes1mRow[]): MesRow[] {
+  if (rows.length === 0) return []
+  const sorted = [...rows].sort(
+    (a, b) => a.eventTime.getTime() - b.eventTime.getTime()
+  )
+  const out: MesRow[] = []
+
+  let bucketStartSec = -1
+  let bucket: MesRow | null = null
+
+  for (const row of sorted) {
+    const sec = Math.floor(row.eventTime.getTime() / 1000)
+    const alignedSec = Math.floor(sec / FIFTEEN_MIN_SECONDS) * FIFTEEN_MIN_SECONDS
+    const alignedTime = new Date(alignedSec * 1000)
+
+    if (!bucket || alignedSec !== bucketStartSec) {
+      if (bucket) out.push(bucket)
+      bucketStartSec = alignedSec
+      bucket = {
+        eventTime: alignedTime,
+        open: row.open,
+        high: row.high,
+        low: row.low,
+        close: row.close,
+        volume: row.volume,
+      }
+      continue
+    }
+
+    bucket.high = Math.max(toNum(bucket.high), toNum(row.high))
+    bucket.low = Math.min(toNum(bucket.low), toNum(row.low))
+    bucket.close = row.close
+    const prevVol = bucket.volume == null ? 0n : BigInt(bucket.volume)
+    const nextVol = row.volume == null ? 0n : BigInt(row.volume)
+    bucket.volume = prevVol + nextVol
+  }
+
+  if (bucket) out.push(bucket)
+  return out
+}
+
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url)
   const backfill = Number(url.searchParams.get('backfill') || '96')
@@ -97,10 +149,20 @@ export async function GET(request: Request): Promise<Response> {
       try {
         // Serve DB data immediately — don't block on Databento refresh
         // Background refresh runs on first poll interval (60s)
-        const initial = await prisma.mktFuturesMes15m.findMany({
+        const oneMinuteBackfill = Math.max(backfillCount * 15 + 240, 2400)
+        const initial1m = await prisma.mktFuturesMes1m.findMany({
           orderBy: { eventTime: 'desc' },
-          take: backfillCount,
+          take: oneMinuteBackfill,
         })
+
+        const aggregated15m = aggregateTo15mFrom1m(initial1m).slice(-backfillCount)
+        const fallback15m = aggregated15m.length === 0
+          ? await prisma.mktFuturesMes15m.findMany({
+              orderBy: { eventTime: 'desc' },
+              take: backfillCount,
+            })
+          : []
+        const initial = aggregated15m.length > 0 ? aggregated15m : fallback15m
 
         if (initial.length === 0) {
           pushErrorAndClose(
@@ -131,10 +193,17 @@ export async function GET(request: Request): Promise<Response> {
         try {
           await refreshMes15mFromDatabento({ force: false })
 
-          const latest = await prisma.mktFuturesMes15m.findMany({
+          const oneMinuteLookback = Math.max(
+            4000,
+            Math.max(40, Math.min(250, backfillCount)) * 15 + 240
+          )
+          const latest1m = await prisma.mktFuturesMes1m.findMany({
             orderBy: { eventTime: 'desc' },
-            take: Math.max(40, Math.min(250, backfillCount)),
+            take: oneMinuteLookback,
           })
+          const latest = aggregateTo15mFrom1m(latest1m).slice(
+            -Math.max(40, Math.min(250, backfillCount))
+          )
 
           if (latest.length === 0) {
             controller.enqueue(encodeSse('ping', { ts: Date.now() }))
