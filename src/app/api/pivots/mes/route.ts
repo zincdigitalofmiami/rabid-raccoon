@@ -30,6 +30,11 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const lines: PivotLine[] = [];
+    const now = new Date();
+    const withStart = (items: PivotLine[], start: Date): PivotLine[] => {
+      const startSec = Math.floor(start.getTime() / 1000);
+      return items.map((line) => ({ ...line, startTime: startSec }));
+    };
 
     // ── Daily Pivots ──────────────────────────────────────────────────────
     // Previous trading day's OHLC from the daily bars table.
@@ -47,12 +52,13 @@ export async function GET() {
         toNum(prevDay.low),
         toNum(prevDay.close),
       );
-      lines.push(...pivotLevelsToLines(daily, "D", 3));
+      const startOfThisDay = new Date(now);
+      startOfThisDay.setUTCHours(0, 0, 0, 0);
+      lines.push(...withStart(pivotLevelsToLines(daily, "D", 3), startOfThisDay));
     }
 
     // ── Weekly Pivots ─────────────────────────────────────────────────────
     // Aggregate previous calendar week's daily bars.
-    const now = new Date();
     const dayOfWeek = now.getUTCDay(); // 0=Sun
     const startOfThisWeek = new Date(now);
     startOfThisWeek.setUTCDate(now.getUTCDate() - dayOfWeek);
@@ -74,7 +80,7 @@ export async function GET() {
       const weekLow = Math.min(...weekBars.map((b) => toNum(b.low)));
       const weekClose = toNum(weekBars[weekBars.length - 1].close);
       const weekly = calculateTraditionalPivots(weekHigh, weekLow, weekClose);
-      lines.push(...pivotLevelsToLines(weekly, "W", 2));
+      lines.push(...withStart(pivotLevelsToLines(weekly, "W", 2), startOfThisWeek));
     }
 
     // ── Monthly Pivots ────────────────────────────────────────────────────
@@ -102,7 +108,7 @@ export async function GET() {
         monthLow,
         monthClose,
       );
-      lines.push(...pivotLevelsToLines(monthly, "M", 2));
+      lines.push(...withStart(pivotLevelsToLines(monthly, "M", 2), startOfThisMonth));
     }
 
     // ── Yearly Pivots ─────────────────────────────────────────────────────
@@ -122,7 +128,7 @@ export async function GET() {
       const yearLow = Math.min(...yearBars.map((b) => toNum(b.low)));
       const yearClose = toNum(yearBars[yearBars.length - 1].close);
       const yearly = calculateTraditionalPivots(yearHigh, yearLow, yearClose);
-      lines.push(...pivotLevelsToLines(yearly, "Y", 1));
+      lines.push(...withStart(pivotLevelsToLines(yearly, "Y", 1), startOfThisYear));
     }
 
     return NextResponse.json({

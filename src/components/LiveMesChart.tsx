@@ -8,24 +8,24 @@ import {
   forwardRef,
   useImperativeHandle,
 } from "react";
+import Image from "next/image";
 import {
   CandlestickSeries,
   ColorType,
   createChart,
   IChartApi,
-  IPriceLine,
   ISeriesApi,
   LineStyle,
   TickMarkType,
   Time,
   UTCTimestamp,
-  LastPriceAnimationMode,
 } from "lightweight-charts";
 import type { ForecastResponse, MeasuredMove, CandleData } from "@/lib/types";
 import type { BhgSetup } from "@/lib/bhg-engine";
 import type { PivotLine, PivotTimeframe } from "@/lib/pivots";
 import { ForecastTargetsPrimitive } from "@/lib/charts/ForecastTargetsPrimitive";
 import { BhgMarkersPrimitive } from "@/lib/charts/BhgMarkersPrimitive";
+import { PivotLinesPrimitive } from "@/lib/charts/PivotLinesPrimitive";
 import { mapMeasuredMoveAndCoreToTargets } from "@/lib/charts/blendTargets";
 import { ensureFutureWhitespace } from "@/lib/charts/ensureFutureWhitespace";
 import { calculateFibonacciMultiPeriod } from "@/lib/fibonacci";
@@ -54,8 +54,6 @@ const PIVOT_COLORS: Record<PivotTimeframe, string> = {
   M: "#FF9800",  // orange — monthly
   Y: "#FF9800",  // orange — yearly
 };
-const PIVOT_LINE_STYLE = LineStyle.Dashed;
-const PIVOT_LINE_WIDTH = 1;
 
 // ─── Gap-Free Time Mapping ──────────────────────────────────────────────────
 // TradingView removes session gaps (weekends, maintenance breaks) so bars
@@ -241,7 +239,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
     const seriesRef = useRef<ISeriesApi<"Candlestick", Time> | null>(null);
     const primitiveRef = useRef<ForecastTargetsPrimitive | null>(null);
     const bhgPrimitiveRef = useRef<BhgMarkersPrimitive | null>(null);
-    const pivotLinesRef = useRef<IPriceLine[]>([]);
+    const pivotPrimitiveRef = useRef<PivotLinesPrimitive | null>(null);
 
     // Gap-free points (sequential times for chart rendering)
     const pointsRef = useRef<MesPoint[]>([]);
@@ -378,13 +376,13 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
         },
         handleScroll: {
           mouseWheel: false,
-          pressedMouseMove: true,
-          horzTouchDrag: true,
+          pressedMouseMove: false,
+          horzTouchDrag: false,
           vertTouchDrag: false,
         },
         handleScale: {
-          mouseWheel: true,
-          pinch: true,
+          mouseWheel: false,
+          pinch: false,
           axisPressedMouseMove: { time: true, price: true },
           axisDoubleClickReset: { time: true, price: true },
         },
@@ -400,7 +398,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
         wickUpColor: "#FFFFFF",
         wickDownColor: "rgba(178,181,190,0.83)",
         priceLineVisible: true,
-        lastValueVisible: false,
+        lastValueVisible: true,
         priceFormat: {
           type: "price",
           precision: 2,
@@ -416,10 +414,15 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       const bhgPrimitive = new BhgMarkersPrimitive();
       series.attachPrimitive(bhgPrimitive);
 
+      // Attach pivot lines primitive (custom canvas — no axis boxes, solid lines)
+      const pivotPrimitive = new PivotLinesPrimitive();
+      series.attachPrimitive(pivotPrimitive);
+
       chartRef.current = chart;
       seriesRef.current = series;
       primitiveRef.current = primitive;
       bhgPrimitiveRef.current = bhgPrimitive;
+      pivotPrimitiveRef.current = pivotPrimitive;
 
       const resizeObserver = new ResizeObserver(() => {
         chart.applyOptions({ autoSize: true });
@@ -430,17 +433,19 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
         resizeObserver.disconnect();
         series.detachPrimitive(primitive);
         series.detachPrimitive(bhgPrimitive);
+        series.detachPrimitive(pivotPrimitive);
         chart.remove();
         chartRef.current = null;
         seriesRef.current = null;
         primitiveRef.current = null;
         bhgPrimitiveRef.current = null;
+        pivotPrimitiveRef.current = null;
       };
     }, []);
 
     // --- SSE stream ---
     useEffect(() => {
-      const eventSource = new EventSource("/api/live/mes15m?backfill=672");
+      const eventSource = new EventSource("/api/live/mes15m?backfill=1000");
 
       const updateSessionStats = (points: MesPoint[]) => {
         if (points.length === 0) return;
@@ -675,31 +680,35 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       return () => { cancelled = true; };
     }, []);
 
-    // --- Render pivot lines on series ---
+    // --- Wire pivot data to primitive ---
     useEffect(() => {
-      if (!seriesRef.current || pivotData.length === 0) return;
-
-      // Remove old pivot lines
-      for (const pl of pivotLinesRef.current) {
-        try { seriesRef.current.removePriceLine(pl); } catch { /* already removed */ }
+      if (!pivotPrimitiveRef.current) return;
+      if (pivotData.length === 0) {
+        pivotPrimitiveRef.current.setPivots([], PIVOT_COLORS);
+        return;
       }
-      pivotLinesRef.current = [];
 
-      // Create new pivot price lines
-      for (const pivot of pivotData) {
-        const color = PIVOT_COLORS[pivot.timeframe] ?? "#FF9800";
-        const isPivotPoint = pivot.level === "P";
-        const pl = seriesRef.current.createPriceLine({
-          price: pivot.price,
-          color,
-          lineWidth: isPivotPoint ? 2 : PIVOT_LINE_WIDTH,
-          lineStyle: isPivotPoint ? LineStyle.Solid : PIVOT_LINE_STYLE,
-          axisLabelVisible: true,
-          title: pivot.label,
-          lineVisible: true,
-        });
-        pivotLinesRef.current.push(pl);
-      }
+      const firstGf = pointsRef.current[0]?.time;
+      const mapped = pivotData.map((p) => ({
+        ...p,
+        startTime:
+          (() => {
+            if (p.startTime == null) return firstGf;
+            const exact = realToGapFree(p.startTime);
+            if (exact != null) return exact;
+            const realPoints = realPointsRef.current;
+            for (const rp of realPoints) {
+              if (rp.time >= p.startTime) return realToGapFree(rp.time);
+            }
+            for (let i = realPoints.length - 1; i >= 0; i--) {
+              if (realPoints[i].time <= p.startTime) {
+                return realToGapFree(realPoints[i].time);
+              }
+            }
+            return firstGf;
+          })() ?? firstGf,
+      }));
+      pivotPrimitiveRef.current.setPivots(mapped, PIVOT_COLORS);
     }, [pivotData, lastPrice]);
 
     const changeColor = priceChange >= 0 ? TV.bull.bright : TV.bear.bright;
@@ -809,13 +818,14 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
         <div className="relative w-full" style={{ height: "80vh" }}>
           {/* Watermark — DOM overlay, not LWC watermark API */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <Image
               src="/chart_watermark.svg"
               alt=""
               width={280}
               height={140}
-              className="opacity-[0.10] grayscale"
+              className="opacity-[0.10]"
+              style={{ filter: "grayscale(100%)" }}
+              priority
             />
           </div>
           <div ref={containerRef} className="absolute inset-0 z-10" />
