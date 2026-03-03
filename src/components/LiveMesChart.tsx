@@ -13,6 +13,7 @@ import {
   ColorType,
   createChart,
   IChartApi,
+  IPriceLine,
   ISeriesApi,
   LineStyle,
   TickMarkType,
@@ -22,6 +23,7 @@ import {
 } from "lightweight-charts";
 import type { ForecastResponse, MeasuredMove, CandleData } from "@/lib/types";
 import type { BhgSetup } from "@/lib/bhg-engine";
+import type { PivotLine, PivotTimeframe } from "@/lib/pivots";
 import { ForecastTargetsPrimitive } from "@/lib/charts/ForecastTargetsPrimitive";
 import { BhgMarkersPrimitive } from "@/lib/charts/BhgMarkersPrimitive";
 import { mapMeasuredMoveAndCoreToTargets } from "@/lib/charts/blendTargets";
@@ -40,10 +42,20 @@ type MesPoint = {
 
 type StreamStatus = "connecting" | "live" | "error";
 
-const BAR_INTERVAL_SEC = 60; // 1m
-const GO_RECENT_BARS = 480; // ~8 hours of 1m bars — same window as old 32×15m
+const BAR_INTERVAL_SEC = 900; // 15m
+const GO_RECENT_BARS = 32; // ~8 hours of 15m bars
 const MAX_TOUCH_MARKERS = 1;
 const MAX_HOOK_MARKERS = 1;
+
+// ─── Pivot Line Colors (per timeframe) ──────────────────────────────────────
+const PIVOT_COLORS: Record<PivotTimeframe, string> = {
+  D: "#FFFFFF",  // white  — daily
+  W: "#FF9800",  // orange — weekly
+  M: "#FF9800",  // orange — monthly
+  Y: "#FF9800",  // orange — yearly
+};
+const PIVOT_LINE_STYLE = LineStyle.Dashed;
+const PIVOT_LINE_WIDTH = 1;
 
 // ─── Gap-Free Time Mapping ──────────────────────────────────────────────────
 // TradingView removes session gaps (weekends, maintenance breaks) so bars
@@ -229,6 +241,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
     const seriesRef = useRef<ISeriesApi<"Candlestick", Time> | null>(null);
     const primitiveRef = useRef<ForecastTargetsPrimitive | null>(null);
     const bhgPrimitiveRef = useRef<BhgMarkersPrimitive | null>(null);
+    const pivotLinesRef = useRef<IPriceLine[]>([]);
 
     // Gap-free points (sequential times for chart rendering)
     const pointsRef = useRef<MesPoint[]>([]);
@@ -247,6 +260,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
     const [priceChange, setPriceChange] = useState<number>(0);
     const [sessionHigh, setSessionHigh] = useState<number | null>(null);
     const [sessionLow, setSessionLow] = useState<number | null>(null);
+    const [pivotData, setPivotData] = useState<PivotLine[]>([]);
 
     /** Look up gap-free time for a real timestamp, snapping to nearest 15m bar */
     const realToGapFree = (
@@ -323,8 +337,8 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           fixLeftEdge: false,
           fixRightEdge: false,
           rightOffset: 16,
-          barSpacing: 3,
-          minBarSpacing: 1,
+          barSpacing: 8,
+          minBarSpacing: 4,
           // Map gap-free sequential times → real CT timestamps for axis labels
           tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) => {
             const realTime = timeMapRef.current.gfToReal.get(time as number);
@@ -369,7 +383,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           vertTouchDrag: false,
         },
         handleScale: {
-          mouseWheel: false,
+          mouseWheel: true,
           pinch: true,
           axisPressedMouseMove: { time: true, price: true },
           axisDoubleClickReset: { time: true, price: true },
@@ -379,11 +393,13 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       const series = chart.addSeries(CandlestickSeries, {
         upColor: "#26C6DA",
         downColor: "#FF0000",
-        borderUpColor: "#26C6DA",
-        borderDownColor: "#FF0000",
-        wickUpColor: "#26C6DA",
-        wickDownColor: "#FF0000",
-        priceLineVisible: false,
+        // Borders: transparent (TradingView exact — no candle outline)
+        borderUpColor: "transparent",
+        borderDownColor: "transparent",
+        // Wicks: white up / gray down (TradingView exact — NOT body color)
+        wickUpColor: "#FFFFFF",
+        wickDownColor: "rgba(178,181,190,0.83)",
+        priceLineVisible: true,
         lastValueVisible: false,
         priceFormat: {
           type: "price",
@@ -424,7 +440,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
 
     // --- SSE stream ---
     useEffect(() => {
-      const eventSource = new EventSource("/api/live/mes1m?backfill=1080");
+      const eventSource = new EventSource("/api/live/mes15m?backfill=672");
 
       const updateSessionStats = (points: MesPoint[]) => {
         if (points.length === 0) return;
@@ -486,7 +502,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           updateSessionStats(rawPoints);
 
           // Force barSpacing after setData — LWC auto-fits all bars on first load, overriding spacing
-          chartRef.current?.timeScale().applyOptions({ barSpacing: 3 });
+          chartRef.current?.timeScale().applyOptions({ barSpacing: 8 });
           // Scroll to right edge with whitespace
           chartRef.current?.timeScale().scrollToPosition(16, false);
 
@@ -640,6 +656,52 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       });
     }, [chartSetups, lastPrice]);
 
+    // --- Fetch pivot levels (once on mount) ---
+    useEffect(() => {
+      let cancelled = false;
+      async function fetchPivots() {
+        try {
+          const res = await fetch("/api/pivots/mes");
+          if (!res.ok) return;
+          const json = await res.json();
+          if (!cancelled && json.pivots) {
+            setPivotData(json.pivots as PivotLine[]);
+          }
+        } catch {
+          // Pivots are supplementary — never break the chart
+        }
+      }
+      fetchPivots();
+      return () => { cancelled = true; };
+    }, []);
+
+    // --- Render pivot lines on series ---
+    useEffect(() => {
+      if (!seriesRef.current || pivotData.length === 0) return;
+
+      // Remove old pivot lines
+      for (const pl of pivotLinesRef.current) {
+        try { seriesRef.current.removePriceLine(pl); } catch { /* already removed */ }
+      }
+      pivotLinesRef.current = [];
+
+      // Create new pivot price lines
+      for (const pivot of pivotData) {
+        const color = PIVOT_COLORS[pivot.timeframe] ?? "#FF9800";
+        const isPivotPoint = pivot.level === "P";
+        const pl = seriesRef.current.createPriceLine({
+          price: pivot.price,
+          color,
+          lineWidth: isPivotPoint ? 2 : PIVOT_LINE_WIDTH,
+          lineStyle: isPivotPoint ? LineStyle.Solid : PIVOT_LINE_STYLE,
+          axisLabelVisible: true,
+          title: pivot.label,
+          lineVisible: true,
+        });
+        pivotLinesRef.current.push(pl);
+      }
+    }, [pivotData, lastPrice]);
+
     const changeColor = priceChange >= 0 ? TV.bull.bright : TV.bear.bright;
 
     return (
@@ -671,7 +733,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
               </span>
             </div>
             <span className="text-xs text-white/30 font-medium">
-              Micro E-mini S&P 500 &bull; 1m
+              Micro E-mini S&P 500 &bull; 15m
             </span>
             {eventPhase && eventPhase !== "CLEAR" && (
               <span
@@ -779,6 +841,22 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
               Bearish
             </span>
           </div>
+          {pivotData.length > 0 && (
+            <>
+              <div className="h-3 w-px bg-white/10" />
+              {(["D", "W", "M", "Y"] as PivotTimeframe[]).map((tf) => (
+                <div key={tf} className="flex items-center gap-1.5">
+                  <div
+                    className="w-3 h-px"
+                    style={{ backgroundColor: PIVOT_COLORS[tf] }}
+                  />
+                  <span className="text-[10px] text-white/40 uppercase tracking-wider">
+                    {{ D: "Daily", W: "Weekly", M: "Monthly", Y: "Yearly" }[tf]}
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
           {setups && setups.length > 0 && (
             <>
               <div className="flex items-center gap-2">
