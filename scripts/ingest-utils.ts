@@ -1,7 +1,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Timeframe } from '@prisma/client'
 import { CandleData } from '../src/lib/types'
+
+/** Entry-guard helper — works even when the cwd path contains spaces or symlinks. */
+export function isMainModule(metaUrl: string): boolean {
+  try {
+    return fileURLToPath(metaUrl) === path.resolve(process.argv[1])
+  } catch {
+    return false
+  }
+}
 
 export type CliTimeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d'
 
@@ -15,7 +25,7 @@ const TF_MINUTES: Record<CliTimeframe, number> = {
 }
 
 export function loadDotEnvFiles(): void {
-  const files = ['.env.local', '.env']
+  const files = ['.env.production.local', '.env.local', '.env']
   for (const rel of files) {
     const envPath = path.resolve(process.cwd(), rel)
     if (!fs.existsSync(envPath)) continue

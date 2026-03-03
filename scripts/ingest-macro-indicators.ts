@@ -8,7 +8,7 @@ import {
   fetchVixCandles,
 } from '../src/lib/fred'
 import { CandleData } from '../src/lib/types'
-import { asUtcDateFromUnixSeconds, loadDotEnvFiles, parseArg } from './ingest-utils'
+import { asUtcDateFromUnixSeconds, isMainModule, loadDotEnvFiles, parseArg } from './ingest-utils'
 
 interface MacroIngestSummary {
   daysBack: number
@@ -345,7 +345,7 @@ export async function runIngestMacroIndicators(options?: MacroIngestOptions): Pr
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runIngestMacroIndicators()
     .then((summary) => {
       console.log('\n[macro] done')

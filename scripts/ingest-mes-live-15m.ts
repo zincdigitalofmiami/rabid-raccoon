@@ -5,6 +5,7 @@ import { fetchOhlcv, toCandles } from '../src/lib/databento'
 import {
   aggregateCandles,
   asUtcDateFromUnixSeconds,
+  isMainModule,
   loadDotEnvFiles,
   parseArg,
 } from './ingest-utils'
@@ -210,7 +211,7 @@ export async function runMesLiveIngestion15m(): Promise<void> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runMesLiveIngestion15m()
     .catch((error) => {
       const message = error instanceof Error ? error.message : String(error)

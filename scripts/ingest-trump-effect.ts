@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/prisma";
-import { loadDotEnvFiles, parseArg } from "./ingest-utils";
+import { isMainModule, loadDotEnvFiles, parseArg } from "./ingest-utils";
 
 const FEDERAL_REGISTER_URL =
   "https://www.federalregister.gov/api/v1/documents.json";
@@ -347,7 +347,7 @@ export async function runIngestTrumpEffect(opts?: {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runIngestTrumpEffect()
     .then((result) => {
       console.log("[trump-effect] done");

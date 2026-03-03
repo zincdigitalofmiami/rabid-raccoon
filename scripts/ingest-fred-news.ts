@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
-import { loadDotEnvFiles } from './ingest-utils'
+import { isMainModule, loadDotEnvFiles } from './ingest-utils'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -358,7 +358,7 @@ export async function runIngestFredNews(): Promise<RunStats> {
 
 // ── CLI entrypoint ─────────────────────────────────────────────────
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runIngestFredNews()
     .then((stats) => {
       console.log('[fred-news-rss] done')

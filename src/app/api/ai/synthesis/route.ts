@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const maxDuration = 60;
 
@@ -85,29 +85,22 @@ Required content:
 3) One actionable next-entry framing with direction + target/zone + expected horizon.
 `;
 
-    if (!process.env.ANTHROPIC_API_KEY) {
+    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    if (!apiKey) {
       return NextResponse.json({
-        narrative: `${fallbackNarrative} AI synthesis is running in fallback mode (missing Anthropic API key).`,
+        narrative: `${fallbackNarrative} AI synthesis is running in fallback mode (missing Gemini API key).`,
       });
     }
 
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    const response = await client.messages.create({
-      model: "claude-opus-4-6",
-      max_tokens: 280,
-      temperature: 0.1,
-      messages: [
-        {
-          role: "user",
-          content: [{ type: "text", text: prompt }],
-        },
-      ],
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 300, temperature: 0.1 },
     });
 
-    const textBlock = response.content.find((b) => b.type === "text");
-    const aiNarrative =
-      textBlock && textBlock.type === "text" ? textBlock.text : "";
+    const aiNarrative = result.response.text();
     const narrative = clampToMaxSentences(aiNarrative, 3) || fallbackNarrative;
 
     return NextResponse.json({ narrative });

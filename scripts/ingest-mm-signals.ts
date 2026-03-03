@@ -4,7 +4,7 @@ import { detectMeasuredMoves } from '../src/lib/measured-move'
 import { detectSwings } from '../src/lib/swing-detection'
 import { toNum } from '../src/lib/decimal'
 import { CandleData } from '../src/lib/types'
-import { loadDotEnvFiles, parseArg, parseTimeframe, timeframeToPrisma } from './ingest-utils'
+import { isMainModule, loadDotEnvFiles, parseArg, parseTimeframe, timeframeToPrisma } from './ingest-utils'
 
 interface MmIngestSummary {
   timeframe: string
@@ -261,7 +261,7 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runIngestMeasuredMoveSignals()
     .then((summary) => {
       console.log('\n[mm-signals] done')

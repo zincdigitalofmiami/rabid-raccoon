@@ -9,9 +9,8 @@
       }
     },
     "context7": {
-      "type": "stdio",
-      "command": "/opt/homebrew/bin/npx",
-      "args": ["-y", "@upstash/context7-mcp@2.1.2"]
+      "type": "sse",
+      "url": "http://localhost:18080/sse"
     },
     "sequentialthinking": {
       "type": "stdio",

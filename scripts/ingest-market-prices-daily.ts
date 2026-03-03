@@ -6,6 +6,7 @@ import { INGESTION_SYMBOLS } from '../src/lib/ingestion-symbols'
 import {
   aggregateCandles,
   asUtcDateFromUnixSeconds,
+  isMainModule,
   loadDotEnvFiles,
   parseArg,
 } from './ingest-utils'
@@ -374,7 +375,7 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runIngestMarketPricesDaily()
     .then((summary) => {
       console.log('\n[market-prices-daily] done')

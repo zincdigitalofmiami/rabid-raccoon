@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Prisma, ReportCategory } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
-import { loadDotEnvFiles } from './ingest-utils'
+import { isMainModule, loadDotEnvFiles } from './ingest-utils'
 
 type FeedKind = 'econ' | 'policy'
 
@@ -501,7 +501,7 @@ export async function runIngestAltNewsFeeds(): Promise<RunStats> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runIngestAltNewsFeeds()
     .then((stats) => {
       console.log('[alt-news-rss] done')

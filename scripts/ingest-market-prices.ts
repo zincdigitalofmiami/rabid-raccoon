@@ -7,6 +7,7 @@ import {
   aggregateCandles,
   asUtcDateFromUnixSeconds,
   formatUtcIso,
+  isMainModule,
   loadDotEnvFiles,
   parseArg,
   splitIntoDayChunks,
@@ -29,7 +30,7 @@ const INGEST_CONFIG = {
   NON_MES_CONCURRENCY: 6,
 }
 
-const CANONICAL_SYMBOL_COUNT = 12
+const CANONICAL_SYMBOL_COUNT = 16
 
 interface PriceIngestSummary {
   timeframe: string
@@ -111,6 +112,7 @@ async function loadActiveDatabentoSymbols(): Promise<IngestionSymbol[]> {
     where: {
       dataSource: 'DATABENTO',
       isActive: true,
+      code: { in: INGESTION_SYMBOLS.map((s) => s.code) },
     },
     select: { code: true },
     orderBy: { code: 'asc' },
@@ -711,7 +713,7 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runIngestMarketPrices()
     .then((summary) => {
       console.log('\n[market-prices] done')

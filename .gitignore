@@ -31,6 +31,8 @@ datasets/options-ohlcv-raw/
 datasets/options-agg/
 datasets/options-statistics/
 datasets/options-statistics-raw/
+datasets/
+warbirddl.zip
 models/
 .claude/
 .mcp.json

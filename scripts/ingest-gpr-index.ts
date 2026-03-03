@@ -1,12 +1,11 @@
 import { createHash } from "node:crypto";
+import { execSync } from "node:child_process";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/prisma";
-import { loadDotEnvFiles, parseArg } from "./ingest-utils";
+import { isMainModule, loadDotEnvFiles, parseArg } from "./ingest-utils";
 
-// NOTE: The CSV URL was removed ~March 2026. Daily data is now XLS only.
-// This script still works via the CSV parse path if a CSV format is restored.
-// For bulk historical loads, use the Python script (scripts/ingest-gpr-xls.py)
-// which reads the XLS directly via xlrd + psycopg2.
+// Iacovello's site serves XLS (binary). We convert to CSV via Python/xlrd
+// (already installed via AutoGluon). No npm xlsx package needed.
 const GPR_URL =
   "https://www.matteoiacoviello.com/gpr_files/data_gpr_daily_recent.xls";
 const GPR_SOURCE = "caldara_iacoviello";
@@ -109,11 +108,11 @@ function parseGprCsv(csv: string, minDate: Date): GprRow[] {
 
   const header = parseCsvLine(lines[0]).map((h) => h.toLowerCase());
   const dateIdx = header.findIndex(
-    (h) => h === "date" || h === "month" || h === "yyyymm",
+    (h) => h === "day" || h === "date" || h === "month" || h === "yyyymm",
   );
   if (dateIdx < 0) {
     throw new Error(
-      "GPR CSV is missing a date column (expected date/month/yyyymm)",
+      "GPR CSV is missing a date column (expected day/date/month/yyyymm)",
     );
   }
 
@@ -211,7 +210,20 @@ export async function runIngestGprIndex(opts?: {
       );
     }
 
-    const csv = await response.text();
+    const xlsBuffer = Buffer.from(await response.arrayBuffer());
+    const csv = execSync(
+      `python3 -c "
+import sys, xlrd, csv, io
+wb = xlrd.open_workbook(file_contents=sys.stdin.buffer.read())
+ws = wb.sheet_by_index(0)
+out = io.StringIO()
+w = csv.writer(out)
+for r in range(ws.nrows):
+    w.writerow([ws.cell_value(r,c) for c in range(ws.ncols)])
+print(out.getvalue(), end='')
+"`,
+      { input: xlsBuffer, maxBuffer: 10 * 1024 * 1024 },
+    ).toString();
     const parsedRows = parseGprCsv(csv, minDate);
     const payload = toCreateManyRows(parsedRows);
 
@@ -265,7 +277,7 @@ export async function runIngestGprIndex(opts?: {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runIngestGprIndex()
     .then((result) => {
       console.log("[gpr-index] done");

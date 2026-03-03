@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 import { prisma } from '@/lib/prisma'
 import { aggregateCandles } from '@/lib/analyse-data'
 import { toNum } from '@/lib/decimal'
@@ -64,10 +64,10 @@ function formatCandles(candles: CandleData[], limit: number): string {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY
   if (!apiKey) {
     return NextResponse.json(
-      { error: 'ANTHROPIC_API_KEY not set' },
+      { error: 'GOOGLE_GENERATIVE_AI_API_KEY not set' },
       { status: 503 }
     )
   }
@@ -97,7 +97,7 @@ export async function POST(request: Request): Promise<Response> {
     const candles1h = aggregateCandles(candles15m, 60)
     const candles4h = aggregateCandles(candles15m, 240)
 
-    // Build structured data string for Claude
+    // Build structured data string
     const structuredData = [
       '=== 15M OHLCV (last 48 bars) ===',
       formatCandles(candles15m, 48),
@@ -112,25 +112,21 @@ export async function POST(request: Request): Promise<Response> {
     // Strip the data:image/png;base64, prefix if present
     const base64Data = body.image.replace(/^data:image\/\w+;base64,/, '')
 
-    const client = new Anthropic({ apiKey })
+    const genAI = new GoogleGenerativeAI(apiKey)
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
 
-    const response = await client.messages.create({
-      model: 'claude-opus-4-6',
-      max_tokens: 4096,
-      messages: [
+    const result = await model.generateContent({
+      contents: [
         {
           role: 'user',
-          content: [
+          parts: [
             {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: 'image/png',
+              inlineData: {
                 data: base64Data,
+                mimeType: 'image/png',
               },
             },
             {
-              type: 'text',
               text: `You are an expert technical analyst reviewing a Micro E-mini S&P 500 (MES) chart. The screenshot shows 15-minute candlesticks with any forecast targets/fibonacci overlays.
 
 Analyze the chart image AND the structured OHLCV data below across THREE timeframes: 15M, 1H, and 4H.
@@ -171,19 +167,11 @@ Respond with ONLY valid JSON matching this schema (no markdown, no code fences):
           ],
         },
       ],
+      generationConfig: { maxOutputTokens: 4096, temperature: 0.1 },
     })
 
-    // Extract text content from Claude response
-    const textBlock = response.content.find((b) => b.type === 'text')
-    if (!textBlock || textBlock.type !== 'text') {
-      return NextResponse.json(
-        { error: 'No text response from Claude' },
-        { status: 502 }
-      )
-    }
-
-    // Parse JSON — Claude sometimes wraps in code fences
-    let jsonText = textBlock.text.trim()
+    let jsonText = result.response.text().trim()
+    // Strip code fences if Gemini wraps output
     if (jsonText.startsWith('```')) {
       jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     }

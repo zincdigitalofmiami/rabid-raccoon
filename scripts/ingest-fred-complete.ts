@@ -16,7 +16,7 @@
 import { createHash } from 'node:crypto'
 import pg from 'pg'
 import { fetchFredSeries } from '../src/lib/fred'
-import { loadDotEnvFiles } from './ingest-utils'
+import { isMainModule, loadDotEnvFiles } from './ingest-utils'
 
 type EconDomain =
   | 'RATES'
@@ -518,9 +518,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`
-
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   run()
     .then(() => {
       console.log('\n[fred-complete] done.')
