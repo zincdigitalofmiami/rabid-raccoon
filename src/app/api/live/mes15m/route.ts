@@ -86,11 +86,45 @@ function rowFingerprint(row: MesRow): string {
 
 const FIFTEEN_MIN_SECONDS = 15 * 60
 
-function aggregateTo15mFrom1m(rows: Mes1mRow[]): MesRow[] {
+function sanitize1mRows(rows: Mes1mRow[]): Mes1mRow[] {
   if (rows.length === 0) return []
   const sorted = [...rows].sort(
     (a, b) => a.eventTime.getTime() - b.eventTime.getTime()
   )
+  const clean: Mes1mRow[] = []
+  let prevClose: number | null = null
+
+  for (const row of sorted) {
+    const o = toNum(row.open)
+    const h = toNum(row.high)
+    const l = toNum(row.low)
+    const c = toNum(row.close)
+
+    // Base OHLC sanity
+    if (!(o > 0 && h > 0 && l > 0 && c > 0)) continue
+    if (h < l) continue
+    // 1m range sanity: reject pathological ticks
+    if ((h - l) / Math.max(o, 1) > 0.08) continue
+
+    if (prevClose != null && prevClose > 0) {
+      // continuity sanity against prior clean close
+      if (Math.abs(o - prevClose) / prevClose > 0.08) continue
+      if (Math.abs(c - prevClose) / prevClose > 0.08) continue
+      if (h > prevClose * 1.12) continue
+      if (l < prevClose * 0.88) continue
+    }
+
+    clean.push(row)
+    prevClose = c
+  }
+
+  return clean
+}
+
+function aggregateTo15mFrom1m(rows: Mes1mRow[]): MesRow[] {
+  if (rows.length === 0) return []
+  const sorted = sanitize1mRows(rows)
+  if (sorted.length === 0) return []
   const out: MesRow[] = []
 
   let bucketStartSec = -1
@@ -171,7 +205,9 @@ export async function GET(request: Request): Promise<Response> {
           return
         }
 
-        const sorted = [...initial].reverse().filter((r) => !isWeekendBar(r.eventTime))
+        const sorted = [...initial]
+          .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime())
+          .filter((r) => !isWeekendBar(r.eventTime))
         for (const row of sorted) {
           knownRows.set(row.eventTime.getTime(), rowFingerprint(row))
         }
@@ -210,7 +246,9 @@ export async function GET(request: Request): Promise<Response> {
             return
           }
 
-          const sorted = [...latest].reverse().filter((r) => !isWeekendBar(r.eventTime))
+          const sorted = [...latest]
+            .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime())
+            .filter((r) => !isWeekendBar(r.eventTime))
           const changed = sorted.filter((row) => {
             const key = row.eventTime.getTime()
             const next = rowFingerprint(row)
