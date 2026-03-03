@@ -177,7 +177,7 @@ reviews:
       description: |
         All sensitive values must come from process.env. Flag any string literal that
         looks like an API key, token, database URL, or signing key. This includes
-        Databento, FRED, OpenAI, Anthropic, and Inngest credentials. Also flag any
+        Databento, FRED, OpenAI, and Inngest credentials. Also flag any
         .env file committed to git.
       include:
         - "src/**/*.ts"

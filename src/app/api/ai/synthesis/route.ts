@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 60;
 
-function buildFallbackNarrative(input: {
+function buildNarrative(input: {
   forecast?: any;
   correlation?: any;
   eventContext?: any;
@@ -47,68 +46,16 @@ function buildFallbackNarrative(input: {
   return `MES bias is ${direction} (${confidence}). ${alignmentText}; event phase is ${eventPhase} (${eventLabel}), and ${riskText}.`;
 }
 
-function clampToMaxSentences(text: string, maxSentences = 3): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) return "";
-  const parts = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [normalized];
-  return parts
-    .slice(0, maxSentences)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { forecast, correlation, eventContext, risk } = body;
-    const fallbackNarrative = buildFallbackNarrative({
+    const narrative = buildNarrative({
       forecast,
       correlation,
       eventContext,
       risk,
     });
-
-    const prompt = `You are a quantitative MES (Micro E-mini S&P 500) market analysis engine.
-Use neural-pattern reasoning and deep chart-structure interpretation from the structured data below.
-Return exactly 2-3 concise institutional sentences (max 3 total), no bullets, no markdown.
-
-Data:
-- Forecast: ${JSON.stringify(forecast)}
-- Correlation: ${JSON.stringify(correlation)}
-- Event Context: ${JSON.stringify(eventContext)}
-- Risk: ${JSON.stringify(risk)}
-
-Required content:
-1) Current MES directional state and conviction.
-2) Cross-asset alignment quality and macro/event risk implication.
-3) One actionable next-entry framing with direction + target/zone + expected horizon.
-`;
-
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return NextResponse.json({
-        narrative: `${fallbackNarrative} AI synthesis is running in fallback mode (missing Anthropic API key).`,
-      });
-    }
-
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    const response = await client.messages.create({
-      model: "claude-opus-4-6",
-      max_tokens: 280,
-      temperature: 0.1,
-      messages: [
-        {
-          role: "user",
-          content: [{ type: "text", text: prompt }],
-        },
-      ],
-    });
-
-    const textBlock = response.content.find((b) => b.type === "text");
-    const aiNarrative =
-      textBlock && textBlock.type === "text" ? textBlock.text : "";
-    const narrative = clampToMaxSentences(aiNarrative, 3) || fallbackNarrative;
 
     return NextResponse.json({ narrative });
   } catch (error) {

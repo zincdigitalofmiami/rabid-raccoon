@@ -25,7 +25,6 @@ pip install -r mes_hft_halsey/requirements.txt
 Required env vars:
 - `DATABENTO_API_KEY`
 - `FRED_API_KEY`
-- `ANTHROPIC_API_KEY` (for `model=opus`)
 - `OPENAI_API_KEY` (for `model=gpt`)
 
 The repo `.env.example` already includes these keys.
@@ -73,9 +72,8 @@ Endpoints:
 - `baseline_quant`: numeric baseline used when LLM mode is active
 
 Model query values:
-- `model=opus`: Anthropic Claude Opus path
 - `model=gpt`: OpenAI GPT path (`responses` API)
-- `model=quant`: skip LLM, numeric baseline only
+- `model=quant`: skip LLM, numeric baseline only (default)
 
 ## Signal Rules
 

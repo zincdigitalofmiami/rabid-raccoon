@@ -44,18 +44,13 @@ except Exception:  # pragma: no cover
     MLPRegressor = None
 
 try:
-    from anthropic import Anthropic
-except Exception:  # pragma: no cover
-    Anthropic = None
-
-try:
     from openai import OpenAI
 except Exception:  # pragma: no cover
     OpenAI = None
 
 
 Timeframe = Literal["5m", "15m", "1h", "4h", "1d"]
-ModelMode = Literal["opus", "gpt", "quant"]
+ModelMode = Literal["gpt", "quant"]
 
 app = FastAPI(
     title="MES HFT Halsey API",
@@ -307,60 +302,11 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 
 def _normalize_mode(model: str) -> ModelMode:
     m = model.strip().lower()
-    if m in {"opus", "claude", "anthropic"}:
-        return "opus"
+    if m in {"opus", "claude", "anthropic", "quant", "numeric", "baseline", "off"}:
+        return "quant"
     if m in {"gpt", "openai", "gpt5", "gpt-5"}:
         return "gpt"
-    if m in {"quant", "numeric", "baseline", "off"}:
-        return "quant"
-    raise ValueError("Invalid model: choose 'opus', 'gpt', or 'quant'")
-
-
-def _call_opus(prompt: str) -> Tuple[str, str]:
-    _require_package(Anthropic, "anthropic")
-    api_key = _require_env("ANTHROPIC_API_KEY")
-
-    env_model = os.getenv("MES_LLM_OPUS_MODEL", "")
-    candidates = _unique(
-        [
-            env_model,
-            "claude-opus-4-6",
-            "claude-opus-4-1",
-        ]
-    )
-
-    client = Anthropic(api_key=api_key)
-    last_error: Optional[Exception] = None
-
-    for model in candidates:
-        try:
-            response = client.messages.create(
-                model=model,
-                max_tokens=1400,
-                temperature=0,
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-            chunks: list[str] = []
-            for block in getattr(response, "content", []):
-                if getattr(block, "type", "") == "text":
-                    text = getattr(block, "text", "")
-                    if text:
-                        chunks.append(text)
-
-            text = "\n".join(chunks).strip()
-            if not text:
-                raise RuntimeError(f"Anthropic returned empty output for model {model}")
-
-            return text, model
-        except Exception as exc:  # pragma: no cover
-            last_error = exc
-            msg = str(exc)
-            is_model_issue = bool(re.search(r"model|not found|access|permission|invalid", msg, re.I))
-            if not is_model_issue:
-                raise
-
-    raise RuntimeError(f"Anthropic request failed for all models: {last_error}")
+    raise ValueError("Invalid model: choose 'gpt' or 'quant'")
 
 
 def _call_gpt(prompt: str) -> Tuple[str, str]:
@@ -489,7 +435,7 @@ def _build_llm_prompt(
     quant: Dict[str, Any],
     confluence: Dict[str, Any],
 ) -> str:
-    model_label = "Claude Opus" if mode == "opus" else "GPT-5"
+    model_label = "GPT-5"
 
     context = {
         "latest_mes_close": quant["latest_mes_close"],
@@ -720,12 +666,8 @@ def _mes_forecast_impl(mode: ModelMode, days_back: int) -> Dict[str, Any]:
     prompt = _build_llm_prompt(mode, quant, confluence)
 
     try:
-        if mode == "opus":
-            text, resolved_model = _call_opus(prompt)
-            provider = "anthropic"
-        else:
-            text, resolved_model = _call_gpt(prompt)
-            provider = "openai"
+        text, resolved_model = _call_gpt(prompt)
+        provider = "openai"
 
         parsed = _extract_json_object(text)
         normalized = _normalize_llm_payload(parsed, quant)
@@ -763,7 +705,7 @@ def _mes_forecast_impl(mode: ModelMode, days_back: int) -> Dict[str, Any]:
                 "llm_metadata": {
                     "mode": mode,
                     "fallback_used": True,
-                    "provider": "anthropic" if mode == "opus" else "openai",
+                    "provider": "openai",
                     "requested_model": mode,
                     "resolved_model": None,
                     "error": str(exc),
@@ -803,8 +745,8 @@ def mes_signals(
 @app.get("/mes_forecast")
 def mes_forecast_compat(
     model: str = Query(
-        default="opus",
-        description="Forecast mode: opus (Claude), gpt (OpenAI GPT-5.x), or quant baseline",
+        default="quant",
+        description="Forecast mode: gpt (OpenAI GPT-5.x) or quant baseline",
     ),
     days_back: int = Query(default=90, ge=20, le=365),
 ) -> Dict[str, Any]:
@@ -818,8 +760,8 @@ def mes_forecast_compat(
 @app.get("/mes/forecast")
 def mes_forecast(
     model: str = Query(
-        default="opus",
-        description="Forecast mode: opus (Claude), gpt (OpenAI GPT-5.x), or quant baseline",
+        default="quant",
+        description="Forecast mode: gpt (OpenAI GPT-5.x) or quant baseline",
     ),
     days_back: int = Query(default=90, ge=20, le=365),
 ) -> Dict[str, Any]:
