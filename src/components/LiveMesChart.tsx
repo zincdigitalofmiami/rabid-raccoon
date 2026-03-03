@@ -54,9 +54,9 @@ const MAX_HOOK_MARKERS = 1;
 // ─── Pivot Line Colors (per timeframe) ──────────────────────────────────────
 const PIVOT_COLORS: Record<PivotTimeframe, string> = {
   D: "#FFFFFF",  // white  — daily
-  W: "#FF9800",  // orange — weekly
-  M: "#FF9800",  // orange — monthly
-  Y: "#FF9800",  // orange — yearly
+  W: "#F23645",  // TradingView red — weekly
+  M: "#F23645",  // TradingView red — monthly
+  Y: "#F23645",  // TradingView red — yearly
 };
 
 // ─── Gap-Free Time Mapping ──────────────────────────────────────────────────
@@ -368,16 +368,16 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
         },
         crosshair: {
           vertLine: {
-            color: "rgba(139,92,246,0.6)",
+            color: "rgba(255,255,255,0.65)",
             width: 1,
             style: LineStyle.Solid,
-            labelBackgroundColor: "rgba(20,10,40,0.9)",
+            labelBackgroundColor: "rgba(42,46,57,0.95)",
           },
           horzLine: {
-            color: "rgba(139,92,246,0.6)",
+            color: "rgba(255,255,255,0.65)",
             width: 1,
             style: LineStyle.Solid,
-            labelBackgroundColor: "rgba(20,10,40,0.9)",
+            labelBackgroundColor: "rgba(42,46,57,0.95)",
           },
         },
         handleScroll: {
@@ -752,7 +752,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
                     status === "live"
                       ? "#26C6DA"
                       : status === "connecting"
-                        ? "#ffa726"
+                        ? "#F23645"
                         : "#FF0000",
                   boxShadow:
                     status === "live" ? "0 0 8px rgba(38,198,218,0.5)" : "none",
@@ -771,9 +771,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
                   eventPhase === "BLACKOUT"
                     ? "bg-red-500/10 text-red-400 border-red-500/20"
                     : eventPhase === "IMMINENT"
-                      ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
+                      ? "bg-red-500/10 text-red-400 border-red-500/20"
                       : eventPhase === "APPROACHING"
-                        ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/20"
+                        ? "bg-red-500/10 text-red-400 border-red-500/20"
                         : eventPhase === "DIGESTING"
                           ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
                           : "bg-white/5 text-white/40 border-white/10"
@@ -826,7 +826,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
                   status === "live"
                     ? "#26C6DA"
                     : status === "connecting"
-                      ? "#ffa726"
+                      ? "#F23645"
                       : "#FF0000",
               }}
             >
@@ -900,7 +900,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-0 h-0 border-l-[4px] border-r-[4px] border-b-[6px] border-transparent border-b-[#ff9800]" />
+                <div className="w-0 h-0 border-l-[4px] border-r-[4px] border-b-[6px] border-transparent border-b-[#F23645]" />
                 <span className="text-[10px] text-white/40 uppercase tracking-wider">
                   Hook
                 </span>

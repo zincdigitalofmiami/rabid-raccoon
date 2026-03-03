@@ -141,9 +141,9 @@ export class PivotLinesPrimitive implements ISeriesPrimitive<Time> {
   private _pivots: PivotLine[] = [];
   private _colors: Record<PivotTimeframe, string> = {
     D: "#FFFFFF",
-    W: "#FF9800",
-    M: "#FF9800",
-    Y: "#FF9800",
+    W: "#F23645",
+    M: "#F23645",
+    Y: "#F23645",
   };
   private _paneView = new PivotLinesPaneView();
   private _attachedParams: SeriesAttachedParameter<Time, SeriesType> | null =
@@ -182,7 +182,7 @@ export class PivotLinesPrimitive implements ISeriesPrimitive<Time> {
       label: p.label,
       level: p.level,
       startTime: p.startTime,
-      color: this._colors[p.timeframe] ?? "#FF9800",
+      color: this._colors[p.timeframe] ?? "#F23645",
       isPivotPoint: p.level === "P",
     }));
 

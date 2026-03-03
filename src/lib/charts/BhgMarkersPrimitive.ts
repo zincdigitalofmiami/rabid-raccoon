@@ -40,7 +40,7 @@ export interface BhgMarkerData {
 
 const COLORS = {
   touch: '#787b86',      // neutral grey
-  hook: '#ff9800',       // amber
+  hook: '#f23645',       // TradingView red
   go: '#22ab94',         // bull green
   entry: '#2962ff',      // blue
   sl: '#f23645',         // red
