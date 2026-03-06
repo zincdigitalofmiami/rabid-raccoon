@@ -3,44 +3,35 @@
  *
  * ONE model. ONE config. ONE place to change anything.
  *
- * Provider: Anthropic (Claude) via Vercel AI SDK
+ * Provider: Anthropic Claude via Vercel AI Gateway
  * Model: Claude Sonnet 4.5 with Extended Thinking
  *
- * ── Auth paths (pick ONE) ──────────────────────────────────────────
+ * ── Auth paths ──────────────────────────────────────────────────────
  *
- *   Path 1 — Vercel AI Gateway (Max subscription, $0.00):
- *     ANTHROPIC_BASE_URL=https://ai-gateway.vercel.sh
- *     Auth via VERCEL_OIDC_TOKEN (from `vercel env pull`). No API key.
+ *   Production/Preview (Vercel):
+ *     gateway() provider + OIDC (automatic, $0.00 with Max subscription)
  *
- *   Path 2 — Subscription Proxy (local dev, $0.00):
- *     CLAUDE_PROXY_URL=http://localhost:8317/v1
- *     Routes through CLIProxyAPI → Claude Code → Max subscription.
- *
- *   Path 3 — API Key (per-token billing, production fallback):
- *     ANTHROPIC_API_KEY=sk-ant-...
- *
- * Priority: Proxy > Gateway/Auth Token > API Key
+ *   Local dev:
+ *     gateway() provider + AI_GATEWAY_API_KEY (from `vercel env pull`)
+ *     OR: CLAUDE_PROXY_URL for CLIProxyAPI subscription proxy
  *
  * ── Temperature ────────────────────────────────────────────────────
  *
  * Default: 0.15 (very low creativity — data-driven quant output).
- * When extended thinking is enabled on native Anthropic, the server
- * locks temperature at 1.0 (the thinking chain constrains hallucination).
- * Proxy mode always sends temperature 0.15.
+ * When extended thinking is enabled, the server locks temperature at 1.0.
  */
 
-import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
 import type { AnthropicLanguageModelOptions } from '@ai-sdk/anthropic'
 import type { LanguageModel } from 'ai'
-import { generateText } from 'ai'
+import { generateText, gateway } from 'ai'
 
 // ── Central config ─────────────────────────────────────────────────
-// Change the model here, it changes everywhere in the app.
-const MODEL_ID = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'
+// Gateway model ID format: "provider/model-name"
+const GATEWAY_MODEL_ID =
+  process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4-5'
 
 // Extended thinking token budget (higher = deeper reasoning)
-// Only used in native Anthropic mode (not through proxy).
 const DEFAULT_THINKING_BUDGET = Number(
   process.env.CLAUDE_THINKING_BUDGET || '10000',
 )
@@ -49,8 +40,10 @@ const DEFAULT_THINKING_BUDGET = Number(
 const DEFAULT_TEMPERATURE = 0.15
 
 // ── Provider routing ────────────────────────────────────────────────
-// Proxy URL → CLIProxyAPI (Max subscription, $0.00, OpenAI-compat format)
-// Otherwise → native Anthropic API (auth token or API key)
+// Priority: Proxy > Gateway (default)
+//
+// Proxy: CLIProxyAPI on localhost (OpenAI-compat, Max subscription, $0.00)
+// Gateway: Vercel AI Gateway with OIDC (auto on Vercel) or AI_GATEWAY_API_KEY
 
 const PROXY_URL = process.env.CLAUDE_PROXY_URL || ''
 const USE_PROXY = Boolean(PROXY_URL)
@@ -63,36 +56,14 @@ const proxyProvider = USE_PROXY
     })
   : null
 
-// Auth token: explicit ANTHROPIC_AUTH_TOKEN, or Vercel OIDC token (Max subscription via gateway)
-const AUTH_TOKEN =
-  process.env.ANTHROPIC_AUTH_TOKEN || process.env.VERCEL_OIDC_TOKEN || ''
-
-// Native mode: Anthropic Messages API
-// Gateway path: ANTHROPIC_BASE_URL + VERCEL_OIDC_TOKEN (no API key)
-// Direct path: ANTHROPIC_API_KEY (per-token billing)
-const nativeProvider = !USE_PROXY
-  ? createAnthropic({
-      ...(process.env.ANTHROPIC_BASE_URL && {
-        baseURL: process.env.ANTHROPIC_BASE_URL,
-      }),
-      ...(AUTH_TOKEN && { authToken: AUTH_TOKEN }),
-      ...(process.env.ANTHROPIC_API_KEY &&
-        !AUTH_TOKEN && {
-          apiKey: process.env.ANTHROPIC_API_KEY,
-        }),
-    })
-  : null
-
 /** Get the model instance for the current provider. */
 function getModel(): LanguageModel {
-  if (proxyProvider) return proxyProvider(MODEL_ID)
-  if (nativeProvider) return nativeProvider(MODEL_ID)
-  throw new Error(
-    'No AI provider configured. Set CLAUDE_PROXY_URL, ANTHROPIC_AUTH_TOKEN, or ANTHROPIC_API_KEY.',
-  )
+  if (proxyProvider) return proxyProvider(GATEWAY_MODEL_ID)
+  // Vercel AI Gateway: auto OIDC on Vercel, AI_GATEWAY_API_KEY locally
+  return gateway(GATEWAY_MODEL_ID)
 }
 
-// ── Anthropic-specific options (native mode only) ───────────────────
+// ── Anthropic-specific options (gateway mode) ───────────────────
 
 function thinkingOptions(
   budget: number = DEFAULT_THINKING_BUDGET,
@@ -109,7 +80,7 @@ function thinkingOptions(
 export interface AITextOptions {
   /** Max output tokens (default: 2000) */
   maxTokens?: number
-  /** Thinking budget in tokens (default: 10000). Set 0 to disable thinking. Native mode only. */
+  /** Thinking budget in tokens (default: 10000). Set 0 to disable thinking. */
   thinkingBudget?: number
   /** AbortSignal for timeout support */
   signal?: AbortSignal
@@ -136,8 +107,6 @@ export async function generateAIText(
     signal,
   } = options
 
-  // Native Anthropic: extended thinking with server-locked temp
-  // Proxy: temperature 0.15, no thinking control (model reasons naturally)
   const useThinking = !USE_PROXY && thinkingBudget > 0
   const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
 
@@ -226,13 +195,18 @@ export async function generateAIChat(
 }
 
 /**
- * Check if AI is available (any auth path configured).
+ * Check if AI is available.
+ * Gateway mode is always available (OIDC on Vercel, API key locally).
+ * Proxy mode requires CLAUDE_PROXY_URL.
  */
 export function isAIAvailable(): boolean {
+  // Gateway mode: always available on Vercel (OIDC auto-injected)
+  // Locally: needs AI_GATEWAY_API_KEY from `vercel env pull`
   return Boolean(
-    PROXY_URL ||
-      AUTH_TOKEN ||
-      process.env.ANTHROPIC_API_KEY,
+    USE_PROXY ||
+      process.env.VERCEL ||
+      process.env.AI_GATEWAY_API_KEY ||
+      process.env.VERCEL_OIDC_TOKEN,
   )
 }
 
@@ -240,7 +214,7 @@ export function isAIAvailable(): boolean {
  * Get the current model ID (for logging/debugging).
  */
 export function getModelId(): string {
-  return MODEL_ID
+  return GATEWAY_MODEL_ID
 }
 
 /**
@@ -248,13 +222,11 @@ export function getModelId(): string {
  */
 export function getAuthMethod():
   | 'proxy'
-  | 'gateway'
-  | 'auth_token'
-  | 'api_key'
+  | 'gateway_oidc'
+  | 'gateway_apikey'
   | 'none' {
   if (USE_PROXY) return 'proxy'
-  if (process.env.VERCEL_OIDC_TOKEN) return 'gateway'
-  if (process.env.ANTHROPIC_AUTH_TOKEN) return 'auth_token'
-  if (process.env.ANTHROPIC_API_KEY) return 'api_key'
+  if (process.env.VERCEL) return 'gateway_oidc'
+  if (process.env.AI_GATEWAY_API_KEY) return 'gateway_apikey'
   return 'none'
 }
