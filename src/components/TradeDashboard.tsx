@@ -283,8 +283,7 @@ function _EventCard({ phase, label }: { phase: string; label: string }) {
 export default function TradeDashboard() {
   const chartRef = useRef<LiveMesChartHandle>(null);
 
-  const { data: tradesData, loading: tradesLoading } =
-    useUpcomingTrades(15_000);
+  const { data: tradesData, loading: tradesLoading } = useUpcomingTrades();
   const { data: setupsData } = useMesSetups();
   const chartSetups = [
     ...tradesData.trades.map((trade) => trade.setup),
@@ -310,7 +309,7 @@ export default function TradeDashboard() {
       </div>
 
       {/* Primary Global Intelligence Console */}
-      <IntelligenceConsole />
+      <IntelligenceConsole setupsData={setupsData} />
 
       <div className="max-w-7xl mx-auto px-6 lg:px-10 py-10">
         {/* Active Trades Section */}

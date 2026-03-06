@@ -2,19 +2,24 @@
 
 import { useForecast } from "@/hooks/useForecast";
 import { useCorrelation } from "@/hooks/useCorrelation";
-import { useMesSetups } from "@/hooks/useMesSetups";
 import { useAiSynthesis } from "@/hooks/useAiSynthesis";
 import { useGpr } from "@/hooks/useGpr";
+import type { MesSetupsResponse } from "@/hooks/useMesSetups";
 
 import { AiSynthesisBillboard } from "./Widgets/AiSynthesisBillboard";
 import { ForecastMomentumWidget } from "./Widgets/ForecastMomentumWidget";
 import { CrossAssetAlignmentWidget } from "./Widgets/CrossAssetAlignmentWidget";
 import { RiskEventWidget } from "./Widgets/RiskEventWidget";
 
-export default function IntelligenceConsole() {
+interface IntelligenceConsoleProps {
+  setupsData: MesSetupsResponse | null;
+}
+
+export default function IntelligenceConsole({
+  setupsData,
+}: IntelligenceConsoleProps) {
   const { forecast } = useForecast();
   const { data: correlation } = useCorrelation();
-  const { data: setupsData } = useMesSetups();
   const { data: gpr } = useGpr();
 
   const leadSetup = setupsData?.setups?.[0] || null;

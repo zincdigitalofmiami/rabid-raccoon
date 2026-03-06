@@ -1,7 +1,6 @@
-import { prisma } from "@/lib/prisma";
 import { toNum } from "@/lib/decimal";
 import { refreshMes15mFromDatabento } from "@/lib/mes15m-refresh";
-import type { Decimal } from "@prisma/client/runtime/client";
+import { readLatestMes15mRows } from "@/lib/mes-live-queries";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,11 +17,11 @@ interface MesPricePoint {
 
 interface MesRow {
   eventTime: Date;
-  open: Decimal | number;
-  high: Decimal | number;
-  low: Decimal | number;
-  close: Decimal | number;
-  volume: bigint | null;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
 }
 
 function encodeSse(event: string, payload: unknown): Uint8Array {
@@ -72,12 +71,7 @@ export async function GET(request: Request): Promise<Response> {
       };
 
       try {
-        await refreshMes15mFromDatabento({ force: true });
-
-        const initial = await prisma.mktFuturesMes15m.findMany({
-          orderBy: { eventTime: "desc" },
-          take: backfillCount,
-        });
+        const initial = await readLatestMes15mRows(backfillCount);
 
         if (initial.length === 0) {
           pushErrorAndClose(
@@ -107,10 +101,9 @@ export async function GET(request: Request): Promise<Response> {
         try {
           await refreshMes15mFromDatabento({ force: false });
 
-          const latest = await prisma.mktFuturesMes15m.findMany({
-            orderBy: { eventTime: "desc" },
-            take: Math.max(80, Math.min(400, backfillCount)),
-          });
+          const latest = await readLatestMes15mRows(
+            Math.max(80, Math.min(400, backfillCount)),
+          );
 
           if (latest.length === 0) {
             controller.enqueue(encodeSse("ping", { ts: Date.now() }));
@@ -149,7 +142,7 @@ export async function GET(request: Request): Promise<Response> {
             error instanceof Error ? error.message : String(error);
           pushErrorAndClose(`Live stream query failed: ${message}`);
         }
-      }, 15_000); // Was 2s — raised to 15s to reduce Accelerate ops (~28K → ~1.9K/day)
+      }, 60_000);
 
       const abortListener = () => {
         if (closed) return;

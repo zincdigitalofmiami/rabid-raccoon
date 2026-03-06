@@ -1,7 +1,6 @@
-import { prisma } from '@/lib/prisma'
 import { toNum } from '@/lib/decimal'
 import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
-import type { Decimal } from '@prisma/client/runtime/client'
+import { readLatestMes1mRows, readLatestMes15mRows } from '@/lib/mes-live-queries'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -18,11 +17,11 @@ interface MesPricePoint {
 
 interface MesRow {
   eventTime: Date
-  open: Decimal | number
-  high: Decimal | number
-  low: Decimal | number
-  close: Decimal | number
-  volume: bigint | null
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number | null
 }
 
 function encodeSse(event: string, payload: unknown): Uint8Array {
@@ -96,17 +95,13 @@ export async function GET(request: Request): Promise<Response> {
 
       try {
         // Serve DB data immediately — don't block on Databento refresh
-        const initial = await prisma.mktFuturesMes1m.findMany({
-          orderBy: { eventTime: 'desc' },
-          take: backfillCount,
-        })
+        const initial = await readLatestMes1mRows(backfillCount)
 
         if (initial.length === 0) {
           // Fall back to 15m data if 1m table is empty (first deploy)
-          const fallback = await prisma.mktFuturesMes15m.findMany({
-            orderBy: { eventTime: 'desc' },
-            take: Math.min(672, Math.ceil(backfillCount / 15)),
-          })
+          const fallback = await readLatestMes15mRows(
+            Math.min(672, Math.ceil(backfillCount / 15))
+          )
 
           if (fallback.length === 0) {
             pushErrorAndClose(
@@ -152,10 +147,9 @@ export async function GET(request: Request): Promise<Response> {
           // This refreshes both 1m and 15m tables
           await refreshMes15mFromDatabento({ force: false })
 
-          const latest = await prisma.mktFuturesMes1m.findMany({
-            orderBy: { eventTime: 'desc' },
-            take: Math.max(60, Math.min(300, backfillCount)),
-          })
+          const latest = await readLatestMes1mRows(
+            Math.max(60, Math.min(300, backfillCount))
+          )
 
           if (latest.length === 0) {
             controller.enqueue(encodeSse('ping', { ts: Date.now() }))

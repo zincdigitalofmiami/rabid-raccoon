@@ -1,7 +1,6 @@
-import { prisma } from '@/lib/prisma'
 import { toNum } from '@/lib/decimal'
 import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
-import type { Decimal } from '@prisma/client/runtime/client'
+import { readLatestMes1mRows, readLatestMes15mRows } from '@/lib/mes-live-queries'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -18,20 +17,20 @@ interface MesPricePoint {
 
 interface MesRow {
   eventTime: Date
-  open: Decimal | number
-  high: Decimal | number
-  low: Decimal | number
-  close: Decimal | number
-  volume: bigint | null
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number | null
 }
 
 interface Mes1mRow {
   eventTime: Date
-  open: Decimal | number
-  high: Decimal | number
-  low: Decimal | number
-  close: Decimal | number
-  volume: bigint | null
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number | null
 }
 
 function encodeSse(event: string, payload: unknown): Uint8Array {
@@ -152,8 +151,8 @@ function aggregateTo15mFrom1m(rows: Mes1mRow[]): MesRow[] {
     bucket.high = Math.max(toNum(bucket.high), toNum(row.high))
     bucket.low = Math.min(toNum(bucket.low), toNum(row.low))
     bucket.close = row.close
-    const prevVol = bucket.volume == null ? 0n : BigInt(bucket.volume)
-    const nextVol = row.volume == null ? 0n : BigInt(row.volume)
+    const prevVol = bucket.volume == null ? 0 : bucket.volume
+    const nextVol = row.volume == null ? 0 : row.volume
     bucket.volume = prevVol + nextVol
   }
 
@@ -184,17 +183,11 @@ export async function GET(request: Request): Promise<Response> {
         // Serve DB data immediately — don't block on Databento refresh
         // Background refresh runs on first poll interval (60s)
         const oneMinuteBackfill = Math.max(backfillCount * 15 + 240, 2400)
-        const initial1m = await prisma.mktFuturesMes1m.findMany({
-          orderBy: { eventTime: 'desc' },
-          take: oneMinuteBackfill,
-        })
+        const initial1m = await readLatestMes1mRows(oneMinuteBackfill)
 
         const aggregated15m = aggregateTo15mFrom1m(initial1m).slice(-backfillCount)
         const fallback15m = aggregated15m.length === 0
-          ? await prisma.mktFuturesMes15m.findMany({
-              orderBy: { eventTime: 'desc' },
-              take: backfillCount,
-            })
+          ? await readLatestMes15mRows(backfillCount)
           : []
         const initial = aggregated15m.length > 0 ? aggregated15m : fallback15m
 
@@ -233,10 +226,7 @@ export async function GET(request: Request): Promise<Response> {
             4000,
             Math.max(40, Math.min(250, backfillCount)) * 15 + 240
           )
-          const latest1m = await prisma.mktFuturesMes1m.findMany({
-            orderBy: { eventTime: 'desc' },
-            take: oneMinuteLookback,
-          })
+          const latest1m = await readLatestMes1mRows(oneMinuteLookback)
           const latest = aggregateTo15mFrom1m(latest1m).slice(
             -Math.max(40, Math.min(250, backfillCount))
           )
