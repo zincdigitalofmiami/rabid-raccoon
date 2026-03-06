@@ -1,6 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  outputFileTracingExcludes: {
+    '/api/inngest': [
+      './datasets/**/*',
+      './models/**/*',
+      './warbirddl.zip',
+      './dataset_build.log',
+      './training_run.log',
+      './**/__pycache__/**/*',
+    ],
+  },
   // ── Security Headers ───────────────────────────────────────────────────────
   async headers() {
     return [
