@@ -13,6 +13,11 @@ function normalizeDatabaseUrl(value?: string): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function positiveIntFromEnv(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function getPrismaClient(): PrismaClient {
   // Connection priority (first match wins):
   //
@@ -71,8 +76,22 @@ function getPrismaClient(): PrismaClient {
 
   // Build the client
   const isDirectPostgres = /^postgres(ql)?:\/\//i.test(databaseUrl);
+  const pgPoolMax = positiveIntFromEnv(process.env.PRISMA_POOL_MAX, 2);
+  const pgConnectionTimeoutMs = positiveIntFromEnv(
+    process.env.PRISMA_POOL_CONNECTION_TIMEOUT_MS,
+    5_000,
+  );
+  const pgIdleTimeoutMs = positiveIntFromEnv(
+    process.env.PRISMA_POOL_IDLE_TIMEOUT_MS,
+    5_000,
+  );
   const adapter = isDirectPostgres
-    ? new PrismaPg({ connectionString: databaseUrl })
+    ? new PrismaPg({
+        connectionString: databaseUrl,
+        max: pgPoolMax,
+        connectionTimeoutMillis: pgConnectionTimeoutMs,
+        idleTimeoutMillis: pgIdleTimeoutMs,
+      })
     : undefined;
 
   const baseClient = new PrismaClient({
