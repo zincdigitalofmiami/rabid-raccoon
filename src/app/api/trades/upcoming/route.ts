@@ -86,7 +86,7 @@ const EMPTY_EVENT_CONTEXT: EventContext = {
   previous: null,
   surpriseHistory: null,
   marketTemperature: null,
-};
+} as EventContext;
 
 function rowToCandle(row: {
   eventTime: Date;
