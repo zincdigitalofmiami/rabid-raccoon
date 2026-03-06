@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { generateAIText, isAIAvailable } from "@/lib/ai-provider";
 
 export const maxDuration = 60;
 
@@ -85,22 +85,18 @@ Required content:
 3) One actionable next-entry framing with direction + target/zone + expected horizon.
 `;
 
-    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-    if (!apiKey) {
+    if (!isAIAvailable()) {
       return NextResponse.json({
-        narrative: `${fallbackNarrative} AI synthesis is running in fallback mode (missing Gemini API key).`,
+        narrative: `${fallbackNarrative} AI synthesis is running in fallback mode (missing API key).`,
       });
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: 300, temperature: 0.1 },
+    const result = await generateAIText(prompt, {
+      maxTokens: 300,
+      thinkingBudget: 2000, // light thinking for short narrative
     });
 
-    const aiNarrative = result.response.text();
+    const aiNarrative = result.text;
     const narrative = clampToMaxSentences(aiNarrative, 3) || fallbackNarrative;
 
     return NextResponse.json({ narrative });

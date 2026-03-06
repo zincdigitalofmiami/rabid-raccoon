@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { generateAIVision, isAIAvailable } from '@/lib/ai-provider'
 import { prisma } from '@/lib/prisma'
 import { aggregateCandles } from '@/lib/analyse-data'
 import { toNum } from '@/lib/decimal'
@@ -64,10 +64,9 @@ function formatCandles(candles: CandleData[], limit: number): string {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY
-  if (!apiKey) {
+  if (!isAIAvailable()) {
     return NextResponse.json(
-      { error: 'GOOGLE_GENERATIVE_AI_API_KEY not set' },
+      { error: 'ANTHROPIC_API_KEY not set' },
       { status: 503 }
     )
   }
@@ -112,32 +111,17 @@ export async function POST(request: Request): Promise<Response> {
     // Strip the data:image/png;base64, prefix if present
     const base64Data = body.image.replace(/^data:image\/\w+;base64,/, '')
 
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
-
-    const result = await model.generateContent({
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                data: base64Data,
-                mimeType: 'image/png',
-              },
-            },
-            {
-              text: `You are an expert technical analyst reviewing a Micro E-mini S&P 500 (MES) chart. The screenshot shows 15-minute candlesticks with any forecast targets/fibonacci overlays.
+    const analysisPrompt = `You are an expert technical analyst reviewing a Micro E-mini S&P 500 (MES) chart. The screenshot shows 15-minute candlesticks with any forecast targets/fibonacci overlays.
 
 Analyze the chart image AND the structured OHLCV data below across THREE timeframes: 15M, 1H, and 4H.
 
 For each timeframe, identify ALL visible chart patterns including:
-- **Reversals**: Head & shoulders, inverse H&S, double top, double bottom, engulfing candles, hammers, shooting stars, evening/morning stars
-- **Continuations**: Flags, pennants, measured moves (AB=CD), cup & handle
-- **Triangles**: Ascending, descending, symmetric
-- **Line breaks**: Support/resistance breaks, trendline breaks
-- **Channels/Wedges**: Rising/falling wedge, ascending/descending channel
-- **Other**: Gaps, volume climaxes, divergences
+- Reversals: Head & shoulders, inverse H&S, double top, double bottom, engulfing candles, hammers, shooting stars, evening/morning stars
+- Continuations: Flags, pennants, measured moves (AB=CD), cup & handle
+- Triangles: Ascending, descending, symmetric
+- Line breaks: Support/resistance breaks, trendline breaks
+- Channels/Wedges: Rising/falling wedge, ascending/descending channel
+- Other: Gaps, volume climaxes, divergences
 
 ${structuredData}
 
@@ -162,16 +146,16 @@ Respond with ONLY valid JSON matching this schema (no markdown, no code fences):
   ],
   "overallBias": "bullish|bearish|neutral",
   "overallSummary": "1-2 sentence overall assessment across all timeframes"
-}`,
-            },
-          ],
-        },
-      ],
-      generationConfig: { maxOutputTokens: 4096, temperature: 0.1 },
+}`
+
+    const result = await generateAIVision(analysisPrompt, {
+      imageBase64: base64Data,
+      mimeType: 'image/png',
+      maxTokens: 4096,
     })
 
-    let jsonText = result.response.text().trim()
-    // Strip code fences if Gemini wraps output
+    let jsonText = result.text.trim()
+    // Strip code fences if model wraps output
     if (jsonText.startsWith('```')) {
       jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
     }

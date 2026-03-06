@@ -11,7 +11,7 @@
  *   - 3 second timeout, falls back to Layer 1 only
  */
 
-import OpenAI from 'openai'
+import { generateAIChat, isAIAvailable } from './ai-provider'
 import type { TradeFeatureVector } from '@/lib/trade-features'
 import type { TradeScore } from '@/lib/composite-score'
 import type { EventContext } from '@/lib/event-awareness'
@@ -30,25 +30,6 @@ export interface TradeReasoning {
   tradeQuality: 'A' | 'B' | 'C' | 'D'
   catalysts: string[]
   source: 'ai' | 'deterministic'
-}
-
-// ─────────────────────────────────────────────
-// Model cascade (matches forecast.ts pattern)
-// ─────────────────────────────────────────────
-
-function getReasoningModelCandidates(): string[] {
-  const override = (process.env.OPENAI_REASONING_MODEL || '').trim()
-  const analysis = (process.env.OPENAI_ANALYSIS_MODEL || '').trim()
-
-  const candidates = [
-    override,
-    analysis,
-    'gpt-4.1-mini',
-    'gpt-4.1-nano',
-    'gpt-4o-mini',
-  ].filter(Boolean)
-
-  return [...new Set(candidates)]
 }
 
 // ─────────────────────────────────────────────
@@ -167,84 +148,85 @@ export async function getTradeReasoning(
     return deterministicFallback(score, features, 'Score below threshold — AI reasoning skipped.')
   }
 
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    return deterministicFallback(score, features, 'No OpenAI API key configured.')
+  if (!isAIAvailable()) {
+    return deterministicFallback(score, features, 'No Anthropic API key configured.')
   }
 
-  const openai = new OpenAI({ apiKey })
-  const models = getReasoningModelCandidates()
   const prompt = buildPrompt(setup, score, features, eventContext, marketContext)
 
-  for (const model of models) {
-    try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
-      const response = await openai.chat.completions.create(
-        {
-          model,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.3,
-          max_tokens: 400,
-          response_format: { type: 'json_object' },
-        },
-        { signal: controller.signal },
-      )
+    const response = await generateAIChat(
+      [{ role: 'user', content: prompt }],
+      {
+        maxTokens: 400,
+        thinkingBudget: 4000, // lighter thinking for per-trade reasoning (speed)
+        signal: controller.signal,
+      },
+    )
 
-      clearTimeout(timeout)
+    clearTimeout(timeout)
 
-      const content = response.choices?.[0]?.message?.content
-      if (!content) continue
-
-      const parsed = JSON.parse(content) as {
-        adjustedPTp1?: number
-        adjustedPTp2?: number
-        rationale?: string
-        keyRisks?: string[]
-        tradeQuality?: string
-        catalysts?: string[]
-      }
-
-      // Guardrail: clamp AI probabilities within ±0.20 of ML baseline
-      const pTp1 = clamp(
-        parsed.adjustedPTp1 ?? score.pTp1,
-        score.pTp1 - P_CLAMP_RANGE,
-        score.pTp1 + P_CLAMP_RANGE,
-      )
-      const pTp2 = clamp(
-        parsed.adjustedPTp2 ?? score.pTp2,
-        score.pTp2 - P_CLAMP_RANGE,
-        score.pTp2 + P_CLAMP_RANGE,
-      )
-
-      const quality = (['A', 'B', 'C', 'D'] as const).includes(
-        parsed.tradeQuality as 'A' | 'B' | 'C' | 'D',
-      )
-        ? (parsed.tradeQuality as 'A' | 'B' | 'C' | 'D')
-        : score.grade
-
-      return {
-        adjustedPTp1: Math.round(Math.max(0, Math.min(1, pTp1)) * 10000) / 10000,
-        adjustedPTp2: Math.round(Math.max(0, Math.min(1, pTp2)) * 10000) / 10000,
-        rationale: parsed.rationale || `AI assessment: ${score.grade}-grade setup.`,
-        keyRisks: Array.isArray(parsed.keyRisks) ? parsed.keyRisks.slice(0, 5) : [],
-        tradeQuality: quality,
-        catalysts: Array.isArray(parsed.catalysts) ? parsed.catalysts.slice(0, 5) : [],
-        source: 'ai',
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      // AbortError = timeout, try next model
-      if (message.includes('abort') || message.includes('Abort')) continue
-      // Model not found, try next
-      if (message.includes('model') || message.includes('404')) continue
-      // Other error, fall through to deterministic
-      break
+    const content = response.text?.trim()
+    if (!content) {
+      return deterministicFallback(score, features, 'Claude returned empty response.')
     }
-  }
 
-  return deterministicFallback(score, features, 'AI unavailable — using Layer 1 only.')
+    // Parse JSON — strip code fences if present
+    let jsonText = content
+    if (jsonText.startsWith('```')) {
+      jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+    }
+    const jsonMatch = jsonText.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) {
+      return deterministicFallback(score, features, 'Failed to parse JSON from Claude.')
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      adjustedPTp1?: number
+      adjustedPTp2?: number
+      rationale?: string
+      keyRisks?: string[]
+      tradeQuality?: string
+      catalysts?: string[]
+    }
+
+    // Guardrail: clamp AI probabilities within ±0.20 of ML baseline
+    const pTp1 = clamp(
+      parsed.adjustedPTp1 ?? score.pTp1,
+      score.pTp1 - P_CLAMP_RANGE,
+      score.pTp1 + P_CLAMP_RANGE,
+    )
+    const pTp2 = clamp(
+      parsed.adjustedPTp2 ?? score.pTp2,
+      score.pTp2 - P_CLAMP_RANGE,
+      score.pTp2 + P_CLAMP_RANGE,
+    )
+
+    const quality = (['A', 'B', 'C', 'D'] as const).includes(
+      parsed.tradeQuality as 'A' | 'B' | 'C' | 'D',
+    )
+      ? (parsed.tradeQuality as 'A' | 'B' | 'C' | 'D')
+      : score.grade
+
+    return {
+      adjustedPTp1: Math.round(Math.max(0, Math.min(1, pTp1)) * 10000) / 10000,
+      adjustedPTp2: Math.round(Math.max(0, Math.min(1, pTp2)) * 10000) / 10000,
+      rationale: parsed.rationale || `AI assessment: ${score.grade}-grade setup.`,
+      keyRisks: Array.isArray(parsed.keyRisks) ? parsed.keyRisks.slice(0, 5) : [],
+      tradeQuality: quality,
+      catalysts: Array.isArray(parsed.catalysts) ? parsed.catalysts.slice(0, 5) : [],
+      source: 'ai',
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    const reason = message.includes('abort') || message.includes('Abort')
+      ? 'AI timeout — using Layer 1 only.'
+      : `AI error: ${message.slice(0, 80)}`
+    return deterministicFallback(score, features, reason)
+  }
 }
 
 // ─────────────────────────────────────────────

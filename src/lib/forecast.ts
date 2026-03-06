@@ -1,4 +1,4 @@
-import OpenAI from 'openai'
+import { generateAIText, isAIAvailable } from './ai-provider'
 import {
   ForecastResponse,
   MarketSummary,
@@ -25,23 +25,6 @@ const WINDOW_PROMPTS: Record<ForecastWindow, string> = {
     'MIDDAY UPDATE. Reassess intraday structure and whether signals are strengthening or fading.',
   afterhours:
     'AFTER-HOURS SNAPSHOT. Do not reference "morning thesis". Focus on session close state and next-session setup.',
-}
-
-function getForecastModelCandidates(): string[] {
-  const forecastOverride = (process.env.OPENAI_FORECAST_MODEL || '').trim()
-  const analysisDefault = (process.env.OPENAI_ANALYSIS_MODEL || '').trim()
-
-  const candidates = [
-    forecastOverride,
-    analysisDefault,
-    'gpt-5.2-pro',
-    'gpt-5-pro',
-    'gpt-5.2',
-    'gpt-5.1',
-    'gpt-5',
-  ].filter(Boolean)
-
-  return [...new Set(candidates)]
 }
 
 function clamp(n: number, min: number, max: number): number {
@@ -251,55 +234,36 @@ Hard constraints:
 - Keep numbers realistic to provided prices.
 - Output valid JSON and nothing else.`
 
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    return deterministicForecast(input, 'missing OPENAI_API_KEY')
+  if (!isAIAvailable()) {
+    return deterministicForecast(input, 'missing ANTHROPIC_API_KEY')
   }
 
-  const client = new OpenAI({ apiKey })
-  const models = getForecastModelCandidates()
-  let lastErr: unknown = null
+  try {
+    const response = await generateAIText(prompt, { maxTokens: 1800 })
 
-  for (const model of models) {
-    try {
-      const response = await client.responses.create({
-        model,
-        input: prompt,
-        max_output_tokens: 1800,
-      })
-
-      const text = response.output_text?.trim()
-      if (!text) {
-        throw new Error(`OpenAI returned empty text for model ${model}`)
-      }
-
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(text)
-      } catch {
-        const m = text.match(/\{[\s\S]*\}/)
-        if (!m) throw new Error(`Failed to parse JSON for model ${model}`)
-        parsed = JSON.parse(m[0])
-      }
-
-      const cleaned = sanitizeForecast(parsed, input)
-      return {
-        window,
-        ...cleaned,
-        measuredMoves: mesMeasuredMoves,
-        generatedAt: new Date().toISOString(),
-      }
-    } catch (error) {
-      lastErr = error
-      const msg = error instanceof Error ? error.message : String(error)
-      const isModelIssue =
-        /model|not found|does not exist|unsupported|permission|access/i.test(msg)
-      if (!isModelIssue) {
-        return deterministicForecast(input, msg)
-      }
+    const text = response.text?.trim()
+    if (!text) {
+      return deterministicForecast(input, 'Claude returned empty text')
     }
-  }
 
-  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr)
-  return deterministicForecast(input, msg)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      const m = text.match(/\{[\s\S]*\}/)
+      if (!m) return deterministicForecast(input, 'Failed to parse JSON from Claude')
+      parsed = JSON.parse(m[0])
+    }
+
+    const cleaned = sanitizeForecast(parsed, input)
+    return {
+      window,
+      ...cleaned,
+      measuredMoves: mesMeasuredMoves,
+      generatedAt: new Date().toISOString(),
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return deterministicForecast(input, msg)
+  }
 }

@@ -9,7 +9,7 @@
  * says BUY or SELL. No black boxes.
  */
 
-import OpenAI from 'openai'
+import { generateAIText, isAIAvailable } from './ai-provider'
 import { CandleData, FibLevel, SwingPoint, MeasuredMove } from './types'
 import { detectSwings } from './swing-detection'
 import { calculateFibonacciMultiPeriod } from './fibonacci'
@@ -33,66 +33,27 @@ interface AnalysisAiResponse {
   }[]
 }
 
-function getAnalysisModelCandidates(): string[] {
-  const fromEnv = (process.env.OPENAI_ANALYSIS_MODEL || '').trim()
-  const candidates = [
-    fromEnv,
-    'gpt-5.2-pro',
-    'gpt-5-pro',
-    'gpt-5.2',
-    'gpt-5.1',
-    'gpt-5',
-  ].filter(Boolean)
-  return [...new Set(candidates)]
-}
-
 async function requestAnalysisOverlay(prompt: string): Promise<AnalysisAiResponse> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY environment variable is not set')
+  if (!isAIAvailable()) {
+    throw new Error('ANTHROPIC_API_KEY environment variable is not set')
   }
 
-  const client = new OpenAI({ apiKey })
-  const models = getAnalysisModelCandidates()
-  let lastError: unknown = null
+  const { text } = await generateAIText(prompt, { maxTokens: 3000 })
 
-  for (const model of models) {
-    try {
-      const response = await client.responses.create({
-        model,
-        input: prompt,
-        max_output_tokens: 3000,
-      })
+  if (!text) {
+    throw new Error('Claude returned empty text')
+  }
 
-      const text = response.output_text?.trim()
-      if (!text) {
-        throw new Error(`OpenAI returned empty text for model ${model}`)
-      }
-
-      try {
-        return JSON.parse(text) as AnalysisAiResponse
-      } catch {
-        const m = text.match(/\{[\s\S]*\}/)
-        if (!m) {
-          throw new Error(`Failed to parse JSON from model ${model}`)
-        }
-        return JSON.parse(m[0]) as AnalysisAiResponse
-      }
-    } catch (error) {
-      lastError = error
-      const msg = error instanceof Error ? error.message : String(error)
-      const isModelIssue =
-        /model|not found|does not exist|unsupported|permission|access/i.test(msg)
-      const isParseIssue = /parse json|failed to parse|expected .*json|unexpected token/i.test(msg)
-
-      if (!isModelIssue && !isParseIssue) {
-        throw error
-      }
+  const trimmed = text.trim()
+  try {
+    return JSON.parse(trimmed) as AnalysisAiResponse
+  } catch {
+    const m = trimmed.match(/\{[\s\S]*\}/)
+    if (!m) {
+      throw new Error('Failed to parse JSON from Claude response')
     }
+    return JSON.parse(m[0]) as AnalysisAiResponse
   }
-
-  const msg = lastError instanceof Error ? lastError.message : String(lastError)
-  throw new Error(`OpenAI analysis request failed for all candidate models: ${msg}`)
 }
 
 // --- Technical indicator helpers ---
