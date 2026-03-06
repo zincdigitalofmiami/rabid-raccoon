@@ -7,6 +7,12 @@ const globalForPrisma = globalThis as unknown as {
   prismaUrl?: string;
 };
 
+function normalizeDatabaseUrl(value?: string): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().replace(/(?:\\n|\n)+$/g, "");
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function getPrismaClient(): PrismaClient {
   // Connection priority (first match wins):
   //
@@ -23,23 +29,26 @@ function getPrismaClient(): PrismaClient {
   //      is not set, we still use it but log a warning.
 
   const forceAccelerate = process.env.USE_ACCELERATE === "1";
-  const directUrl = process.env.DIRECT_URL || process.env.LOCAL_DATABASE_URL;
+  const directUrl =
+    normalizeDatabaseUrl(process.env.DIRECT_URL) ||
+    normalizeDatabaseUrl(process.env.LOCAL_DATABASE_URL);
+  const accelerateDatabaseUrl = normalizeDatabaseUrl(process.env.DATABASE_URL);
 
   // Determine which URL to use
   let databaseUrl: string;
   let mode: "direct" | "accelerate";
 
-  if (forceAccelerate && process.env.DATABASE_URL) {
+  if (forceAccelerate && accelerateDatabaseUrl) {
     // Explicit opt-in to Accelerate (for edge caching with cacheStrategy)
-    databaseUrl = process.env.DATABASE_URL;
+    databaseUrl = accelerateDatabaseUrl;
     mode = "accelerate";
   } else if (directUrl) {
     // Default: direct Postgres — zero Accelerate cost
     databaseUrl = directUrl;
     mode = "direct";
-  } else if (process.env.DATABASE_URL) {
+  } else if (accelerateDatabaseUrl) {
     // Fallback to DATABASE_URL whatever it is
-    databaseUrl = process.env.DATABASE_URL;
+    databaseUrl = accelerateDatabaseUrl;
     const isAccelerateUrl = /^prisma(\+postgres)?:\/\//i.test(databaseUrl);
     mode = isAccelerateUrl ? "accelerate" : "direct";
     if (isAccelerateUrl) {
@@ -77,11 +86,10 @@ function getPrismaClient(): PrismaClient {
       ? (baseClient.$extends(withAccelerate()) as unknown as PrismaClient)
       : baseClient;
 
-  // Cache in dev to avoid hot-reload connection storms
-  if (process.env.NODE_ENV !== "production") {
-    globalForPrisma.prisma = client;
-    globalForPrisma.prismaUrl = databaseUrl;
-  }
+  // Cache in all environments. In production serverless runtimes this avoids
+  // creating many Prisma clients per invocation and exhausting DB connections.
+  globalForPrisma.prisma = client;
+  globalForPrisma.prismaUrl = databaseUrl;
 
   return client;
 }
