@@ -6,44 +6,17 @@
  * scripts/create-scored-trades.ts.
  */
 
-import pg from 'pg'
-import { createHash } from 'crypto'
 import type { ScoredTrade } from '@/app/api/trades/upcoming/route'
 import type { EventContext } from '@/lib/event-awareness'
-
-// ─────────────────────────────────────────────
-// Connection pool (reused across requests)
-// ─────────────────────────────────────────────
-
-let pool: pg.Pool | null = null
-
-function getPool(): pg.Pool {
-  if (!pool) {
-    const url = process.env.DIRECT_URL
-    if (!url) throw new Error('DIRECT_URL not set — cannot record trades')
-    pool = new pg.Pool({ connectionString: url, max: 2 })
-  }
-  return pool
-}
+import { getDirectPool } from './direct-pool'
+import { canonicalSetupId } from './setup-id'
 
 // ─────────────────────────────────────────────
 // Setup hash (dedup key)
 // ─────────────────────────────────────────────
 
 function makeSetupHash(trade: ScoredTrade): string {
-  const s = trade.setup
-  const window = Math.floor(Date.now() / (15 * 60 * 1000))
-  const input = [
-    s.direction,
-    s.fibRatio.toFixed(3),
-    s.fibLevel.toFixed(2),
-    s.entry?.toFixed(2) ?? 'none',
-    s.stopLoss?.toFixed(2) ?? 'none',
-    s.goType ?? 'none',
-    window,
-  ].join('|')
-
-  return createHash('sha256').update(input).digest('hex').slice(0, 32)
+  return canonicalSetupId(trade.setup)
 }
 
 // ─────────────────────────────────────────────
@@ -52,14 +25,14 @@ function makeSetupHash(trade: ScoredTrade): string {
 
 const INSERT_SQL = `
   INSERT INTO scored_trades (
-    setup_hash, direction, fib_ratio, go_type,
-    entry_price, stop_loss, tp1, tp2, current_price,
-    composite_score, grade, p_tp1, p_tp2, ml_source,
-    rr, dollar_risk,
-    event_phase, confidence_adj,
-    rationale, reasoning_source, adjusted_p_tp1, adjusted_p_tp2,
-    features, score_breakdown, flags,
-    scored_at, created_at, updated_at
+    "setupHash", direction, "fibRatio", "goType",
+    "entryPrice", "stopLoss", tp1, tp2, "currentPrice",
+    "compositeScore", grade, "pTp1", "pTp2", "mlSource",
+    rr, "dollarRisk",
+    "eventPhase", "confidenceAdj",
+    rationale, "reasoningSource", "adjustedPTp1", "adjustedPTp2",
+    features, "scoreBreakdown", flags,
+    "scoredAt", "createdAt", "updatedAt"
   )
   VALUES (
     $1, $2, $3, $4,
@@ -71,7 +44,32 @@ const INSERT_SQL = `
     $23, $24, $25,
     $26, $26, $26
   )
-  ON CONFLICT (setup_hash, scored_at) DO NOTHING
+  ON CONFLICT ("setupHash", "scoredAt") DO UPDATE SET
+    direction = EXCLUDED.direction,
+    "fibRatio" = EXCLUDED."fibRatio",
+    "goType" = EXCLUDED."goType",
+    "entryPrice" = EXCLUDED."entryPrice",
+    "stopLoss" = EXCLUDED."stopLoss",
+    tp1 = EXCLUDED.tp1,
+    tp2 = EXCLUDED.tp2,
+    "currentPrice" = EXCLUDED."currentPrice",
+    "compositeScore" = EXCLUDED."compositeScore",
+    grade = EXCLUDED.grade,
+    "pTp1" = EXCLUDED."pTp1",
+    "pTp2" = EXCLUDED."pTp2",
+    "mlSource" = EXCLUDED."mlSource",
+    rr = EXCLUDED.rr,
+    "dollarRisk" = EXCLUDED."dollarRisk",
+    "eventPhase" = EXCLUDED."eventPhase",
+    "confidenceAdj" = EXCLUDED."confidenceAdj",
+    rationale = EXCLUDED.rationale,
+    "reasoningSource" = EXCLUDED."reasoningSource",
+    "adjustedPTp1" = EXCLUDED."adjustedPTp1",
+    "adjustedPTp2" = EXCLUDED."adjustedPTp2",
+    features = EXCLUDED.features,
+    "scoreBreakdown" = EXCLUDED."scoreBreakdown",
+    flags = EXCLUDED.flags,
+    "updatedAt" = EXCLUDED."updatedAt"
 `
 
 export async function recordScoredTrades(
@@ -81,18 +79,21 @@ export async function recordScoredTrades(
 ): Promise<number> {
   if (trades.length === 0) return 0
 
-  const directUrl = process.env.DIRECT_URL
-  if (!directUrl) {
-    console.warn('[trade-recorder] DIRECT_URL not set, skipping')
+  let db
+  try {
+    db = getDirectPool()
+  } catch (err) {
+    console.warn('[trade-recorder] direct pool unavailable, skipping:', err)
     return 0
   }
 
-  const db = getPool()
-  const now = new Date()
   let inserted = 0
 
   for (const trade of trades) {
     const hash = makeSetupHash(trade)
+    const scoredAt = trade.setup.goTime
+      ? new Date(trade.setup.goTime * 1000)
+      : new Date()
 
     try {
       const result = await db.query(INSERT_SQL, [
@@ -121,7 +122,7 @@ export async function recordScoredTrades(
         JSON.stringify(trade.features),
         JSON.stringify(trade.score.subScores ?? {}),
         trade.score.flags,
-        now,
+        scoredAt,
       ])
       if (result.rowCount && result.rowCount > 0) inserted++
     } catch (err) {

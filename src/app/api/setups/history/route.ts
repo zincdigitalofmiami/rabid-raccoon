@@ -10,7 +10,9 @@ export async function GET(request: Request): Promise<Response> {
     const limit = Math.min(Number(url.searchParams.get('limit') || '50'), 200)
 
     const setups = await prisma.bhgSetup.findMany({
-      where: { phase: { in: ['GO_FIRED', 'EXPIRED'] } },
+      where: {
+        phase: { in: ['GO_FIRED', 'EXPIRED', 'STOPPED', 'TP1_HIT', 'TP2_HIT'] },
+      },
       orderBy: { goTime: 'desc' },
       take: limit,
     })

@@ -7,6 +7,8 @@ import { advanceBhgSetups } from '@/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
 import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
 import { toNum } from '@/lib/decimal'
+import { withCanonicalSetupIds } from '@/lib/setup-id'
+import { recordTriggeredSetups } from '@/lib/bhg-setup-recorder'
 import type { Decimal } from '@prisma/client/runtime/client'
 import type { CandleData } from '@/lib/types'
 import { getEventContext, loadTodayEvents } from '@/lib/event-awareness'
@@ -36,7 +38,7 @@ export async function GET(): Promise<Response> {
   try {
     await refreshMes15mFromDatabento({ force: false })
 
-    // 1. Fetch MES 15m candles (last 96 bars = 24 hours)
+    // 1. Fetch MES 15m candles (last 200 bars for chart/card parity)
     const rows = await prisma.mktFuturesMes15m.findMany({
       orderBy: { eventTime: 'desc' },
       take: 200,
@@ -71,7 +73,10 @@ export async function GET(): Promise<Response> {
     const measuredMoves = detectMeasuredMoves(swings.highs, swings.lows, currentPrice)
 
     // 3. Run BHG state machine
-    const setups = advanceBhgSetups(candles, fibResult, measuredMoves)
+    const setups = withCanonicalSetupIds(
+      advanceBhgSetups(candles, fibResult, measuredMoves),
+      'M15',
+    )
 
     // 4. Attach risk computations for TRIGGERED setups
     const enrichedSetups = setups.map((s) => {
@@ -85,6 +90,11 @@ export async function GET(): Promise<Response> {
     // Event awareness
     const todayEvents = await loadTodayEvents()
     const eventContext = getEventContext(new Date(), todayEvents)
+
+    // Persist live chart-triggered setups.
+    recordTriggeredSetups(setups).catch((err) =>
+      console.warn('[setups] Setup persistence failed:', err),
+    )
 
     return NextResponse.json({
       setups: enrichedSetups,

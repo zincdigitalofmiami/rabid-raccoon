@@ -286,6 +286,11 @@ export default function TradeDashboard() {
   const { data: tradesData, loading: tradesLoading } =
     useUpcomingTrades(15_000);
   const { data: setupsData } = useMesSetups();
+  const chartSetups = [
+    ...tradesData.trades.map((trade) => trade.setup),
+    ...(setupsData?.setups?.filter((setup) => setup.phase !== "TRIGGERED") ??
+      []),
+  ];
 
   const tradeCount = tradesData.trades.length;
   const _currentPrice = tradesData.currentPrice;
@@ -297,7 +302,7 @@ export default function TradeDashboard() {
         <div className="rounded-xl border border-[var(--zf-border-soft)] bg-[var(--zf-surface-elev)] overflow-hidden">
           <LiveMesChart
             ref={chartRef}
-            setups={setupsData?.setups}
+            setups={chartSetups}
             eventPhase={tradesData.eventContext?.phase}
             eventLabel={tradesData.eventContext?.label}
           />

@@ -43,9 +43,12 @@ import type { MarketContext } from "@/lib/market-context";
 import type { CorrelationAlignment } from "@/lib/correlation-filter";
 import { recordScoredTrades } from "@/lib/trade-recorder";
 import { checkTradeOutcomes } from "@/lib/outcome-tracker";
+import { withCanonicalSetupIds } from "@/lib/setup-id";
+import { recordTriggeredSetups, type SetupScoringContext } from "@/lib/bhg-setup-recorder";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+const MIN_DISPLAY_COMPOSITE_SCORE = 50;
 
 // ─────────────────────────────────────────────
 // Types
@@ -177,10 +180,10 @@ export async function GET(): Promise<Response> {
   try {
     await refreshMes15mFromDatabento({ force: false });
 
-    // 1. Fetch MES 15m candles (last 96 bars = 24h)
+    // 1. Fetch MES 15m candles (last 200 bars for chart/card parity)
     const rows = await prisma.mktFuturesMes15m.findMany({
       orderBy: { eventTime: "desc" },
-      take: 96,
+      take: 200,
     });
 
     if (rows.length < 10) {
@@ -232,7 +235,10 @@ export async function GET(): Promise<Response> {
       swings.lows,
       currentPrice,
     );
-    const setups = advanceBhgSetups(candles, fibResult, measuredMoves);
+    const setups = withCanonicalSetupIds(
+      advanceBhgSetups(candles, fibResult, measuredMoves),
+      "M15",
+    );
 
     // 3. Event context
     const todayEvents = await loadTodayEvents();
@@ -418,18 +424,42 @@ export async function GET(): Promise<Response> {
     // Sort by composite score descending
     scoredTrades.sort((a, b) => b.score.composite - a.score.composite);
 
-    // 6. Record trades to DB for training (fire-and-forget)
+    const scoringBySetupId = new Map<string, SetupScoringContext>(
+      scoredTrades.map((trade) => [
+        trade.setup.id,
+        {
+          pTp1: trade.score.pTp1,
+          pTp2: trade.score.pTp2,
+          correlationScore: trade.features.compositeAlignment,
+          vixLevel: trade.features.vixLevel,
+          modelVersion: "warbird-live-v1",
+        },
+      ]),
+    );
+
+    // 6. Record canonical setup lifecycle rows for chart/card sync (fire-and-forget)
+    recordTriggeredSetups(triggeredSetups, scoringBySetupId).catch((err) =>
+      console.warn("[trades/upcoming] Setup persistence failed:", err),
+    );
+
+    // 7. Record trade-feature snapshots for model training (fire-and-forget)
     recordScoredTrades(scoredTrades, currentPrice, eventContext).catch((err) =>
       console.warn("[trades/upcoming] Recording failed:", err),
     );
 
-    // 7. Check outcomes for older trades (fire-and-forget)
+    // 8. Check outcomes for older trades (fire-and-forget)
     checkTradeOutcomes().catch((err) =>
       console.warn("[trades/upcoming] Outcome check failed:", err),
     );
 
+    const displayTrades = scoredTrades.filter(
+      (trade) =>
+        trade.score.composite >= MIN_DISPLAY_COMPOSITE_SCORE &&
+        trade.features.isAligned,
+    );
+
     return NextResponse.json({
-      trades: scoredTrades,
+      trades: displayTrades,
       eventContext,
       currentPrice,
       fibResult,
