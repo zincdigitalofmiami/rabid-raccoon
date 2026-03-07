@@ -1,11 +1,15 @@
 /**
  * Inngest function registry — barrel export for route.ts serve() call.
  *
- * 22 functions total:
+ * 26 functions total:
  *   6 market data (Databento) — 15m hourly, 1h–fx daily
  *   10 FRED econ (by domain table) — 05:00–14:00 UTC, 1hr apart
  *   4 events/news — 15:00–17:15 UTC
  *   1 signals (measured moves) — 18:00 UTC
+ *   1 15m compute cycle (compute-signal) — :13/:28/:43/:58 weekdays + econ event trigger
+ *   1 outcome checker (check-trade-outcomes) — every 15m weekdays
+ *   1 live news (ingest-live-news) — every minute 6AM-4PM ET weekdays
+ *   1 econ event watcher — every 5m market hours, fires econ/event.approaching
  *   1 backfill (event-triggered)
  *
  * Each function is independently visible, retriable, and monitorable in Inngest dashboard.
@@ -39,6 +43,12 @@ export { ingestFredNews } from './fred-news'
 
 // ── Signals ─────────────────────────────────────────────────────────
 export { ingestMeasuredMoves } from './measured-moves'
+
+// ── 15m Compute Cycle ───────────────────────────────────────────────
+export { computeSignal } from './compute-signal'
+export { checkOutcomes } from './check-trade-outcomes'
+export { ingestLiveNews } from './ingest-live-news'
+export { econEventWatcher } from './econ-event-watcher'
 
 // ── Backfill (event-triggered, not cron) ────────────────────────────
 export { backfillMesAllTimeframes } from '../backfill-mes'

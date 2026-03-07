@@ -8,6 +8,7 @@
 import { CandleData } from './types'
 import { fetchFedFundsCandles, getFredDateRange } from './fred'
 import { fetchTechLeaderSnapshots } from './tech-leaders'
+import { morningCache } from './tiered-cache'
 
 // --- Types ---
 
@@ -687,9 +688,9 @@ export async function buildMarketContext(
   const oilContext = oilCandles ? buildCommodityContext(oilCandles) : null
 
   const [headlines, leaderRows, fedFundsRate] = await Promise.all([
-    fetchMarketHeadlines(),
+    morningCache.getOrFetch('headlines', fetchMarketHeadlines),
     fetchTechLeaderSnapshots().catch(() => []),
-    fetchLatestFedFundsRate(),
+    morningCache.getOrFetch('fedFundsRate', fetchLatestFedFundsRate),
   ])
 
   const techLeaders: TechLeaderContext[] = leaderRows.map((r) => ({

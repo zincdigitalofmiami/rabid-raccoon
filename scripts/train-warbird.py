@@ -3,7 +3,7 @@
 WARBIRD MES Trainer (AGENTS-compliant)
 
 Purpose:
-  - Train MES-only regression models for 4 horizons (1h, 4h, 1d, 1w)
+  - Train MES-only regression models for 3-4 horizons (15m, 1h, 4h, 1d)
   - For each horizon, train 3 targets: price return, MAE, MFE
   - Preserve strict time ordering via walk-forward CV + purge/embargo
   - Use AutoGluon best-quality settings with 5 bag folds
@@ -48,12 +48,24 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, r
 
 ROOT = Path(__file__).resolve().parent.parent
 
-HORIZONS: dict[str, int] = {
+# Horizons depend on dataset timeframe:
+# 1h dataset: 1h=1, 4h=4, 1d=24 bars
+# 15m dataset: 15m=1, 1h=4, 4h=16, 1d=96 bars
+HORIZONS_1H: dict[str, int] = {
     "1h": 1,
     "4h": 4,
     "1d": 24,
-    "1w": 120,
 }
+
+HORIZONS_15M: dict[str, int] = {
+    "15m": 1,
+    "1h": 4,
+    "4h": 16,
+    "1d": 96,
+}
+
+# Default — selected by --timeframe arg
+HORIZONS: dict[str, int] = HORIZONS_1H
 
 TARGET_TYPES = ("price", "mae", "mfe")
 
@@ -90,6 +102,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mc-paths", type=int, default=10_000)
     p.add_argument("--preflight-only", action="store_true")
     p.add_argument("--skip-shap", action="store_true")
+    p.add_argument("--timeframe", choices=["1h", "15m"], default="1h",
+                   help="Dataset timeframe — determines horizon bars (default: 1h)")
     p.add_argument("--clean", action="store_true")
     p.add_argument(
         "--model-determined-folds",
@@ -340,6 +354,11 @@ def try_compute_shap(
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
+
+    # Select horizons based on timeframe
+    global HORIZONS
+    HORIZONS = HORIZONS_15M if args.timeframe == "15m" else HORIZONS_1H
+    print(f"[warbird] Timeframe: {args.timeframe} → horizons: {HORIZONS}")
 
     dataset_path = Path(args.dataset)
     if not dataset_path.is_absolute():
