@@ -17,8 +17,8 @@
  * Offset from MES ingest at :05 ensures fresh candles are available.
  *
  * Auth path for Claude:
- *   Production (Vercel): Vercel AI Gateway + OIDC (automatic, $0.00 with Max)
- *   Local dev:           CLAUDE_PROXY_URL → CLIProxyAPI (Max subscription, $0.00)
+ *   All environments: CLAUDE_PROXY_URL → CLIProxyAPI → Claude Code Max subscription ($0.00)
+ *   No Vercel AI Gateway. No direct API key. No per-token cost.
  */
 
 import { createHash } from 'node:crypto'
@@ -37,11 +37,12 @@ import { getMlBaseline } from '../../lib/ml-baseline'
 import { computeCompositeScore } from '../../lib/composite-score'
 import { getTradeReasoning } from '../../lib/trade-reasoning'
 import { computeAlignmentScore } from '../../lib/correlation-filter'
-import { toNum } from '../../lib/decimal'
 import type { CandleData } from '../../lib/types'
 import type { MarketContext } from '../../lib/market-context'
 import type { BhgSetup } from '../../lib/bhg-engine'
 import type { RiskResult } from '../../lib/risk-engine'
+
+import type { EventContext } from '../../lib/event-awareness'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -67,7 +68,20 @@ function rowToCandle(row: {
   }
 }
 
-/** Deterministic 15-minute window hash for deduplicated upsert. */
+/**
+ * Repair an EventContext that came back from Inngest step serialization.
+ * step.run JSON-serializes return values, turning Date objects into ISO strings.
+ * This function converts event.time back to a Date so downstream code works correctly.
+ */
+function deserializeEventContext(raw: unknown): EventContext {
+  const ctx = raw as EventContext
+  if (ctx.event?.time && typeof (ctx.event.time as unknown) === 'string') {
+    ;(ctx.event as { time: Date }).time = new Date(ctx.event.time as unknown as string)
+  }
+  return ctx
+}
+
+
 function windowHash(setupId: string): string {
   const windowStart = Math.floor(Date.now() / (15 * 60 * 1000)) * (15 * 60 * 1000)
   return createHash('sha256')
@@ -174,10 +188,13 @@ export const computeSignal = inngest.createFunction(
     }
 
     // ─── Step 3: Event context ───────────────────────────────────────────────
-    const eventContext = await step.run('load-event-context', async () => {
+    const rawEventContext = await step.run('load-event-context', async () => {
       const todayEvents = await loadTodayEvents()
       return getEventContext(new Date(), todayEvents)
     })
+
+    // step.run serializes through JSON → EventInfo.time becomes string; restore Date
+    const eventContext = deserializeEventContext(rawEventContext)
 
     // ─── Step 4: Cross-asset candles for correlation alignment ───────────────
     // Fetch 1h candles for NQ and DX from mkt_futures_1h (last 5 days)
@@ -201,10 +218,17 @@ export const computeSignal = inngest.createFunction(
       return { nqRows, dxRows }
     })
 
-    // step.run serializes through JSON → dates become strings; cast explicitly
+    type CrossAssetRow = {
+      eventTime: Date | string
+      open: number | string | null
+      high: number | string | null
+      low: number | string | null
+      close: number | string | null
+      volume: number | string | null
+    }
     type CrossAssetResult = {
-      nqRows: Array<{ eventTime: Date | string; open: unknown; high: unknown; low: unknown; close: unknown; volume: unknown }>
-      dxRows: Array<{ eventTime: Date | string; open: unknown; high: unknown; low: unknown; close: unknown; volume: unknown }>
+      nqRows: CrossAssetRow[]
+      dxRows: CrossAssetRow[]
     }
     const crossAsset = (rawCrossAsset as unknown) as CrossAssetResult
 
@@ -217,10 +241,10 @@ export const computeSignal = inngest.createFunction(
         time: Math.floor(
           (typeof r.eventTime === 'string' ? new Date(r.eventTime) : r.eventTime as Date).getTime() / 1000,
         ),
-        open: toNum(r.open),
-        high: toNum(r.high),
-        low: toNum(r.low),
-        close: toNum(r.close),
+        open: Number(r.open),
+        high: Number(r.high),
+        low: Number(r.low),
+        close: Number(r.close),
         volume: r.volume == null ? 0 : Number(r.volume),
       })))
     }
@@ -229,10 +253,10 @@ export const computeSignal = inngest.createFunction(
         time: Math.floor(
           (typeof r.eventTime === 'string' ? new Date(r.eventTime) : r.eventTime as Date).getTime() / 1000,
         ),
-        open: toNum(r.open),
-        high: toNum(r.high),
-        low: toNum(r.low),
-        close: toNum(r.close),
+        open: Number(r.open),
+        high: Number(r.high),
+        low: Number(r.low),
+        close: Number(r.close),
         volume: r.volume == null ? 0 : Number(r.volume),
       })))
     }
@@ -352,7 +376,10 @@ export const computeSignal = inngest.createFunction(
       let count = 0
 
       for (const t of scoredResults) {
-        const hash = windowHash(t.setup.id ?? `${t.setup.fibLevel}:${t.setup.direction}:${t.setup.createdAt}`)
+        const hash = windowHash(
+          t.setup.id ??
+          `${t.setup.fibLevel}:${t.setup.direction}:${t.setup.entry ?? 0}:${t.setup.createdAt}`,
+        )
 
         await prisma.scoredTrade.upsert({
           where: {
@@ -384,8 +411,8 @@ export const computeSignal = inngest.createFunction(
             reasoningSource: t.reasoningSource,
             adjustedPTp1: t.adjustedPTp1,
             adjustedPTp2: t.adjustedPTp2,
-            features: t.features,
-            scoreBreakdown: t.scoreBreakdown,
+            features: t.features as never,
+            scoreBreakdown: t.scoreBreakdown as never,
             flags: t.flags,
             scoredAt: windowStart,
           },
@@ -411,8 +438,8 @@ export const computeSignal = inngest.createFunction(
             reasoningSource: t.reasoningSource,
             adjustedPTp1: t.adjustedPTp1,
             adjustedPTp2: t.adjustedPTp2,
-            features: t.features,
-            scoreBreakdown: t.scoreBreakdown,
+            features: t.features as never,
+            scoreBreakdown: t.scoreBreakdown as never,
             flags: t.flags,
           },
         })

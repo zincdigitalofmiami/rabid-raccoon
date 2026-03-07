@@ -284,7 +284,7 @@ async function readDbSignal(): Promise<UpcomingTradesResponse | null> {
         fibRatio: toNum(r.fibRatio),
         fibLevel: 0,
         phase: "TRIGGERED" as const,
-        goType: r.goType ?? "BREAK",
+        goType: (r.goType ?? "BREAK") as import("@/lib/bhg-engine").GoType,
         entry: r.entryPrice ? toNum(r.entryPrice) : undefined,
         stopLoss: r.stopLoss ? toNum(r.stopLoss) : undefined,
         tp1: r.tp1 ? toNum(r.tp1) : undefined,
@@ -295,8 +295,9 @@ async function readDbSignal(): Promise<UpcomingTradesResponse | null> {
 
       const risk: RiskResult | null = storedRisk ?? null;
 
-      // Reconstruct a minimal feature vector from stored JSON
-      const { _setup: _s, _risk: _r, ...rawFeatures } = featuresBlob;
+      // Reconstruct a minimal feature vector — exclude internal _setup/_risk keys
+      const { _setup: _storedSetup, _risk: _storedRisk, ...rawFeatures } = featuresBlob;
+      void _storedSetup; void _storedRisk; // already used above via storedSetup/storedRisk
       const features = rawFeatures as unknown as TradeFeatureVector;
 
       const mlBaseline: MlBaseline = {

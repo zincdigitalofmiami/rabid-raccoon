@@ -149,7 +149,7 @@ async function main() {
       `SELECT job, status, "startedAt" as started, "rowsInserted" as rows_inserted FROM ingestion_runs ORDER BY "startedAt" DESC LIMIT 10`
     )
     console.table(
-      runs.map((r) => ({
+      runs.map((r: { job: string; status: string; started: Date; rows_inserted: number }) => ({
         job: r.job,
         status: r.status,
         started: r.started?.toISOString().slice(0, 16) ?? 'N/A',
