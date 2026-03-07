@@ -12,6 +12,7 @@ import Image from "next/image";
 import {
   CandlestickSeries,
   ColorType,
+  CrosshairMode,
   createChart,
   IChartApi,
   ISeriesApi,
@@ -367,6 +368,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           },
         },
         crosshair: {
+          mode: CrosshairMode.Normal,
           vertLine: {
             color: "rgba(255,255,255,0.65)",
             width: 1,
@@ -840,12 +842,11 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           {/* Watermark — DOM overlay, not LWC watermark API */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
             <Image
-              src="/chart_watermark.svg"
+              src="/chart_watermark.png"
               alt=""
-              width={280}
-              height={140}
-              className="opacity-[0.10]"
-              style={{ filter: "grayscale(100%)" }}
+              width={240}
+              height={240}
+              className="opacity-[0.14]"
               priority
             />
           </div>
