@@ -164,7 +164,7 @@ async function deterministicFallback(): Promise<UpcomingTradesResponse> {
         ? computeRisk(setup.entry, setup.stopLoss, setup.tp1, MES_DEFAULTS)
         : null;
 
-    const emptyFeatures: TradeFeatureVector = {
+    const emptyFeatures = {
       fibRatio: setup.fibRatio,
       goType: setup.goType ?? "BREAK",
       hookQuality: 0.5,
@@ -212,7 +212,7 @@ async function deterministicFallback(): Promise<UpcomingTradesResponse> {
       inValueArea: true,
       volumeConfirmation: false,
       pocSlope: 0,
-    };
+    } as TradeFeatureVector;
 
     const baseline = getMlBaseline(emptyFeatures);
     const score = computeCompositeScore(emptyFeatures, baseline);
