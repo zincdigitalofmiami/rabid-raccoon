@@ -12,8 +12,7 @@
  * Usage: npx tsx scripts/backtest-event-phases.ts
  */
 
-import { prisma } from '../src/lib/prisma'
-import { loadDotEnvFiles } from './ingest-utils'
+import { getScriptPrismaClient, disconnectScriptPrismaClient } from './script-db'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -139,7 +138,7 @@ function padLeft(str: string, width: number): string {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  loadDotEnvFiles()
+  const prisma = getScriptPrismaClient()
 
   console.log('[backtest-event-phases] Loading BHG setups with outcomes...')
 
@@ -165,7 +164,6 @@ async function main(): Promise<void> {
 
   if (validSetups.length === 0) {
     console.log('\nNo BHG setups with outcomes found. Run build-bhg-dataset.ts first to populate tp1Hit/tp2Hit.')
-    await prisma.$disconnect()
     return
   }
 
@@ -204,7 +202,6 @@ async function main(): Promise<void> {
 
   if (parsedEvents.length === 0) {
     console.log('\nNo parseable high/medium impact events found. Cannot compute event proximity.')
-    await prisma.$disconnect()
     return
   }
 
@@ -310,7 +307,6 @@ async function main(): Promise<void> {
   console.log('=== Recommended Confidence Adjustments ===')
   deriveConfidenceAdjustments(preStats, postStats, baselineTp1Rate)
 
-  await prisma.$disconnect()
 }
 
 // ─── Nearest Event Search ────────────────────────────────────────────────────
@@ -566,4 +562,6 @@ function computeWeightedAdj(
 main().catch((err) => {
   console.error('[backtest-event-phases] Fatal error:', err)
   process.exit(1)
+}).finally(async () => {
+  await disconnectScriptPrismaClient()
 })

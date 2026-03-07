@@ -22,7 +22,7 @@ export interface MesSetupsResponse {
   error?: string;
 }
 
-const DEFAULT_POLL_INTERVAL = 60_000;
+const DEFAULT_POLL_INTERVAL = 300_000;
 
 export function useMesSetups(pollInterval = DEFAULT_POLL_INTERVAL) {
   const [data, setData] = useState<MesSetupsResponse | null>(null);
@@ -61,9 +61,47 @@ export function useMesSetups(pollInterval = DEFAULT_POLL_INTERVAL) {
   }, []);
 
   useEffect(() => {
-    fetchSetups();
-    const interval = setInterval(fetchSetups, pollInterval);
-    return () => clearInterval(interval);
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const clearPoller = () => {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+
+    const startPoller = () => {
+      if (interval || document.visibilityState === "hidden") return;
+      interval = setInterval(() => {
+        void fetchSetups();
+      }, pollInterval);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        clearPoller();
+        return;
+      }
+      void fetchSetups();
+      startPoller();
+    };
+
+    const handleFocus = () => {
+      if (document.visibilityState === "visible") {
+        void fetchSetups();
+      }
+    };
+
+    void fetchSetups();
+    startPoller();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      clearPoller();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
+    };
   }, [fetchSetups, pollInterval]);
 
   return { data, loading, error, refetch: fetchSetups };

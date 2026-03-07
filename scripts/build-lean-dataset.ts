@@ -24,9 +24,9 @@
  *   npx tsx scripts/build-lean-dataset.ts --out=datasets/autogluon/mes_lean_fred_indexes_2020plus.csv
  */
 
-import { prisma } from "../src/lib/prisma";
 import { toNum } from "../src/lib/decimal";
-import { loadDotEnvFiles, parseArg, safeOutputPath } from "./ingest-utils";
+import { parseArg, safeOutputPath } from "./ingest-utils";
+import { getScriptPrismaClient, disconnectScriptPrismaClient } from "./script-db";
 import {
   asofLookupByDateKey,
   conservativeLagDaysForFrequency,
@@ -41,6 +41,7 @@ import {
 } from "./feature-utils";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EVENT_LOOKBACK_WINDOW_DAYS = 365 * 3;
@@ -1052,11 +1053,114 @@ function countInTimeRange(
   return Math.max(0, endIdx - startIdx);
 }
 
+interface SourceWatermark {
+  rowCount: number;
+  maxDataTime: string | null;
+  maxIngestedAt: string | null;
+  maxKnowledgeTime: string | null;
+  maxUpdatedAt: string | null;
+  maxRowHash: string | null;
+  scopeHash: string;
+}
+
+interface DatasetBuildManifest {
+  manifestVersion: 1;
+  generatedAt: string;
+  paramsHash: string;
+  sourceWatermarks: Record<string, SourceWatermark>;
+}
+
+interface WatermarkQueryRow {
+  rowCount: bigint | number | string | null;
+  maxDataTime?: Date | string | null;
+  maxIngestedAt?: Date | string | null;
+  maxKnowledgeTime?: Date | string | null;
+  maxUpdatedAt?: Date | string | null;
+  maxRowHash?: string | null;
+}
+
+function hasBooleanFlag(name: string): boolean {
+  const exact = `--${name}`;
+  const truthy = new Set([`--${name}=1`, `--${name}=true`, `--${name}=yes`]);
+  return process.argv.some((arg) => arg === exact || truthy.has(arg.toLowerCase()));
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  const entries = Object.entries(obj).sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries
+    .map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`)
+    .join(",")}}`;
+}
+
+function sha256Hex(input: string): string {
+  return crypto.createHash("sha256").update(input).digest("hex");
+}
+
+function hashObject(value: unknown): string {
+  return sha256Hex(stableStringify(value));
+}
+
+function toIsoStringOrNull(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
+}
+
+function toNumber(value: bigint | number | string | null | undefined): number {
+  if (value == null) return 0;
+  if (typeof value === "number") return value;
+  if (typeof value === "bigint") return Number(value);
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildSourceWatermark(
+  row: WatermarkQueryRow | undefined,
+  scope: Record<string, unknown>,
+): SourceWatermark {
+  const safeRow: WatermarkQueryRow = row ?? { rowCount: 0 };
+  return {
+    rowCount: toNumber(safeRow.rowCount),
+    maxDataTime: toIsoStringOrNull(safeRow.maxDataTime),
+    maxIngestedAt: toIsoStringOrNull(safeRow.maxIngestedAt),
+    maxKnowledgeTime: toIsoStringOrNull(safeRow.maxKnowledgeTime),
+    maxUpdatedAt: toIsoStringOrNull(safeRow.maxUpdatedAt),
+    maxRowHash: safeRow.maxRowHash ?? null,
+    scopeHash: hashObject(scope),
+  };
+}
+
+function manifestPathForOutput(outPath: string): string {
+  return `${outPath}.manifest.json`;
+}
+
+function loadManifest(pathname: string): DatasetBuildManifest | null {
+  if (!fs.existsSync(pathname)) return null;
+  try {
+    const raw = fs.readFileSync(pathname, "utf8");
+    const parsed = JSON.parse(raw) as DatasetBuildManifest;
+    if (parsed.manifestVersion !== 1) return null;
+    if (typeof parsed.paramsHash !== "string") return null;
+    if (!parsed.sourceWatermarks || typeof parsed.sourceWatermarks !== "object")
+      return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 // ─── MAIN ─────────────────────────────────────────────────────────────────
 
 async function run(): Promise<void> {
-  loadDotEnvFiles();
+  const prisma = getScriptPrismaClient();
 
+  const force = hasBooleanFlag("force");
   const timeframe = parseArg("timeframe", "1h") as "1h" | "15m";
   const startDateArg = parseArg("start-date", "2020-01-01");
   const daysBackArg = parseArg("days-back", "");
@@ -1079,6 +1183,231 @@ async function run(): Promise<void> {
   const daysBack = Math.ceil(
     (Date.now() - start.getTime()) / (24 * 60 * 60 * 1000),
   );
+  const now = new Date();
+  const tableName =
+    timeframe === "15m" ? "mktFuturesMes15m" : "mktFuturesMes1h";
+  const mesTableSql =
+    timeframe === "15m" ? "mkt_futures_mes_15m" : "mkt_futures_mes_1h";
+  const crossAssetStart = new Date(start.getTime() - 200 * 60 * 60 * 1000);
+  const newsLookbackMs = 45 * MS_PER_DAY;
+  const newsStartDate = new Date(start.getTime() - newsLookbackMs);
+  const bhgStartDate = new Date(start.getTime() - 400 * MS_PER_DAY);
+  const outPath = safeOutputPath(outFile, path.resolve(__dirname, ".."));
+  const manifestPath = manifestPathForOutput(outPath);
+
+  const tableSeriesMap = new Map<string, FredSeriesConfig[]>();
+  for (const f of FRED_FEATURES) {
+    const list = tableSeriesMap.get(f.table) || [];
+    list.push(f);
+    tableSeriesMap.set(f.table, list);
+  }
+
+  const runWatermarkQuery = async (
+    sql: string,
+    params: unknown[],
+    scope: Record<string, unknown>,
+  ): Promise<SourceWatermark> => {
+    const rows = await prisma.$queryRawUnsafe<WatermarkQueryRow[]>(sql, ...params);
+    return buildSourceWatermark(rows[0], scope);
+  };
+
+  const sourceWatermarks: Record<string, SourceWatermark> = {};
+  sourceWatermarks["mes_candles"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("eventTime") AS "maxDataTime",
+            MAX("ingestedAt") AS "maxIngestedAt",
+            MAX("knowledgeTime") AS "maxKnowledgeTime",
+            MAX("rowHash") AS "maxRowHash"
+     FROM "${mesTableSql}"
+     WHERE "eventTime" >= $1`,
+    [start],
+    {
+      table: mesTableSql,
+      timeframe,
+      eventTimeGte: start.toISOString(),
+    },
+  );
+
+  sourceWatermarks["cross_asset_1h"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("eventTime") AS "maxDataTime",
+            MAX("ingestedAt") AS "maxIngestedAt",
+            MAX("knowledgeTime") AS "maxKnowledgeTime",
+            MAX("rowHash") AS "maxRowHash"
+     FROM "mkt_futures_1h"
+     WHERE "symbolCode" = ANY($1) AND "eventTime" >= $2`,
+    [CROSS_ASSET_SYMBOLS.map((s) => s.code), crossAssetStart],
+    {
+      table: "mkt_futures_1h",
+      symbols: CROSS_ASSET_SYMBOLS.map((s) => s.code).sort(),
+      eventTimeGte: crossAssetStart.toISOString(),
+    },
+  );
+
+  for (const [table, configs] of tableSeriesMap) {
+    const seriesIds = configs.map((c) => c.seriesId).sort();
+    sourceWatermarks[`fred:${table}`] = await runWatermarkQuery(
+      `SELECT COUNT(*)::bigint AS "rowCount",
+              MAX("eventDate") AS "maxDataTime",
+              MAX("ingestedAt") AS "maxIngestedAt",
+              MAX("knowledgeTime") AS "maxKnowledgeTime",
+              MAX("rowHash") AS "maxRowHash"
+       FROM "${table}"
+       WHERE "seriesId" = ANY($1) AND value IS NOT NULL`,
+      [seriesIds],
+      { table, seriesIds },
+    );
+  }
+
+  sourceWatermarks["econ_calendar:event_features"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("eventDate") AS "maxDataTime",
+            MAX("ingestedAt") AS "maxIngestedAt",
+            MAX("knowledgeTime") AS "maxKnowledgeTime"
+     FROM "econ_calendar"
+     WHERE "eventDate" >= $1`,
+    [calendarLoadStart],
+    {
+      table: "econ_calendar",
+      eventDateGte: calendarLoadStart.toISOString(),
+      family: "event_features",
+    },
+  );
+
+  sourceWatermarks["econ_calendar:news_features"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("eventDate") AS "maxDataTime",
+            MAX("ingestedAt") AS "maxIngestedAt",
+            MAX("knowledgeTime") AS "maxKnowledgeTime"
+     FROM "econ_calendar"
+     WHERE "eventDate" >= $1`,
+    [newsStartDate],
+    {
+      table: "econ_calendar",
+      eventDateGte: newsStartDate.toISOString(),
+      family: "news_features",
+    },
+  );
+
+  sourceWatermarks["econ_news_1d"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("eventDate") AS "maxDataTime",
+            MAX("publishedAt") AS "maxIngestedAt",
+            MAX("knowledgeTime") AS "maxKnowledgeTime",
+            MAX("rowHash") AS "maxRowHash"
+     FROM "econ_news_1d"
+     WHERE "eventDate" >= $1`,
+    [newsStartDate],
+    {
+      table: "econ_news_1d",
+      eventDateGte: newsStartDate.toISOString(),
+    },
+  );
+
+  sourceWatermarks["policy_news_1d"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("eventDate") AS "maxDataTime",
+            MAX("publishedAt") AS "maxIngestedAt",
+            MAX("knowledgeTime") AS "maxKnowledgeTime",
+            MAX("rowHash") AS "maxRowHash"
+     FROM "policy_news_1d"
+     WHERE "eventDate" >= $1`,
+    [newsStartDate],
+    {
+      table: "policy_news_1d",
+      eventDateGte: newsStartDate.toISOString(),
+    },
+  );
+
+  sourceWatermarks["geopolitical_risk_1d"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("eventDate") AS "maxDataTime",
+            MAX("ingestedAt") AS "maxIngestedAt",
+            MAX("knowledgeTime") AS "maxKnowledgeTime",
+            MAX("rowHash") AS "maxRowHash"
+     FROM "geopolitical_risk_1d"
+     WHERE "eventDate" >= $1`,
+    [newsStartDate],
+    {
+      table: "geopolitical_risk_1d",
+      eventDateGte: newsStartDate.toISOString(),
+    },
+  );
+
+  sourceWatermarks["trump_effect_1d"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("eventDate") AS "maxDataTime",
+            MAX("ingestedAt") AS "maxIngestedAt",
+            MAX("knowledgeTime") AS "maxKnowledgeTime",
+            MAX("rowHash") AS "maxRowHash"
+     FROM "trump_effect_1d"
+     WHERE "eventDate" >= $1`,
+    [newsStartDate],
+    {
+      table: "trump_effect_1d",
+      eventDateGte: newsStartDate.toISOString(),
+    },
+  );
+
+  sourceWatermarks["bhg_setups"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("goTime") AS "maxDataTime",
+            MAX("createdAt") AS "maxIngestedAt",
+            MAX("updatedAt") AS "maxUpdatedAt"
+     FROM "bhg_setups"
+     WHERE "goTime" >= $1`,
+    [bhgStartDate],
+    {
+      table: "bhg_setups",
+      goTimeGte: bhgStartDate.toISOString(),
+    },
+  );
+
+  const buildParams = {
+    timeframe,
+    startDateArg,
+    daysBackArg,
+    startIso: start.toISOString(),
+    calendarLoadStartIso: calendarLoadStart.toISOString(),
+    crossAssetStartIso: crossAssetStart.toISOString(),
+    newsStartDateIso: newsStartDate.toISOString(),
+    bhgStartDateIso: bhgStartDate.toISOString(),
+    fredFeatures: FRED_FEATURES,
+    eventSignalConfigs: EVENT_SIGNAL_CONFIGS,
+    crossAssetSymbols: CROSS_ASSET_SYMBOLS,
+  };
+  const paramsHash = hashObject(buildParams);
+  const sourceWatermarksSignature = stableStringify(sourceWatermarks);
+
+  if (force) {
+    console.log("[lean-dataset] --force detected; skipping manifest short-circuit.");
+  } else {
+    const existingManifest = loadManifest(manifestPath);
+    const hasCsv = fs.existsSync(outPath);
+    if (hasCsv && existingManifest) {
+      const sameParams = existingManifest.paramsHash === paramsHash;
+      const sameSources =
+        stableStringify(existingManifest.sourceWatermarks) ===
+        sourceWatermarksSignature;
+      if (sameParams && sameSources) {
+        console.log(
+          `[lean-dataset] Skip rebuild: manifest validated (${path.relative(path.resolve(__dirname, ".."), manifestPath)}).`,
+        );
+        return;
+      }
+      const reasons: string[] = [];
+      if (!sameParams) reasons.push("build parameters changed");
+      if (!sameSources) reasons.push("source watermarks changed");
+      console.log(`[lean-dataset] Rebuild required: ${reasons.join("; ")}.`);
+    } else if (hasCsv) {
+      console.log(
+        "[lean-dataset] Rebuild required: dataset exists but manifest is missing or invalid.",
+      );
+    } else {
+      console.log("[lean-dataset] No existing dataset found; running full build.");
+    }
+  }
+
   console.log(
     `[lean-dataset] Building LEAN MES ${timeframe} dataset for intraday trading`,
   );
@@ -1090,12 +1419,9 @@ async function run(): Promise<void> {
   );
 
   // ── 1. Load MES candles (paginated to stay under Prisma Accelerate 5MB limit) ──
-  const tableName =
-    timeframe === "15m" ? "mktFuturesMes15m" : "mktFuturesMes1h";
   const candles: MesCandle[] = [];
   const CHUNK_MS = 365 * 24 * 60 * 60 * 1000; // 1 year per chunk
   let chunkStart = start;
-  const now = new Date();
   while (chunkStart < now) {
     const chunkEnd = new Date(
       Math.min(chunkStart.getTime() + CHUNK_MS, now.getTime()),
@@ -1148,7 +1474,6 @@ async function run(): Promise<void> {
   // Map: symbolCode → Map<isoString → bar>
   const crossAssetBars = new Map<string, Map<string, CrossAssetBar>>();
 
-  const crossAssetStart = new Date(start.getTime() - 200 * 60 * 60 * 1000); // extra 200h for warmup
   for (const sym of CROSS_ASSET_SYMBOLS) {
     const barMap = new Map<string, CrossAssetBar>();
     let caChunkStart = crossAssetStart;
@@ -1214,12 +1539,6 @@ async function run(): Promise<void> {
 
   const fredLookups: Map<string, { lookup: FredLookup; sortedKeys: string[] }> =
     new Map();
-  const tableSeriesMap = new Map<string, FredSeriesConfig[]>();
-  for (const f of FRED_FEATURES) {
-    const list = tableSeriesMap.get(f.table) || [];
-    list.push(f);
-    tableSeriesMap.set(f.table, list);
-  }
 
   for (const [table, configs] of tableSeriesMap) {
     const seriesIds = configs.map((c) => c.seriesId);
@@ -1332,9 +1651,6 @@ async function run(): Promise<void> {
   console.log(
     "[lean-dataset] Loading econ_calendar + econ_news_1d + policy_news_1d for trailing counts...",
   );
-
-  const newsLookbackMs = 45 * MS_PER_DAY;
-  const newsStartDate = new Date(start.getTime() - newsLookbackMs);
 
   // econ_calendar: structured events with eventType + impactRating
   const calendarNewsRows = await prisma.econCalendar.findMany({
@@ -1464,16 +1780,113 @@ async function run(): Promise<void> {
   );
   const bhgRows = await prisma.bhgSetup.findMany({
     where: { goTime: { gte: new Date(start.getTime() - 400 * MS_PER_DAY) } },
-    select: { goTime: true },
+    select: {
+      goTime: true,
+      tp1Hit: true,
+      tp2Hit: true,
+      slHit: true,
+      maxFavorable: true,
+      maxAdverse: true,
+      tp1HitTime: true,
+      tp2HitTime: true,
+      slHitTime: true,
+    },
     orderBy: { goTime: "asc" },
   });
 
   const bhgAllGoTimesMs: number[] = [];
+  interface BhgOutcomeRow {
+    goTimeMs: number;
+    tp1Hit: boolean | null;
+    tp2Hit: boolean | null;
+    slHit: boolean | null;
+    maxFavorable: number | null;
+    maxAdverse: number | null;
+    durationMinutes: number | null;
+  }
+  const bhgOutcomeRows: BhgOutcomeRow[] = [];
   for (const row of bhgRows) {
     if (!row.goTime) continue;
     bhgAllGoTimesMs.push(row.goTime.getTime());
+    const endTime = row.tp1HitTime ?? row.tp2HitTime ?? row.slHitTime;
+    bhgOutcomeRows.push({
+      goTimeMs: row.goTime.getTime(),
+      tp1Hit: row.tp1Hit,
+      tp2Hit: row.tp2Hit,
+      slHit: row.slHit,
+      maxFavorable: row.maxFavorable ? Number(row.maxFavorable) : null,
+      maxAdverse: row.maxAdverse ? Number(row.maxAdverse) : null,
+      durationMinutes:
+        endTime && row.goTime
+          ? (endTime.getTime() - row.goTime.getTime()) / 60_000
+          : null,
+    });
   }
-  console.log(`  BHG setups: ${bhgRows.length} total`);
+  console.log(`  BHG setups: ${bhgRows.length} total (${bhgOutcomeRows.filter((r) => r.tp1Hit !== null || r.slHit !== null).length} resolved)`);
+
+  // Helper: compute rolling BHG outcome features for a given window
+  function computeBhgOutcomeFeatures(
+    tsMs: number,
+    windowDays: number,
+  ): {
+    tp1HitRate: number | null;
+    tp2HitRate: number | null;
+    avgMfe: number | null;
+    avgMae: number | null;
+    winRate: number | null;
+    avgDuration: number | null;
+  } {
+    const cutoffMs = tsMs - windowDays * MS_PER_DAY;
+    const lagMs = tsMs - BHG_RESOLUTION_LAG_MS;
+    const relevant = bhgOutcomeRows.filter(
+      (r) =>
+        r.goTimeMs >= cutoffMs &&
+        r.goTimeMs < lagMs &&
+        (r.tp1Hit !== null || r.tp2Hit !== null || r.slHit !== null),
+    );
+    if (relevant.length === 0) {
+      return {
+        tp1HitRate: null,
+        tp2HitRate: null,
+        avgMfe: null,
+        avgMae: null,
+        winRate: null,
+        avgDuration: null,
+      };
+    }
+    const total = relevant.length;
+    const tp1Hits = relevant.filter((r) => r.tp1Hit === true).length;
+    const tp2Hits = relevant.filter((r) => r.tp2Hit === true).length;
+    const wins = relevant.filter(
+      (r) => r.tp1Hit === true || r.tp2Hit === true,
+    ).length;
+    const mfeVals = relevant
+      .map((r) => r.maxFavorable)
+      .filter((v): v is number => v !== null);
+    const maeVals = relevant
+      .map((r) => r.maxAdverse)
+      .filter((v): v is number => v !== null);
+    const durVals = relevant
+      .map((r) => r.durationMinutes)
+      .filter((v): v is number => v !== null);
+    return {
+      tp1HitRate: tp1Hits / total,
+      tp2HitRate: tp2Hits / total,
+      avgMfe:
+        mfeVals.length > 0
+          ? mfeVals.reduce((a, b) => a + b, 0) / mfeVals.length
+          : null,
+      avgMae:
+        maeVals.length > 0
+          ? maeVals.reduce((a, b) => a + b, 0) / maeVals.length
+          : null,
+      winRate: wins / total,
+      avgDuration:
+        durVals.length > 0
+          ? durVals.reduce((a, b) => a + b, 0) / durVals.length
+          : null,
+    };
+  }
 
   // ── 6. Build FRED arrays for velocity/momentum/percentile features ──
   console.log("[lean-dataset] Building FRED arrays for derived features...");
@@ -1546,6 +1959,55 @@ async function run(): Promise<void> {
   const { min: lo24, max: hi24 } = rollingMinMax(closes, 24);
   const { min: lo120, max: hi120 } = rollingMinMax(closes, 120);
   const volMa24 = rollingMean(volumes, 24);
+
+  // ── 7.vol Volume training features ──
+  const volMa5 = rollingMean(volumes, 5);
+  const volMa20 = rollingMean(volumes, 20);
+  // vol_ma_ratio_5: short-term / long-term volume MA ratio (volume acceleration)
+  const volMaRatio5: (number | null)[] = new Array(candles.length).fill(null);
+  for (let i = 0; i < candles.length; i++) {
+    if (volMa5[i] != null && volMa20[i] != null && volMa20[i]! > 0) {
+      volMaRatio5[i] = volMa5[i]! / volMa20[i]!;
+    }
+  }
+  // vol_spike: binary flag for volume > 2× 24-bar MA
+  const volSpike: (number | null)[] = new Array(candles.length).fill(null);
+  for (let i = 0; i < candles.length; i++) {
+    if (volMa24[i] != null && volMa24[i]! > 0) {
+      volSpike[i] = volumes[i] > 2 * volMa24[i]! ? 1 : 0;
+    }
+  }
+  // vwap_dist: % distance from session VWAP (reset at midnight UTC)
+  const vwapDist: (number | null)[] = new Array(candles.length).fill(null);
+  {
+    let cumPV = 0,
+      cumV = 0,
+      lastDk = "";
+    for (let i = 0; i < candles.length; i++) {
+      const dk = dateKeyUtc(candles[i].eventTime);
+      if (dk !== lastDk) {
+        cumPV = 0;
+        cumV = 0;
+        lastDk = dk;
+      }
+      const vol = Number(candles[i].volume ?? 0);
+      const typPrice =
+        (candles[i].high + candles[i].low + candles[i].close) / 3;
+      cumPV += typPrice * vol;
+      cumV += vol;
+      if (cumV > 0 && candles[i].close !== 0) {
+        const vwap = cumPV / cumV;
+        vwapDist[i] = (candles[i].close - vwap) / candles[i].close;
+      }
+    }
+  }
+  // vol_trend_5: 5-bar volume momentum (% change in vol_ma5)
+  const volTrend5: (number | null)[] = new Array(candles.length).fill(null);
+  for (let i = 5; i < candles.length; i++) {
+    if (volMa5[i] != null && volMa5[i - 5] != null && volMa5[i - 5]! > 0) {
+      volTrend5[i] = (volMa5[i]! - volMa5[i - 5]!) / volMa5[i - 5]!;
+    }
+  }
 
   // ── 7a. Squeeze Pro + Williams Vix Fix ──
   console.log("[lean-dataset] Computing Squeeze Pro & Williams Vix Fix...");
@@ -1721,11 +2183,11 @@ async function run(): Promise<void> {
   // ── 8. Assemble feature matrix ──
   console.log("[lean-dataset] Assembling lean feature matrix...");
 
-  // Forward target horizons depend on timeframe
+  // Forward target horizons depend on timeframe (1w removed per plan)
   const targetHorizons =
     timeframe === "15m"
-      ? { "15m": 1, "1h": 4, "4h": 16 }
-      : { "1h": 1, "4h": 4, "1d": 24, "1w": 120 };
+      ? { "15m": 1, "1h": 4, "4h": 16, "1d": 96 }
+      : { "1h": 1, "4h": 4, "1d": 24 };
   const targetCols = Object.keys(targetHorizons).map((h) => `target_ret_${h}`);
   // Directional classification targets (1=up, 0=down/flat)
   const targetDirCols = Object.keys(targetHorizons).map(
@@ -1889,6 +2351,20 @@ async function run(): Promise<void> {
     // BHG rolling setup counts (2)
     "bhg_setups_count_7d",
     "bhg_setups_count_30d",
+    // BHG outcome features (8) — rolling hit rates, MFE/MAE, win rate, duration
+    "bhg_tp1_hit_rate_7d",
+    "bhg_tp2_hit_rate_7d",
+    "bhg_tp1_hit_rate_30d",
+    "bhg_tp2_hit_rate_30d",
+    "bhg_avg_mfe_7d",
+    "bhg_avg_mae_7d",
+    "bhg_win_rate_7d",
+    "bhg_avg_duration_7d",
+    // Volume training features (4) — acceleration, spikes, VWAP, trend
+    "vol_ma_ratio_5",
+    "vol_spike",
+    "vwap_dist",
+    "vol_trend_5",
     // Cross-asset technicals (6 symbols × 6 = 36)
     ...CROSS_ASSET_SYMBOLS.flatMap((sym) => [
       `${sym.prefix}_ret_1h`,
@@ -2427,6 +2903,26 @@ async function run(): Promise<void> {
       // BHG rolling setup counts (2)
       bhgSetupsCount7d,
       bhgSetupsCount30d,
+      // BHG outcome features (8)
+      ...(() => {
+        const o7 = computeBhgOutcomeFeatures(tsMs, 7);
+        const o30 = computeBhgOutcomeFeatures(tsMs, 30);
+        return [
+          o7.tp1HitRate,
+          o7.tp2HitRate,
+          o30.tp1HitRate,
+          o30.tp2HitRate,
+          o7.avgMfe,
+          o7.avgMae,
+          o7.winRate,
+          o7.avgDuration,
+        ];
+      })(),
+      // Volume training features (4)
+      volMaRatio5[i],
+      volSpike[i],
+      vwapDist[i],
+      volTrend5[i],
       // Cross-asset technicals (6 symbols × 6 = 36)
       ...CROSS_ASSET_SYMBOLS.flatMap((sym) => {
         const tech = crossAssetTech.get(sym.code)!;
@@ -2518,11 +3014,18 @@ async function run(): Promise<void> {
   }
 
   // ── 7. Write CSV ──
-  const outPath = safeOutputPath(outFile, path.resolve(__dirname, ".."));
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
   const csvLines = [header.join(","), ...rows.map((r) => r.join(","))];
   fs.writeFileSync(outPath, csvLines.join("\n") + "\n", "utf8");
+
+  const manifest: DatasetBuildManifest = {
+    manifestVersion: 1,
+    generatedAt: new Date().toISOString(),
+    paramsHash,
+    sourceWatermarks,
+  };
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
 
   // ── 8. Summary ──
   const nonNullCounts: Record<string, number> = {};
@@ -2532,6 +3035,9 @@ async function run(): Promise<void> {
 
   console.log(
     `\n[lean-dataset] ✅ Written ${rows.length} rows × ${header.length} features to ${outFile}`,
+  );
+  console.log(
+    `[lean-dataset] Manifest: ${path.relative(path.resolve(__dirname, ".."), manifestPath)}`,
   );
   console.log(
     `[lean-dataset] Date range: ${rows[0][1]} → ${rows[rows.length - 1][1]}`,
@@ -2622,6 +3128,18 @@ async function run(): Promise<void> {
     "news_total_volume_7d",
     "bhg_setups_count_7d",
     "bhg_setups_count_30d",
+    "bhg_tp1_hit_rate_7d",
+    "bhg_tp2_hit_rate_7d",
+    "bhg_tp1_hit_rate_30d",
+    "bhg_tp2_hit_rate_30d",
+    "bhg_avg_mfe_7d",
+    "bhg_avg_mae_7d",
+    "bhg_win_rate_7d",
+    "bhg_avg_duration_7d",
+    "vol_ma_ratio_5",
+    "vol_spike",
+    "vwap_dist",
+    "vol_trend_5",
     "macd_line",
     "macd_signal",
     "macd_hist",
@@ -2665,4 +3183,6 @@ run()
     );
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await disconnectScriptPrismaClient();
+  });

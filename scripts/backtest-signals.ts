@@ -1,8 +1,8 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fetchCandlesForSymbol } from '../src/lib/fetch-candles'
+import { getScriptPrismaClient, disconnectScriptPrismaClient } from './script-db'
 import { computeSignals } from '../src/lib/instant-analysis'
 import { CandleData } from '../src/lib/types'
+import { toNum } from '../src/lib/decimal'
+import type { PrismaClient } from '@prisma/client'
 
 interface TradeObservation {
   symbol: string
@@ -13,21 +13,244 @@ interface TradeObservation {
   hit: boolean
 }
 
-function loadDotEnvLocal(): void {
-  const envPath = path.resolve(process.cwd(), '.env.local')
-  if (!fs.existsSync(envPath)) return
+const INDEX_PROXY_BY_SYMBOL: Record<string, string> = {
+  ZN: 'IEF',
+  ZB: 'TLT',
+  GC: 'GLD',
+  CL: 'USO',
+}
 
-  const lines = fs.readFileSync(envPath, 'utf8').split('\n')
-  for (const rawLine of lines) {
-    const line = rawLine.trim()
-    if (!line || line.startsWith('#')) continue
+function startOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+}
 
-    const eq = line.indexOf('=')
-    if (eq <= 0) continue
-    const key = line.slice(0, eq).trim()
-    const value = line.slice(eq + 1).trim().replace(/^"(.*)"$/, '$1')
-    if (!process.env[key]) process.env[key] = value
+function toCandle(
+  timeMs: number,
+  open: number,
+  high: number,
+  low: number,
+  close: number,
+  volume = 0,
+): CandleData {
+  return {
+    time: Math.floor(timeMs / 1000),
+    open,
+    high,
+    low,
+    close,
+    volume,
   }
+}
+
+function fredIndicatorForSymbol(symbol: string): string | null {
+  if (symbol === 'VX') return 'VIXCLS'
+  if (symbol === 'US10Y') return 'DGS10'
+  if (symbol === 'DX' || symbol === 'DXY') return 'DTWEXBGS'
+  return null
+}
+
+async function fetchMesCandles(
+  prisma: PrismaClient,
+  start: Date,
+  end: Date,
+): Promise<CandleData[]> {
+  const rows15m = await prisma.mktFuturesMes15m.findMany({
+    where: {
+      eventTime: { gte: start, lte: end },
+    },
+    orderBy: { eventTime: 'asc' },
+    select: {
+      eventTime: true,
+      open: true,
+      high: true,
+      low: true,
+      close: true,
+      volume: true,
+    },
+    take: 20_000,
+  })
+
+  if (rows15m.length > 0) {
+    return rows15m.map((row) =>
+      toCandle(
+        row.eventTime.getTime(),
+        toNum(row.open),
+        toNum(row.high),
+        toNum(row.low),
+        toNum(row.close),
+        row.volume ? Number(row.volume) : 0,
+      ),
+    )
+  }
+
+  const rows1h = await prisma.mktFuturesMes1h.findMany({
+    where: {
+      eventTime: { gte: start, lte: end },
+    },
+    orderBy: { eventTime: 'asc' },
+    select: {
+      eventTime: true,
+      open: true,
+      high: true,
+      low: true,
+      close: true,
+      volume: true,
+    },
+    take: 20_000,
+  })
+
+  return rows1h.map((row) =>
+    toCandle(
+      row.eventTime.getTime(),
+      toNum(row.open),
+      toNum(row.high),
+      toNum(row.low),
+      toNum(row.close),
+      row.volume ? Number(row.volume) : 0,
+    ),
+  )
+}
+
+async function fetchMacroCandles(
+  prisma: PrismaClient,
+  indicator: string,
+  start: Date,
+  end: Date,
+): Promise<CandleData[]> {
+  const from = startOfUtcDay(start)
+  const to = startOfUtcDay(end)
+
+  if (indicator === 'VIXCLS') {
+    const rows = await prisma.econVolIndices1d.findMany({
+      where: { seriesId: indicator, eventDate: { gte: from, lte: to } },
+      orderBy: { eventDate: 'asc' },
+      take: 10_000,
+    })
+    return rows.map((row) => {
+      const value = toNum(row.value ?? 0)
+      return toCandle(row.eventDate.getTime(), value, value, value, value, 0)
+    })
+  }
+
+  if (indicator === 'DGS10') {
+    const rows = await prisma.econYields1d.findMany({
+      where: { seriesId: indicator, eventDate: { gte: from, lte: to } },
+      orderBy: { eventDate: 'asc' },
+      take: 10_000,
+    })
+    return rows.map((row) => {
+      const value = toNum(row.value ?? 0)
+      return toCandle(row.eventDate.getTime(), value, value, value, value, 0)
+    })
+  }
+
+  if (indicator === 'DTWEXBGS') {
+    const rows = await prisma.econFx1d.findMany({
+      where: { seriesId: indicator, eventDate: { gte: from, lte: to } },
+      orderBy: { eventDate: 'asc' },
+      take: 10_000,
+    })
+    return rows.map((row) => {
+      const value = toNum(row.value ?? 0)
+      return toCandle(row.eventDate.getTime(), value, value, value, value, 0)
+    })
+  }
+
+  return []
+}
+
+async function fetchDailyFuturesCandles(
+  prisma: PrismaClient,
+  symbol: string,
+  start: Date,
+  end: Date,
+): Promise<CandleData[]> {
+  const rows = await prisma.mktFutures1d.findMany({
+    where: {
+      symbolCode: symbol,
+      eventDate: {
+        gte: startOfUtcDay(start),
+        lte: startOfUtcDay(end),
+      },
+    },
+    orderBy: { eventDate: 'asc' },
+    select: {
+      eventDate: true,
+      open: true,
+      high: true,
+      low: true,
+      close: true,
+      volume: true,
+    },
+    take: 20_000,
+  })
+
+  if (rows.length > 0) {
+    return rows.map((row) =>
+      toCandle(
+        row.eventDate.getTime(),
+        toNum(row.open),
+        toNum(row.high),
+        toNum(row.low),
+        toNum(row.close),
+        row.volume ? Number(row.volume) : 0,
+      ),
+    )
+  }
+
+  const proxy = INDEX_PROXY_BY_SYMBOL[symbol]
+  if (!proxy) return []
+
+  const proxyRows = await prisma.econIndexes1d.findMany({
+    where: {
+      seriesId: proxy,
+      eventDate: {
+        gte: startOfUtcDay(start),
+        lte: startOfUtcDay(end),
+      },
+    },
+    orderBy: { eventDate: 'asc' },
+    select: {
+      eventDate: true,
+      value: true,
+    },
+    take: 20_000,
+  })
+
+  return proxyRows.map((row) => {
+    const value = toNum(row.value ?? 0)
+    return toCandle(row.eventDate.getTime(), value, value, value, value, 0)
+  })
+}
+
+async function fetchCandlesForBacktest(
+  prisma: PrismaClient,
+  symbol: string,
+  startIso: string,
+  endIso: string,
+): Promise<CandleData[]> {
+  const start = new Date(startIso)
+  const end = new Date(endIso)
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+    throw new Error(`Invalid backtest date range for ${symbol}`)
+  }
+
+  if (symbol === 'MES') {
+    const candles = await fetchMesCandles(prisma, start, end)
+    if (candles.length > 0) return candles
+    throw new Error(`No DB data available for ${symbol} in requested range`)
+  }
+
+  const indicator = fredIndicatorForSymbol(symbol)
+  if (indicator) {
+    const candles = await fetchMacroCandles(prisma, indicator, start, end)
+    if (candles.length > 0) return candles
+    throw new Error(`No macro DB data available for ${symbol} (${indicator})`)
+  }
+
+  const candles = await fetchDailyFuturesCandles(prisma, symbol, start, end)
+  if (candles.length > 0) return candles
+  throw new Error(`No DB data available for ${symbol} in requested range`)
 }
 
 function aggregateCandles(candles: CandleData[], periodMinutes: number): CandleData[] {
@@ -79,7 +302,7 @@ function pct(n: number): string {
 }
 
 async function run(): Promise<void> {
-  loadDotEnvLocal()
+  const prisma = getScriptPrismaClient()
 
   const symbols = (process.env.BACKTEST_SYMBOLS || 'MES,NQ,GC,CL')
     .split(',')
@@ -95,7 +318,7 @@ async function run(): Promise<void> {
   const observations: TradeObservation[] = []
 
   for (const symbol of symbols) {
-    const candles = await fetchCandlesForSymbol(symbol, start, end)
+    const candles = await fetchCandlesForBacktest(prisma, symbol, start, end)
     const candles15m = aggregateCandles(candles, 15)
     if (candles15m.length < warmupCandles + 2) {
       console.log(
@@ -183,4 +406,6 @@ run().catch((error) => {
   const msg = error instanceof Error ? error.message : String(error)
   console.error(`Backtest failed: ${msg}`)
   process.exit(1)
+}).finally(async () => {
+  await disconnectScriptPrismaClient()
 })

@@ -6,7 +6,6 @@ import { advanceBhgSetups } from '@/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
 import { toNum } from '@/lib/decimal'
 import { withCanonicalSetupIds } from '@/lib/setup-id'
-import { recordTriggeredSetups } from '@/lib/bhg-setup-recorder'
 import type { CandleData } from '@/lib/types'
 import { getEventContext, loadTodayEvents } from '@/lib/event-awareness'
 import { intradayCache } from '@/lib/tiered-cache'
@@ -104,11 +103,6 @@ async function buildResponseBody(): Promise<SetupsResponseBody> {
   // Event awareness
   const todayEvents = await loadTodayEvents()
   const eventContext = getEventContext(new Date(), todayEvents)
-
-  // Persist live chart-triggered setups.
-  recordTriggeredSetups(setups).catch((err) =>
-    console.warn('[setups] Setup persistence failed:', err),
-  )
 
   return {
     setups: enrichedSetups,
