@@ -23,6 +23,7 @@ export interface EventRow {
   impactRating: string | null
   actual: Decimal | null
   forecast: Decimal | null
+  previous: Decimal | null
   surprise: Decimal | null
 }
 
@@ -56,6 +57,13 @@ export interface EventContext {
   surprise: SurpriseData | null
   confidenceAdjustment: number // multiplier, 1.0 = no change
   label: string // human-readable, e.g. "ISM Manufacturing in 32 min — expect compression"
+  // Enhanced fields for AI reasoning
+  eventName: string | null
+  expectedImpact: 'HIGH' | 'MEDIUM' | 'LOW' | null
+  forecast: number | null
+  previous: number | null
+  surpriseHistory: number | null // avg |surprise| from last 6 releases of same event
+  marketTemperature: 'risk-on' | 'risk-off' | 'neutral' | null
 }
 
 // ─── Constants (BACKTEST-TBD) ─────────────────────────────────────────────────
@@ -208,8 +216,13 @@ function normalizeImpact(rating: string | null): 'high' | 'medium' | 'low' {
  * confidence adjustment.
  *
  * This is a pure function (no DB calls) for testability.
+ * Optional enrichment params are passed through to the context.
  */
-export function getEventContext(now: Date, events: EventRow[]): EventContext {
+export function getEventContext(
+  now: Date,
+  events: EventRow[],
+  enrichment?: { surpriseHistory?: number | null; marketTemperature?: 'risk-on' | 'risk-off' | 'neutral' | null },
+): EventContext {
   // Parse all events into (EventRow, parsedTime) pairs, filtering out
   // unparseable times and low-impact events
   const parsed: Array<{ row: EventRow; time: Date }> = []
@@ -259,6 +272,7 @@ export function getEventContext(now: Date, events: EventRow[]): EventContext {
       const info = toEventInfo(nearestPast.row, nearestPast.time)
       return buildContext('BLACKOUT', info, null, minutesSince, nearestPast.row, {
         label: `${info.name} just released — BLACKOUT (${Math.ceil(BLACKOUT_AFTER_MIN - minutesSince)} min remaining)`,
+        ...enrichment,
       })
     }
 
@@ -266,6 +280,7 @@ export function getEventContext(now: Date, events: EventRow[]): EventContext {
       const info = toEventInfo(nearestPast.row, nearestPast.time)
       return buildContext('DIGESTING', info, null, minutesSince, nearestPast.row, {
         label: `Digesting ${info.name} (${Math.round(minutesSince)} min ago)`,
+        ...enrichment,
       })
     }
 
@@ -273,6 +288,7 @@ export function getEventContext(now: Date, events: EventRow[]): EventContext {
       const info = toEventInfo(nearestPast.row, nearestPast.time)
       return buildContext('SETTLED', info, null, minutesSince, nearestPast.row, {
         label: `${info.name} settling (${Math.round(minutesSince)} min ago)`,
+        ...enrichment,
       })
     }
   }
@@ -286,18 +302,21 @@ export function getEventContext(now: Date, events: EventRow[]): EventContext {
     if (minutesUntil <= BLACKOUT_BEFORE_MIN) { // BACKTEST-TBD
       return buildContext('BLACKOUT', info, minutesUntil, null, nearestUpcoming.row, {
         label: `${info.name} imminent — BLACKOUT (${Math.ceil(minutesUntil)} min)`,
+        ...enrichment,
       })
     }
 
     if (minutesUntil <= IMMINENT_WINDOW_MIN) { // BACKTEST-TBD
       return buildContext('IMMINENT', info, minutesUntil, null, nearestUpcoming.row, {
         label: `${info.name} IMMINENT in ${Math.round(minutesUntil)} min`,
+        ...enrichment,
       })
     }
 
     if (minutesUntil <= APPROACH_WINDOW_MIN) { // BACKTEST-TBD
       return buildContext('APPROACHING', info, minutesUntil, null, nearestUpcoming.row, {
         label: `${info.name} in ${Math.round(minutesUntil)} min — expect compression`,
+        ...enrichment,
       })
     }
   }
@@ -317,6 +336,12 @@ function buildClearContext(): EventContext {
     surprise: null,
     confidenceAdjustment: CONFIDENCE_ADJ.CLEAR,
     label: 'No nearby events',
+    eventName: null,
+    expectedImpact: null,
+    forecast: null,
+    previous: null,
+    surpriseHistory: null,
+    marketTemperature: null,
   }
 }
 
@@ -326,7 +351,7 @@ function buildContext(
   minutesToEvent: number | null,
   minutesSinceEvent: number | null,
   row: EventRow,
-  opts: { label: string }
+  opts: { label: string; surpriseHistory?: number | null; marketTemperature?: 'risk-on' | 'risk-off' | 'neutral' | null }
 ): EventContext {
   const surprise = computeSurprise(row)
 
@@ -338,6 +363,12 @@ function buildContext(
     surprise,
     confidenceAdjustment: CONFIDENCE_ADJ[phase],
     label: opts.label,
+    eventName: row.eventName,
+    expectedImpact: normalizeImpact(row.impactRating).toUpperCase() as 'HIGH' | 'MEDIUM' | 'LOW',
+    forecast: decimalToNum(row.forecast),
+    previous: decimalToNum(row.previous),
+    surpriseHistory: opts.surpriseHistory ?? null,
+    marketTemperature: opts.marketTemperature ?? null,
   }
 }
 
@@ -384,6 +415,38 @@ function classifySurprise(zScore: number): 'BEAT' | 'MISS' | 'INLINE' {
   return zScore > 0 ? 'BEAT' : 'MISS'
 }
 
+// ─── Surprise history ─────────────────────────────────────────────────────────
+
+/**
+ * Fetch avg |surprise| from the last 6 releases of the same event.
+ * Used to gauge how "noisy" this particular release tends to be.
+ */
+export async function fetchSurpriseHistory(eventName: string): Promise<number | null> {
+  try {
+    const rows = await prisma.econCalendar.findMany({
+      where: {
+        eventName,
+        surprise: { not: null },
+      },
+      select: { surprise: true },
+      orderBy: { eventDate: 'desc' },
+      take: 6,
+    })
+
+    if (rows.length === 0) return null
+
+    const absValues = rows
+      .map((r) => r.surprise)
+      .filter((s): s is Decimal => s !== null)
+      .map((s) => Math.abs(s.toNumber()))
+
+    if (absValues.length === 0) return null
+    return Math.round((absValues.reduce((a, b) => a + b, 0) / absValues.length) * 10000) / 10000
+  } catch {
+    return null
+  }
+}
+
 // ─── Database: loadTodayEvents ────────────────────────────────────────────────
 
 /** Per-day cache: key is ISO date string (YYYY-MM-DD), value is event rows */
@@ -425,6 +488,7 @@ export async function loadTodayEvents(opts?: { forceRefresh?: boolean }): Promis
       impactRating: true,
       actual: true,
       forecast: true,
+      previous: true,
       surprise: true,
     },
     orderBy: {

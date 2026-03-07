@@ -26,6 +26,9 @@ import {
   ingestFredNews,
   // Signals — 1 function
   ingestMeasuredMoves,
+  // 15m Signal Pipeline — 2 functions
+  computeSignal,
+  checkOutcomes,
   // Geopolitical / policy — 2 functions
   ingestGprIndex,
   ingestTrumpEffect,
@@ -74,6 +77,9 @@ export const { GET, POST, PUT } = serve({
     ingestFredNews, // daily at 17:15 UTC
     // Signals (18:00 UTC)
     ingestMeasuredMoves,
+    // 15m Signal Pipeline
+    computeSignal,
+    checkOutcomes,
     // Geopolitical / policy (19:00–19:30 UTC)
     ingestGprIndex,
     ingestTrumpEffect,

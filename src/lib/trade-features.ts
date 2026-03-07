@@ -68,6 +68,21 @@ export interface TradeFeatureVector {
   // News
   newsVolume24h: number;
   policyNewsVolume24h: number;
+  newsVolume1h: number;
+  newsVelocity: number;
+  breakingNewsFlag: boolean;
+
+  // Volume & Liquidity
+  rvol: number;
+  rvolSession: number;
+  vwap: number;
+  priceVsVwap: number;
+  vwapBand: number;
+  poc: number;
+  priceVsPoc: number;
+  inValueArea: boolean;
+  volumeConfirmation: boolean;
+  pocSlope: number;
 }
 
 // ─────────────────────────────────────────────
@@ -466,7 +481,7 @@ interface NewsVolume {
   policy: number;
 }
 
-interface WarbirdMacroFeatures {
+export interface WarbirdMacroFeatures {
   vixLevel: number | null;
   vixIntradayRange: number | null;
   gprLevel: number | null;
@@ -477,6 +492,33 @@ interface WarbirdMacroFeatures {
   federalRegisterVelocity7d: number;
   epuTrumpPremium: number | null;
 }
+
+export interface VolumeFeatures {
+  rvol: number;
+  rvolSession: number;
+  vwap: number;
+  priceVsVwap: number;
+  vwapBand: number;
+  poc: number;
+  priceVsPoc: number;
+  inValueArea: boolean;
+  volumeConfirmation: boolean;
+  pocSlope: number;
+}
+
+/** Default volume features when none are available (pre-market, no data). */
+export const DEFAULT_VOLUME_FEATURES: VolumeFeatures = {
+  rvol: 1.0,
+  rvolSession: 1.0,
+  vwap: 0,
+  priceVsVwap: 0,
+  vwapBand: 0,
+  poc: 0,
+  priceVsPoc: 0,
+  inValueArea: true,
+  volumeConfirmation: false,
+  pocSlope: 0,
+};
 
 /**
  * Count news signals in the last 24 hours. Cached per minute.
@@ -513,6 +555,42 @@ export function resetNewsVolumeCache(): void {
   newsVolumeCache = null;
 }
 
+interface NewsVelocity {
+  total: number;
+  velocity: number;      // articles per minute in last 15 min
+  avgVelocity: number;   // baseline articles per minute (24h average)
+}
+
+let newsVelocityCache: { time: number; data: NewsVelocity } | null = null;
+
+/**
+ * News volume in the last 1 hour + velocity (articles/min in last 15 min).
+ * Cached per minute.
+ */
+async function getNewsVolume1h(): Promise<NewsVelocity> {
+  const now = Date.now();
+  if (newsVelocityCache && now - newsVelocityCache.time < 60_000) {
+    return newsVelocityCache.data;
+  }
+
+  const since1h = new Date(now - 60 * 60 * 1000);
+  const since15m = new Date(now - 15 * 60 * 1000);
+  const since24h = new Date(now - 24 * 60 * 60 * 1000);
+
+  const [total1h, count15m, count24h] = await Promise.all([
+    prisma.newsSignal.count({ where: { pubDate: { gte: since1h } } }),
+    prisma.newsSignal.count({ where: { pubDate: { gte: since15m } } }),
+    prisma.newsSignal.count({ where: { pubDate: { gte: since24h } } }),
+  ]);
+
+  const velocity = count15m / 15;          // articles per minute, last 15 min
+  const avgVelocity = count24h / (24 * 60); // articles per minute, 24h baseline
+
+  const data: NewsVelocity = { total: total1h, velocity, avgVelocity };
+  newsVelocityCache = { time: now, data };
+  return data;
+}
+
 function getUtcDayStart(date: Date): Date {
   return new Date(
     Date.UTC(
@@ -527,7 +605,7 @@ function getUtcDayStart(date: Date): Date {
   );
 }
 
-async function getWarbirdMacroFeatures(
+export async function getWarbirdMacroFeatures(
   candles: CandleData[],
 ): Promise<WarbirdMacroFeatures> {
   const latest = candles[candles.length - 1];
@@ -667,6 +745,8 @@ export async function computeTradeFeatures(
   marketContext: MarketContext,
   alignment: CorrelationAlignment,
   measuredMoves: MeasuredMove[],
+  prefetchedMacro?: WarbirdMacroFeatures,
+  prefetchedVolume?: VolumeFeatures,
 ): Promise<TradeFeatureVector> {
   // Technical indicators (pure, computed from candle window)
   const squeeze = computeSqueezeProLatest(candles);
@@ -679,10 +759,17 @@ export async function computeTradeFeatures(
   // Measured move alignment (pure)
   const mmAlign = checkMeasuredMoveAlignment(setup, measuredMoves);
 
-  const macro = await getWarbirdMacroFeatures(candles);
+  // Macro features — use pre-fetched if available (avoids 7 duplicate queries per setup)
+  const macro = prefetchedMacro ?? await getWarbirdMacroFeatures(candles);
+
+  // Volume features — use pre-fetched from Python compute script
+  const vol = prefetchedVolume ?? DEFAULT_VOLUME_FEATURES;
 
   // News volume (async, cached)
   const newsVol = await getNewsVolume24h();
+
+  // Enhanced news features
+  const newsVol1h = await getNewsVolume1h();
 
   return {
     // BHG
@@ -730,5 +817,20 @@ export async function computeTradeFeatures(
     // News
     newsVolume24h: newsVol.total,
     policyNewsVolume24h: newsVol.policy,
+    newsVolume1h: newsVol1h.total,
+    newsVelocity: newsVol1h.velocity,
+    breakingNewsFlag: newsVol1h.velocity > 3 * newsVol1h.avgVelocity,
+
+    // Volume & Liquidity
+    rvol: vol.rvol,
+    rvolSession: vol.rvolSession,
+    vwap: vol.vwap,
+    priceVsVwap: vol.priceVsVwap,
+    vwapBand: vol.vwapBand,
+    poc: vol.poc,
+    priceVsPoc: vol.priceVsPoc,
+    inValueArea: vol.inValueArea,
+    volumeConfirmation: vol.volumeConfirmation,
+    pocSlope: vol.pocSlope,
   };
 }
