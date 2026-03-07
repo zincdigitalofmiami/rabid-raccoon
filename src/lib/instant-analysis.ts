@@ -35,7 +35,7 @@ interface AnalysisAiResponse {
 
 async function requestAnalysisOverlay(prompt: string): Promise<AnalysisAiResponse> {
   if (!isAIAvailable()) {
-    throw new Error('ANTHROPIC_API_KEY environment variable is not set')
+    throw new Error('CLAUDE_PROXY_URL environment variable is not set')
   }
 
   const { text } = await generateAIText(prompt, { maxTokens: 3000 })
