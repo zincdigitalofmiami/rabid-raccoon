@@ -1,5 +1,4 @@
 import { toNum } from '@/lib/decimal'
-import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
 import { readLatestMes1mRows, readLatestMes15mRows } from '@/lib/mes-live-queries'
 
 export const runtime = 'nodejs'
@@ -140,13 +139,10 @@ export async function GET(request: Request): Promise<Response> {
         return
       }
 
-      // Poll every 60 seconds — refresh stores both 1m and 15m bars
+      // Poll every 60 seconds — ingestion is handled by Inngest.
       const interval = setInterval(async () => {
         if (closed) return
         try {
-          // This refreshes both 1m and 15m tables
-          await refreshMes15mFromDatabento({ force: false })
-
           const latest = await readLatestMes1mRows(
             Math.max(60, Math.min(300, backfillCount))
           )

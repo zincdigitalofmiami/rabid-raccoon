@@ -1,5 +1,4 @@
 import { toNum } from '@/lib/decimal'
-import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
 import { readLatestMes1mRows, readLatestMes15mRows } from '@/lib/mes-live-queries'
 
 export const runtime = 'nodejs'
@@ -216,12 +215,10 @@ export async function GET(request: Request): Promise<Response> {
         return
       }
 
-      // Poll every 60 seconds and detect changed rows, including same-timestamp candle refreshes.
+      // Poll every 60 seconds and detect changed rows from Inngest-managed ingestion.
       const interval = setInterval(async () => {
         if (closed) return
         try {
-          await refreshMes15mFromDatabento({ force: false })
-
           const oneMinuteLookback = Math.max(
             4000,
             Math.max(40, Math.min(250, backfillCount)) * 15 + 240

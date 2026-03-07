@@ -1,5 +1,4 @@
 import { toNum } from "@/lib/decimal";
-import { refreshMes15mFromDatabento } from "@/lib/mes15m-refresh";
 import { readLatestMes15mRows } from "@/lib/mes-live-queries";
 
 export const runtime = "nodejs";
@@ -99,8 +98,6 @@ export async function GET(request: Request): Promise<Response> {
       const interval = setInterval(async () => {
         if (closed) return;
         try {
-          await refreshMes15mFromDatabento({ force: false });
-
           const latest = await readLatestMes15mRows(
             Math.max(80, Math.min(400, backfillCount)),
           );

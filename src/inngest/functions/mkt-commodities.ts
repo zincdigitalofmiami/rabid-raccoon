@@ -1,7 +1,5 @@
 import { inngest } from '../client'
-import { runIngestMarketPricesDaily } from '../../../scripts/ingest-market-prices-daily'
-
-const SYMBOLS = ['CL', 'GC', 'SI', 'NG'] as const
+import { runDailyMarketIngestByRole } from './daily-market-role-ingest'
 
 /**
  * Commodity futures — one step per symbol for isolated retry.
@@ -11,16 +9,5 @@ const SYMBOLS = ['CL', 'GC', 'SI', 'NG'] as const
 export const ingestMktCommodities = inngest.createFunction(
   { id: 'ingest-mkt-commodities', retries: 2 },
   { cron: '0 3 * * *' },
-  async ({ step }) => {
-    const results: Array<{ symbol: string; result: Awaited<ReturnType<typeof runIngestMarketPricesDaily>> }> = []
-
-    for (const symbol of SYMBOLS) {
-      const result = await step.run(`market-prices-${symbol.toLowerCase()}`, async () =>
-        runIngestMarketPricesDaily({ lookbackHours: 48, dryRun: false, symbols: [symbol] })
-      )
-      results.push({ symbol, result })
-    }
-
-    return { ranAt: new Date().toISOString(), symbols: SYMBOLS, results }
-  }
+  async ({ step }) => runDailyMarketIngestByRole(step, 'INNGEST_COMMODITIES')
 )
