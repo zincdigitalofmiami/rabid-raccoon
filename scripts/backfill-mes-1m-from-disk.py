@@ -71,7 +71,7 @@ def main():
 
     # Load env
     load_dotenv(".env.local")
-    direct_url = os.environ.get("DIRECT_URL") or os.environ.get("LOCAL_DATABASE_URL")
+    direct_url = os.environ.get("DIRECT_URL")
     if not direct_url:
         print("ERROR: DIRECT_URL not set in .env.local")
         sys.exit(1)

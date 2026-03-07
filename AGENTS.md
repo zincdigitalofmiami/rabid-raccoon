@@ -225,7 +225,7 @@ Every table must have:
 
 Prisma Accelerate is **not the default**. Direct Postgres is.
 
-- `src/lib/prisma.ts` uses `DIRECT_URL` (or `LOCAL_DATABASE_URL`) by default via `@prisma/adapter-pg`. Zero per-operation cost.
+- `src/lib/prisma.ts` uses `DIRECT_URL` by default via `@prisma/adapter-pg`. Zero per-operation cost.
 - Accelerate (`prisma+postgres://`) is opt-in only: set `USE_ACCELERATE=1` to enable. Only do this if queries use `cacheStrategy` for edge caching.
 - **Never route bulk writes through Accelerate.** It charges per operation and silently drops data.
 - High-frequency writes (SSE refresh, ingestion) use `src/lib/direct-pool.ts` (raw `pg.Pool` on `DIRECT_URL`).
@@ -233,8 +233,7 @@ Prisma Accelerate is **not the default**. Direct Postgres is.
 
 | Env Variable | Purpose | When Used |
 |---|---|---|
-| `DIRECT_URL` | Direct Postgres (Prisma + Python) | Default everywhere |
-| `LOCAL_DATABASE_URL` | Local dev Postgres | Fallback if `DIRECT_URL` not set |
+| `DIRECT_URL` | Direct Postgres — Prisma, Python scripts, Inngest | Required everywhere |
 | `DATABASE_URL` | Accelerate proxy URL | Only when `USE_ACCELERATE=1` |
 | `USE_ACCELERATE` | Opt-in flag for Accelerate | Set to `1` only for edge-cached reads |
 
