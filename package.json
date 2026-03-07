@@ -47,6 +47,7 @@
     "@prisma/client": "^7.4.1",
     "@prisma/extension-accelerate": "^3.0.1",
     "ai": "^6.0.106",
+    "dotenv": "^17.3.1",
     "inngest": "^3.52.3",
     "lightweight-charts": "^5.1.0",
     "next": "^16.1.6",

@@ -1,7 +1,7 @@
 /**
  * Inngest function registry — barrel export for route.ts serve() call.
  *
- * 25 functions total:
+ * 26 functions total:
  *   6 market data (Databento) — 15m hourly, 1h–fx daily
  *   10 FRED econ (by domain table) — 05:00–14:00 UTC, 1hr apart
  *   4 events/news — 15:00–17:15 UTC
@@ -9,6 +9,7 @@
  *   2 geopolitical/policy (GPR, Trump effect) — 19:00–19:30 UTC
  *   1 coverage audit (weekly Sun 06:00 UTC)
  *   1 backfill (event-triggered)
+ *   1 compute-signal (BHG + AI pipeline, every 15 min at :13/:28/:43/:58)
  *
  * Each function is independently visible, retriable, and monitorable in Inngest dashboard.
  */
@@ -48,6 +49,9 @@ export { ingestTrumpEffect } from './ingest-trump-effect'
 
 // ── Coverage Audit (weekly) ─────────────────────────────────────────
 export { checkSymbolCoverage } from './check-symbol-coverage'
+
+// ── Signal Pipeline (BHG + AI, every 15 min) ────────────────────────
+export { computeSignal } from './compute-signal'
 
 // ── Backfill (event-triggered, not cron) ────────────────────────────
 export { backfillMesAllTimeframes } from '../backfill-mes'

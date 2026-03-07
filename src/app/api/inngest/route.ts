@@ -31,6 +31,8 @@ import {
   ingestTrumpEffect,
   // Coverage audit — 1 function (weekly)
   checkSymbolCoverage,
+  // Signal pipeline — BHG + AI, every 15 min
+  computeSignal,
   // Backfill — 1 function (event-triggered)
   backfillMesAllTimeframes,
 } from "@/inngest";
@@ -72,6 +74,8 @@ export const { GET, POST, PUT } = serve({
     ingestTrumpEffect,
     // Coverage audit (weekly Sun 06:00 UTC)
     checkSymbolCoverage,
+    // Signal pipeline: BHG + AI + Claude reasoning (:13, :28, :43, :58)
+    computeSignal,
     // Backfill (event-triggered)
     backfillMesAllTimeframes,
   ],
