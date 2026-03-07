@@ -844,9 +844,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
             <Image
               src="/chart_watermark.png"
               alt=""
-              width={240}
-              height={240}
-              className="opacity-[0.14]"
+              width={300}
+              height={300}
+              className="opacity-[0.10]"
               priority
             />
           </div>
