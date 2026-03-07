@@ -842,11 +842,12 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           {/* Watermark — DOM overlay, not LWC watermark API */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
             <Image
-              src="/chart_watermark.png"
+              src="/chart_watermark.svg"
               alt=""
               width={300}
               height={300}
               className="opacity-[0.10]"
+              unoptimized
               priority
             />
           </div>
