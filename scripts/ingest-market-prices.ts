@@ -545,8 +545,8 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
   assertHardConfigIntegrity()
   const dryRun = assertNoForbiddenOverrides()
 
-  if (!process.env.DATABASE_URL) {
-    hardFail('DATABASE_URL is required')
+  if (!process.env.DIRECT_URL) {
+    hardFail('DIRECT_URL is required')
   }
   if (!process.env.DATABENTO_API_KEY) {
     hardFail('DATABENTO_API_KEY is required')

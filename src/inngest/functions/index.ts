@@ -1,44 +1,22 @@
 /**
- * Inngest function registry — barrel export for route.ts serve() call.
+ * Inngest function registry — cloud-facing runtime jobs only.
  *
- * 22 functions total:
- *   6 market data (Databento) — 15m hourly, 1h–fx daily
- *   10 FRED econ (by domain table) — 05:00–14:00 UTC, 1hr apart
- *   4 events/news — 15:00–17:15 UTC
- *   1 signals (measured moves) — 18:00 UTC
- *   1 backfill (event-triggered)
+ * 4 functions total:
+ *   1. mkt-mes-15m     — MES 15m data refresh, every hour at :05
+ *   2. econ-calendar   — Economic calendar + Treasury rates, daily at 15:00 UTC
+ *   3. compute-signal  — Fib retracement + Warbird AI pipeline, every 15 min
+ *   4. backfill-mes    — Historical backfill, event-triggered
  *
- * Each function is independently visible, retriable, and monitorable in Inngest dashboard.
+ * Heavy batch jobs (FRED ingestion, daily market data, news, GPR, Trump)
+ * run as LOCAL scripts via `scripts/run-batch-ingest.sh`.
+ * They do not belong in Inngest — no cloud orchestration needed, no retries,
+ * no failure noise in the dashboard.
  */
 
-// ── Market Data (Databento) ─────────────────────────────────────────
+// ── Cloud-facing runtime jobs ────────────────────────────────────────
 export { ingestMktMes15m } from './mkt-mes-15m'
-export { ingestMktMes1h } from './mkt-mes-1h'
-export { ingestMktEquityIndices } from './mkt-equity-indices'
-export { ingestMktTreasuries } from './mkt-treasuries'
-export { ingestMktCommodities } from './mkt-commodities'
-export { ingestMktFxRates } from './mkt-fx-rates'
-
-// ── FRED Economic Series (by domain table) ──────────────────────────
-export { ingestEconRates } from './econ-rates'
-export { ingestEconYields } from './econ-yields'
-export { ingestEconVolIndices } from './econ-vol-indices'
-export { ingestEconInflation } from './econ-inflation'
-export { ingestEconFx } from './econ-fx'
-export { ingestEconLabor } from './econ-labor'
-export { ingestEconActivity } from './econ-activity'
-export { ingestEconCommodities } from './econ-commodities'
-export { ingestEconMoney } from './econ-money'
-export { ingestEconIndexes } from './econ-indexes'
-
-// ── Events / News ───────────────────────────────────────────────────
 export { ingestEconCalendar } from './econ-calendar'
-export { ingestNewsSignals } from './news-signals'
-export { ingestAltNews } from './alt-news'
-export { ingestFredNews } from './fred-news'
-
-// ── Signals ─────────────────────────────────────────────────────────
-export { ingestMeasuredMoves } from './measured-moves'
+export { computeSignal } from './compute-signal'
 
 // ── Backfill (event-triggered, not cron) ────────────────────────────
 export { backfillMesAllTimeframes } from '../backfill-mes'

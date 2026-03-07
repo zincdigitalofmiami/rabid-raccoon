@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { detectSwings } from '@/lib/swing-detection'
 import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
-import { advanceBhgSetups } from '@/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
 import { toNum } from '@/lib/decimal'
 import { withCanonicalSetupIds } from '@/lib/setup-id'
@@ -11,12 +10,18 @@ import type { CandleData } from '@/lib/types'
 import { getEventContext, loadTodayEvents } from '@/lib/event-awareness'
 import { intradayCache } from '@/lib/tiered-cache'
 import { readLatestMes15mRows } from '@/lib/mes-live-queries'
+import { computeSqueezeProHistory } from '@/lib/trade-features'
+import type { SqueezeHistoryBar } from '@/lib/trade-features'
+import { detectFibSignals, loadWarbirdPrediction } from '@/lib/fib-signal-engine'
+import type { BhgSetup } from '@/lib/bhg-engine'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-type SetupResponseItem = ReturnType<typeof advanceBhgSetups>[number] & {
+type SetupResponseItem = BhgSetup & {
   risk?: ReturnType<typeof computeRisk>
+  pTp1?: number
+  pTp2?: number
 }
 
 interface SetupsResponseBody {
@@ -25,14 +30,38 @@ interface SetupsResponseBody {
   currentPrice: number | null
   measuredMoves?: ReturnType<typeof detectMeasuredMoves>
   eventContext?: ReturnType<typeof getEventContext>
+  sqzHistory?: SqueezeHistoryBar[]
   timestamp: string
   error?: string
 }
 
-const CACHE_KEY = 'mes-setups'
+/**
+ * pTp2 discount factors by R:R tier.
+ * Deeper target (TP2) is harder to reach; discounted from pTp1.
+ */
+const TP2_DISCOUNT_BY_RR: { min: number; factor: number }[] = [
+  { min: 2.5, factor: 0.65 },
+  { min: 1.8, factor: 0.55 },
+  { min: 0,   factor: 0.45 },
+]
+
+/**
+ * Baseline TP1 probability by risk grade when ML predictions are unavailable.
+ * Derived from historical MES fib-level hit rates at these grades.
+ */
+const FALLBACK_PTp1_BY_GRADE: Record<string, number> = {
+  A: 0.65,
+  B: 0.58,
+  C: 0.50,
+  D: 0.40,
+}
+
+
 const CACHE_HEADERS = {
   'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=90',
 }
+
+const CACHE_KEY = 'mes-setups'
 
 let inFlightBody: Promise<SetupsResponseBody> | null = null
 
@@ -71,7 +100,7 @@ async function buildResponseBody(): Promise<SetupsResponseBody> {
   const candles = [...rows].reverse().map(rowToCandle)
   const currentPrice = candles[candles.length - 1].close
 
-  // 2. Run existing modules: swings → fib (multi-period confluence) → measured moves
+  // 2. Multi-period fib confluence + measured moves
   const swings = detectSwings(candles, 5, 5, 20)
   const fibResult = calculateFibonacciMultiPeriod(candles)
 
@@ -86,26 +115,54 @@ async function buildResponseBody(): Promise<SetupsResponseBody> {
 
   const measuredMoves = detectMeasuredMoves(swings.highs, swings.lows, currentPrice)
 
-  // 3. Run BHG state machine
-  const setups = withCanonicalSetupIds(
-    advanceBhgSetups(candles, fibResult, measuredMoves),
-    'M15',
-  )
+  // 3. Load Warbird ML prediction for direction confirmation
+  const ml = await loadWarbirdPrediction()
 
-  // 4. Attach risk computations for TRIGGERED setups
-  const enrichedSetups = setups.map((s) => {
-    if (s.phase !== 'TRIGGERED' || !s.entry || !s.stopLoss || !s.tp1) {
+  // 4. Fib-retracement signal engine (replaces BHG hook-and-go)
+  const rawSignals = detectFibSignals(candles, fibResult, ml)
+  const setups = withCanonicalSetupIds(rawSignals, 'M15')
+
+  // 5. Attach risk + Warbird probabilities to TRIGGERED setups.
+  //    pTp1/pTp2 come directly from the trained Warbird model predictions.
+  //    Monte Carlo Pinball is a training-time model (scripts/monte-carlo.ts),
+  //    not a runtime component.
+  const mlProbUp = ml?.prob_up_1h ?? ml?.prob_up_4h ?? null
+  const enrichedSetups: SetupResponseItem[] = setups.map((s) => {
+    if (s.phase !== 'TRIGGERED' || !s.entry || !s.stopLoss || !s.tp1 || !s.tp2) {
       return s
     }
     const risk = computeRisk(s.entry, s.stopLoss, s.tp1, MES_DEFAULTS)
-    return { ...s, risk }
+
+    // pTp1 = Warbird probability aligned to setup direction (or risk-grade fallback)
+    let pTp1: number
+    let pTp2: number
+    if (mlProbUp != null) {
+      pTp1 = s.direction === 'BULLISH' ? mlProbUp : 1 - mlProbUp
+      // pTp2 = pTp1 discounted by R:R tier (deeper target = lower probability)
+      const tier = TP2_DISCOUNT_BY_RR.find((t) => risk.rr >= t.min) ?? TP2_DISCOUNT_BY_RR[TP2_DISCOUNT_BY_RR.length - 1]
+      pTp2 = pTp1 * tier.factor
+    } else {
+      // No ML predictions available — use historical base rates per risk grade
+      pTp1 = FALLBACK_PTp1_BY_GRADE[risk.grade] ?? 0.50
+      pTp2 = pTp1 * 0.55
+    }
+
+    return {
+      ...s,
+      risk,
+      pTp1: Math.round(pTp1 * 10000) / 10000,
+      pTp2: Math.round(pTp2 * 10000) / 10000,
+    }
   })
 
-  // Event awareness
+  // 6. Event awareness
   const todayEvents = await loadTodayEvents()
   const eventContext = getEventContext(new Date(), todayEvents)
 
-  // Persist live chart-triggered setups.
+  // 7. Squeeze Pro history for the momentum histogram (last 60 bars = 15h)
+  const sqzHistory = computeSqueezeProHistory(candles.slice(-60))
+
+  // Persist triggered signals (fire-and-forget, non-blocking)
   recordTriggeredSetups(setups).catch((err) =>
     console.warn('[setups] Setup persistence failed:', err),
   )
@@ -116,6 +173,7 @@ async function buildResponseBody(): Promise<SetupsResponseBody> {
     currentPrice,
     measuredMoves,
     eventContext,
+    sqzHistory,
     timestamp: new Date().toISOString(),
   }
 }

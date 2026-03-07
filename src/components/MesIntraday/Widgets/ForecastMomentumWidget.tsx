@@ -1,5 +1,6 @@
 import type { ForecastResponse } from "@/lib/types";
 import type { MesSetupsResponse } from "@/hooks/useMesSetups";
+import { SqzMomentumChart } from "./SqzMomentumChart";
 
 interface Props {
   forecast?: ForecastResponse | null;
@@ -50,13 +51,13 @@ export function ForecastMomentumWidget({ forecast, setupsData }: Props) {
         </div>
       </div>
 
-      {/* Bottom Half: Momentum (Placeholder for Lightweight Charts Histogram) */}
+      {/* Bottom Half: sqzMomentum histogram (Squeeze Pro, 15M real-time) */}
       <div className="flex-1 min-h-[160px] relative mt-4 border-t border-[var(--zf-border-soft)] pt-6">
         <div className="absolute top-6 left-0 text-[var(--zf-text-muted)] text-xs font-bold uppercase z-10 pointer-events-none">
           sqzMomentum <span className="opacity-50">| 15M (Real-time)</span>
         </div>
-        <div className="w-full h-full bg-[var(--zf-surface)] rounded flex items-center justify-center text-[var(--zf-text-muted)] font-mono text-sm border border-[var(--zf-border-soft)]">
-          [ Mount Lightweight Charts Histogram Here ]
+        <div className="w-full h-full" style={{ minHeight: 140 }}>
+          <SqzMomentumChart history={setupsData?.sqzHistory ?? []} />
         </div>
       </div>
     </div>

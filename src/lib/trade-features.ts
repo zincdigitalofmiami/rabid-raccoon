@@ -68,6 +68,21 @@ export interface TradeFeatureVector {
   // News
   newsVolume24h: number;
   policyNewsVolume24h: number;
+  newsVolume1h: number;
+  newsVelocity: number;
+  breakingNewsFlag: boolean;
+
+  // Volume / microstructure
+  rvol: number;
+  rvolSession: number;
+  vwap: number;
+  priceVsVwap: number;
+  vwapBand: number;
+  poc: number;
+  priceVsPoc: number;
+  inValueArea: boolean;
+  volumeConfirmation: boolean;
+  pocSlope: number;
 }
 
 // ─────────────────────────────────────────────
@@ -231,8 +246,80 @@ export function computeSqueezeProLatest(
   return { mom: mom[last] ?? null, state };
 }
 
-// ─────────────────────────────────────────────
-// Williams Vix Fix (from build-lean-dataset.ts:393-450)
+export interface SqueezeHistoryBar {
+  /** Unix epoch seconds — matches CandleData.time */
+  time: number;
+  /** Momentum value (null if window not yet full) */
+  mom: number | null;
+  /** Squeeze state (0=none,1=wide,2=normal,3=narrow,4=fired) */
+  state: number | null;
+}
+
+/**
+ * Compute Squeeze Pro momentum for every bar in the candle window.
+ * Returns one entry per input candle. The first `length` bars will
+ * have null values (warm-up period).
+ */
+export function computeSqueezeProHistory(
+  candles: CandleData[],
+  length = 20,
+): SqueezeHistoryBar[] {
+  if (candles.length === 0) return [];
+
+  const closes = candles.map((c) => c.close);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+
+  // True Range
+  const tr: number[] = [highs[0] - lows[0]];
+  for (let i = 1; i < candles.length; i++) {
+    tr.push(
+      Math.max(
+        highs[i] - lows[i],
+        Math.abs(highs[i] - closes[i - 1]),
+        Math.abs(lows[i] - closes[i - 1]),
+      ),
+    );
+  }
+
+  const sma = computeSMA(closes, length);
+  const kcDev = computeSMA(tr, length);
+
+  const bbDev: (number | null)[] = new Array(candles.length).fill(null);
+  for (let i = length - 1; i < candles.length; i++) {
+    const window = closes.slice(i - length + 1, i + 1);
+    bbDev[i] = stdDev(window);
+  }
+
+  const highest = rollingHighest(highs, length);
+  const lowest = rollingLowest(lows, length);
+  const delta: (number | null)[] = new Array(candles.length).fill(null);
+  for (let i = 0; i < candles.length; i++) {
+    if (highest[i] == null || lowest[i] == null || sma[i] == null) continue;
+    const midline = ((highest[i]! + lowest[i]!) / 2 + sma[i]!) / 2;
+    delta[i] = closes[i] - midline;
+  }
+  const mom = linreg(delta, length);
+
+  return candles.map((c, i): SqueezeHistoryBar => {
+    const momVal = mom[i] ?? null;
+    if (momVal == null || bbDev[i] == null || kcDev[i] == null) {
+      return { time: c.time, mom: null, state: null };
+    }
+    const bb = bbDev[i]! * 2;
+    const kc1 = kcDev[i]! * 1.0;
+    const kc15 = kcDev[i]! * 1.5;
+    const kc2 = kcDev[i]! * 2.0;
+    let state: number;
+    if (bb < kc1) state = 3;
+    else if (bb < kc15) state = 2;
+    else if (bb < kc2) state = 1;
+    else state = 4;
+    return { time: c.time, mom: momVal, state };
+  });
+}
+
+
 // ─────────────────────────────────────────────
 
 export interface WvfResult {
@@ -730,5 +817,26 @@ export async function computeTradeFeatures(
     // News
     newsVolume24h: newsVol.total,
     policyNewsVolume24h: newsVol.policy,
+    // TODO(cleanup): compute newsVolume1h, newsVelocity, breakingNewsFlag from
+    // the news_signals table (1h window). Not yet implemented — defaults below.
+    newsVolume1h: 0,
+    newsVelocity: 0,
+    breakingNewsFlag: false,
+
+    // Volume / microstructure — not yet computed; neutral placeholder values.
+    // rvol/rvolSession = 1.0 means "volume equal to average" (neutral baseline).
+    // inValueArea = true is the neutral assumption when TPO data is unavailable;
+    // downstream scorers should weight this dimension near zero until computed.
+    // TODO(cleanup): implement intraday VWAP, POC, and RVOL computation.
+    rvol: 1,
+    rvolSession: 1,
+    vwap: 0,
+    priceVsVwap: 0,
+    vwapBand: 0,
+    poc: 0,
+    priceVsPoc: 0,
+    inValueArea: true,
+    volumeConfirmation: false,
+    pocSlope: 0,
   };
 }

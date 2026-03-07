@@ -66,7 +66,7 @@ function formatCandles(candles: CandleData[], limit: number): string {
 export async function POST(request: Request): Promise<Response> {
   if (!isAIAvailable()) {
     return NextResponse.json(
-      { error: 'ANTHROPIC_API_KEY not set' },
+      { error: 'CLAUDE_PROXY_URL not set' },
       { status: 503 }
     )
   }

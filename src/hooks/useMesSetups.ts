@@ -12,12 +12,15 @@ export interface EnrichedSetup extends BhgSetup {
   pTp2?: number | null;
 }
 
+import type { SqueezeHistoryBar } from '@/lib/trade-features'
+
 export interface MesSetupsResponse {
   setups: EnrichedSetup[];
   fibResult: FibResult | null;
   currentPrice: number | null;
   measuredMoves?: MeasuredMove[];
   eventContext?: EventContext;
+  sqzHistory?: SqueezeHistoryBar[];
   timestamp: string;
   error?: string;
 }

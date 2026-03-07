@@ -41,7 +41,7 @@ async function main() {
       >(`SELECT "seriesId", COUNT(*)::int as count, MIN("eventDate")::date as min_date, MAX("eventDate")::date as max_date FROM "${table}" GROUP BY "seriesId" ORDER BY "seriesId"`)
 
       console.log(`\n=== ${table} ===`)
-      console.table(rows.map(r => ({
+      console.table(rows.map((r: { seriesId: string; count: number; min_date: Date; max_date: Date }) => ({
         series: r.seriesId,
         count: r.count,
         from: r.min_date?.toISOString().slice(0, 10) ?? 'N/A',
@@ -59,7 +59,7 @@ async function main() {
             Array<{ layer: string; count: number; min_date: Date; max_date: Date }>
           >(`SELECT "layer", COUNT(*)::int as count, MIN("pubDate")::date as min_date, MAX("pubDate")::date as max_date FROM "${table}" GROUP BY "layer" ORDER BY "layer"`)
           console.log(`\n=== ${table} ===`)
-          console.table(rows.map(r => ({
+          console.table(rows.map((r: { layer: string; count: number; min_date: Date; max_date: Date }) => ({
             layer: r.layer,
             count: r.count,
             from: r.min_date?.toISOString().slice(0, 10) ?? 'N/A',

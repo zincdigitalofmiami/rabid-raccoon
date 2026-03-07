@@ -197,7 +197,7 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
   const { daysBack, timeframe, dryRun, symbolsRequested } = resolveMmOptions(options)
 
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!process.env.DIRECT_URL) throw new Error('DIRECT_URL is required')
   if (!Number.isFinite(daysBack) || daysBack <= 0) {
     throw new Error(`Invalid --days-back '${daysBack}'`)
   }

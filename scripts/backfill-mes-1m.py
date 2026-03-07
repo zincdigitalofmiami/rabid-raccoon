@@ -44,9 +44,9 @@ def get_db_url() -> str:
     from dotenv import load_dotenv
     load_dotenv(".env.local")
     load_dotenv(".env")
-    url = os.environ.get("DIRECT_URL") or os.environ.get("LOCAL_DATABASE_URL")
+    url = os.environ.get("DIRECT_URL")
     if not url:
-        print("ERROR: DIRECT_URL or LOCAL_DATABASE_URL not set", file=sys.stderr)
+        print("ERROR: DIRECT_URL not set", file=sys.stderr)
         sys.exit(1)
     return url
 

@@ -10,7 +10,7 @@ import { loadDotEnvFiles } from './ingest-utils'
 
 async function run(): Promise<void> {
   loadDotEnvFiles()
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!process.env.DIRECT_URL) throw new Error('DIRECT_URL is required')
 
   const exists = await prisma.$queryRaw<{ exists: boolean }[]>`
     SELECT EXISTS (

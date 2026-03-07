@@ -25,18 +25,16 @@ function getPrismaClient(): PrismaClient {
   //    → Accelerate proxy. Only enable when you actually use cacheStrategy
   //      in queries. Otherwise it's just an expensive passthrough.
   //
-  // 2. DIRECT_URL or LOCAL_DATABASE_URL (postgres://)
+  // 2. DIRECT_URL (postgres://)
   //    → Direct Postgres via @prisma/adapter-pg. Default for all environments.
-  //      Zero per-op cost. Works on Vercel, local dev, scripts, Inngest.
+  //      Zero per-operation cost. Works on Vercel, Inngest, and local scripts.
   //
   // 3. DATABASE_URL as fallback (postgres:// or prisma+postgres://)
   //    → Legacy path. If DATABASE_URL is an Accelerate URL and USE_ACCELERATE
   //      is not set, we still use it but log a warning.
 
   const forceAccelerate = process.env.USE_ACCELERATE === "1";
-  const directUrl =
-    normalizeDatabaseUrl(process.env.DIRECT_URL) ||
-    normalizeDatabaseUrl(process.env.LOCAL_DATABASE_URL);
+  const directUrl = normalizeDatabaseUrl(process.env.DIRECT_URL);
   const accelerateDatabaseUrl = normalizeDatabaseUrl(process.env.DATABASE_URL);
 
   // Determine which URL to use
@@ -65,7 +63,7 @@ function getPrismaClient(): PrismaClient {
     }
   } else {
     throw new Error(
-      "No database URL configured. Set DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL.",
+      "No database URL configured. Set DIRECT_URL (or DATABASE_URL for Accelerate).",
     );
   }
 

@@ -1,10 +1,10 @@
 import { config } from "dotenv"
 config({ path: ".env.local" })
 config({ path: ".env" })
-import { defineConfig, env } from "prisma/config"
+import { defineConfig } from "prisma/config"
 
-const useLocal = process.env.PRISMA_LOCAL === "1"
-const url = useLocal ? env("LOCAL_DATABASE_URL") : env("DIRECT_URL")
+const url: string | undefined =
+  process.env.DIRECT_URL ?? process.env.DATABASE_URL
 
 export default defineConfig({
   schema: "prisma/schema.prisma",

@@ -235,7 +235,7 @@ Hard constraints:
 - Output valid JSON and nothing else.`
 
   if (!isAIAvailable()) {
-    return deterministicForecast(input, 'missing ANTHROPIC_API_KEY')
+    return deterministicForecast(input, 'missing CLAUDE_PROXY_URL')
   }
 
   try {

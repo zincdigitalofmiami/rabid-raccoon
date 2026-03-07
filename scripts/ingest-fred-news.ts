@@ -313,7 +313,7 @@ async function finalizeFredNewsRun(
 
 export async function runIngestFredNews(): Promise<RunStats> {
   loadDotEnvFiles()
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!process.env.DIRECT_URL) throw new Error('DIRECT_URL is required')
 
   await upsertRegistry()
 

@@ -87,7 +87,7 @@ async function insertBatch(
 async function main() {
   loadDotEnvFiles()
 
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!process.env.DIRECT_URL) throw new Error('DIRECT_URL is required')
   if (!process.env.DATABENTO_API_KEY) throw new Error('DATABENTO_API_KEY is required')
 
   const startStr = parseArg('start', '2024-01-01')

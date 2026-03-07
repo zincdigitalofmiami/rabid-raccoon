@@ -54,26 +54,26 @@ const WEIGHTS = {
 // ─────────────────────────────────────────────
 
 /**
- * Fib quality score.
- * - 0.618 ratio > 0.5 ratio (deeper retracement = stronger)
- * - Higher hook quality = better
+ * Fib retracement quality score.
+ * - Deeper retracement (0.618, 0.786) = stronger confluence zone
  * - Measured move alignment = bonus
+ * hookQuality retained in feature vector as a neutral 0.5 baseline
+ * when the signal comes from the fib engine (no hook phase).
  */
 function scoreFib(features: TradeFeatureVector): number {
   let score = 50
 
-  // Fib ratio bonus
-  if (features.fibRatio >= 0.618) score += 15
+  // Retracement depth bonus (deeper = more institutional interest)
+  if (features.fibRatio >= 0.786) score += 20
+  else if (features.fibRatio >= 0.618) score += 15
   else if (features.fibRatio >= 0.5) score += 8
+  else if (features.fibRatio >= 0.382) score += 4
 
-  // Hook quality (0-1 → 0-20 contribution)
-  score += features.hookQuality * 20
-
-  // Measured move alignment
+  // Measured move alignment — strongest confirmation signal
   if (features.measuredMoveAligned) {
     score += 10
     if (features.measuredMoveQuality != null && features.measuredMoveQuality >= 0.7) {
-      score += 5 // high quality measured move
+      score += 5 // high-quality measured move
     }
   }
 

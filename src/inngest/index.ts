@@ -47,5 +47,8 @@ export { ingestTrumpEffect } from "./functions/ingest-trump-effect";
 // Coverage audit (weekly)
 export { checkSymbolCoverage } from "./functions/check-symbol-coverage";
 
+// Signal pipeline (BHG + AI, every 15 min)
+export { computeSignal } from "./functions/compute-signal";
+
 // Backfill (event-triggered, not cron)
 export { backfillMesAllTimeframes } from "./backfill-mes";

@@ -10,13 +10,11 @@ import IntelligenceConsole from "./MesIntraday/IntelligenceConsole";
 // Human-readable labels
 // ─────────────────────────────────────────────
 
-function setupLabel(
-  goType: string | null | undefined,
-  fibRatio: number,
-): string {
-  const fib = fibRatio <= 0.55 ? "50%" : "61.8%";
-  if (goType === "CLOSE") return `${fib} Bounce`;
-  return `${fib} Break`;
+function setupLabel(fibRatio: number): string {
+  if (fibRatio >= 0.786) return ".786 Retracement";
+  if (fibRatio >= 0.618) return ".618 Retracement";
+  if (fibRatio >= 0.5)   return ".500 Retracement";
+  return ".382 Retracement";
 }
 
 function gradeLabel(grade: string): string {
@@ -94,7 +92,7 @@ function TradeCard({ trade }: { trade: ScoredTrade }) {
             {isBullish ? "▲" : "▼"} {setup.direction}
           </span>
           <div className="mt-2 text-[var(--zf-text-muted)] text-sm">
-            {setupLabel(setup.goType, setup.fibRatio)}
+            {setupLabel(setup.fibRatio)}
           </div>
         </div>
         <div className="text-right">

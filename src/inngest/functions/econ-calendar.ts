@@ -55,7 +55,7 @@ export const ingestEconCalendar = inngest.createFunction(
           },
         },
       });
-      return { id: record.id };
+      return { id: Number(record.id) };
     });
 
     try {

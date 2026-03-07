@@ -1,11 +1,13 @@
 /**
  * /api/trades/upcoming — Thin cache reader
  *
- * Reads the pre-computed signal from the 15m Inngest compute cycle.
- * If the cache is fresh (<15m old), returns instantly (<50ms).
- * If stale/missing, runs a lightweight deterministic fallback (no AI, no external calls).
+ * Priority:
+ *   1. DB: scored_trades table (populated by Inngest compute-signal every 15m).
+ *      Returns instantly (<50ms) when fresh records are available.
+ *   2. Fallback: lightweight deterministic BHG pipeline (no AI, no external calls).
+ *      Used when no recent DB records exist (first boot, cold periods).
  *
- * The heavy pipeline (volume, market context, AI reasoning, outcomes) lives in
+ * The heavy pipeline (market context, AI reasoning, outcome tracking) lives in
  * src/inngest/functions/compute-signal.ts and fires at :13, :28, :43, :58.
  */
 
@@ -19,8 +21,9 @@ import { readLatestMes15mRows } from "@/lib/mes-live-queries";
 import { getEventContext, loadTodayEvents } from "@/lib/event-awareness";
 import { getMlBaseline } from "@/lib/ml-baseline";
 import { computeCompositeScore } from "@/lib/composite-score";
-import { signalCache } from "@/lib/tiered-cache";
 import { withCanonicalSetupIds } from "@/lib/setup-id";
+import { prisma } from "@/lib/prisma";
+import { toNum } from "@/lib/decimal";
 import type { CandleData } from "@/lib/types";
 import type { EventContext } from "@/lib/event-awareness";
 import type { TradeFeatureVector } from "@/lib/trade-features";
@@ -28,10 +31,13 @@ import type { MlBaseline } from "@/lib/ml-baseline";
 import type { TradeScore } from "@/lib/composite-score";
 import type { TradeReasoning } from "@/lib/trade-reasoning";
 import type { RiskResult } from "@/lib/risk-engine";
+import type { BhgSetup } from "@/lib/bhg-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const MIN_DISPLAY_COMPOSITE_SCORE = 45;
+// DB records from compute-signal are valid for 20 minutes
+const DB_SIGNAL_MAX_AGE_MS = 20 * 60 * 1000;
 const CACHE_HEADERS = {
   "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
 };
@@ -47,14 +53,6 @@ export interface ScoredTrade {
   mlBaseline: MlBaseline;
   score: TradeScore;
   reasoning: TradeReasoning;
-}
-
-interface SignalCachePayload {
-  trades: ScoredTrade[];
-  eventContext: EventContext;
-  currentPrice: number | null;
-  fibResult: ReturnType<typeof calculateFibonacciMultiPeriod>;
-  computedAt: string;
 }
 
 export interface UpcomingTradesResponse {
@@ -251,27 +249,134 @@ async function deterministicFallback(): Promise<UpcomingTradesResponse> {
 }
 
 // ─────────────────────────────────────────────
+// DB signal reader
+// ─────────────────────────────────────────────
+
+/**
+ * Read pre-computed scored trades from the scored_trades DB table.
+ * Returns null when no fresh records exist (< DB_SIGNAL_MAX_AGE_MS old).
+ */
+async function readDbSignal(): Promise<UpcomingTradesResponse | null> {
+  const since = new Date(Date.now() - DB_SIGNAL_MAX_AGE_MS);
+
+  const records = await prisma.scoredTrade.findMany({
+    where: { scoredAt: { gte: since } },
+    orderBy: { compositeScore: "desc" },
+    take: 10,
+  });
+
+  if (records.length === 0) return null;
+
+  const newestScoredAt = records[0].scoredAt;
+
+  const trades: ScoredTrade[] = records
+    .filter((r) => r.compositeScore >= MIN_DISPLAY_COMPOSITE_SCORE)
+    .map((r) => {
+      // Deserialize the full setup and risk objects stored inside features JSON
+      const featuresBlob = (r.features ?? {}) as Record<string, unknown>;
+      const storedSetup = featuresBlob._setup as BhgSetup | undefined;
+      const storedRisk = featuresBlob._risk as RiskResult | undefined;
+
+      // Build a minimal-but-renderable setup from stored or reconstructed fields
+      const setup: ReturnType<typeof advanceBhgSetups>[number] = storedSetup ?? {
+        id: r.setupHash,
+        direction: r.direction,
+        fibRatio: toNum(r.fibRatio),
+        fibLevel: 0,
+        phase: "TRIGGERED" as const,
+        goType: (r.goType ?? "BREAK") as import("@/lib/bhg-engine").GoType,
+        entry: r.entryPrice ? toNum(r.entryPrice) : undefined,
+        stopLoss: r.stopLoss ? toNum(r.stopLoss) : undefined,
+        tp1: r.tp1 ? toNum(r.tp1) : undefined,
+        tp2: r.tp2 ? toNum(r.tp2) : undefined,
+        createdAt: r.scoredAt.getTime() / 1000,
+        expiryBars: 20,
+      };
+
+      const risk: RiskResult | null = storedRisk ?? null;
+
+      // Reconstruct a minimal feature vector — exclude internal _setup/_risk keys
+      const { _setup: _storedSetup, _risk: _storedRisk, ...rawFeatures } = featuresBlob;
+      void _storedSetup; void _storedRisk; // already used above via storedSetup/storedRisk
+      const features = rawFeatures as unknown as TradeFeatureVector;
+
+      const mlBaseline: MlBaseline = {
+        pTp1: toNum(r.pTp1),
+        pTp2: toNum(r.pTp2),
+        sampleCount: 0,
+        confidence: "medium",
+        source: (r.mlSource ?? "global") as MlBaseline["source"],
+      };
+
+      const scoreBreakdown = (r.scoreBreakdown ?? {}) as Record<string, number>;
+      const score: TradeScore = {
+        composite: r.compositeScore,
+        grade: r.grade as TradeScore["grade"],
+        pTp1: toNum(r.pTp1),
+        pTp2: toNum(r.pTp2),
+        subScores: {
+          fib: scoreBreakdown.fib ?? 0,
+          risk: scoreBreakdown.risk ?? 0,
+          event: scoreBreakdown.event ?? 0,
+          correlation: scoreBreakdown.correlation ?? 0,
+          technical: scoreBreakdown.technical ?? 0,
+          mlBaseline: scoreBreakdown.mlBaseline ?? 0,
+        },
+        flags: r.flags ?? [],
+      };
+
+      const reasoning: TradeReasoning = {
+        adjustedPTp1: r.adjustedPTp1 ? toNum(r.adjustedPTp1) : toNum(r.pTp1),
+        adjustedPTp2: r.adjustedPTp2 ? toNum(r.adjustedPTp2) : toNum(r.pTp2),
+        rationale: r.rationale ?? "",
+        keyRisks: [],
+        tradeQuality: r.grade as TradeScore["grade"],
+        catalysts: [],
+        source: (r.reasoningSource ?? "deterministic") as TradeReasoning["source"],
+      };
+
+      return { setup, risk, features, mlBaseline, score, reasoning };
+    });
+
+  // Best-effort event context from the feature blob of the top trade
+  let eventContext: EventContext = EMPTY_EVENT_CONTEXT;
+  if (records[0]) {
+    const blob = (records[0].features ?? {}) as Record<string, unknown>;
+    if (blob.eventPhase) {
+      eventContext = {
+        ...EMPTY_EVENT_CONTEXT,
+        phase: blob.eventPhase as EventContext["phase"],
+        confidenceAdjustment: typeof blob.confidenceAdjustment === "number"
+          ? blob.confidenceAdjustment
+          : 1,
+      };
+    }
+  }
+
+  return {
+    trades,
+    eventContext,
+    currentPrice: toNum(records[0].currentPrice),
+    fibResult: null, // not stored; route doesn't need this for trade cards
+    timestamp: new Date().toISOString(),
+    computedAt: newestScoredAt.toISOString(),
+    source: "cache",
+  };
+}
+
+// ─────────────────────────────────────────────
 // Handler
 // ─────────────────────────────────────────────
 
 export async function GET(): Promise<Response> {
   try {
-    // 1. Check signal cache (populated by Inngest compute-signal every 15m)
-    const cached = signalCache.get<SignalCachePayload>("upcoming-trades");
-
-    if (cached) {
-      return NextResponse.json({
-        trades: cached.trades,
-        eventContext: cached.eventContext,
-        currentPrice: cached.currentPrice,
-        fibResult: cached.fibResult,
-        timestamp: new Date().toISOString(),
-        computedAt: cached.computedAt,
-        source: "cache",
-      } satisfies UpcomingTradesResponse, { headers: CACHE_HEADERS });
+    // 1. DB signal (populated by Inngest compute-signal every 15m)
+    const dbSignal = await readDbSignal();
+    if (dbSignal) {
+      return NextResponse.json(dbSignal, { headers: CACHE_HEADERS });
     }
 
-    // 2. Cache miss — lightweight deterministic fallback
+    // 2. DB miss — lightweight deterministic fallback
     const fallback = await deterministicFallback();
     return NextResponse.json(fallback, { headers: CACHE_HEADERS });
   } catch (error) {

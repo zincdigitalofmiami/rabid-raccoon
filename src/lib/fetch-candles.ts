@@ -5,7 +5,7 @@ import { toNum } from './decimal'
 
 type DbState = 'disabled' | 'probing' | 'enabled' | 'failed'
 
-let dbState: DbState = process.env.DATABASE_URL ? 'probing' : 'disabled'
+let dbState: DbState = process.env.DIRECT_URL ? 'probing' : 'disabled'
 let dbProbePromise: Promise<boolean> | null = null
 
 async function canUseDatabase(): Promise<boolean> {

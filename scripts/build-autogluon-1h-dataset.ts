@@ -166,8 +166,8 @@ function writeCsv(filePath: string, rows: OutputRow[]): void {
 async function run(): Promise<void> {
   loadDotEnvFiles()
 
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL is required')
+  if (!process.env.DIRECT_URL) {
+    throw new Error('DIRECT_URL is required')
   }
 
   const daysBack = Number(parseArg('days-back', '730'))
