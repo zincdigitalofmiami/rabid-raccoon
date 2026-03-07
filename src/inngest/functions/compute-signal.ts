@@ -181,7 +181,7 @@ export const computeSignal = inngest.createFunction(
 
     // ─── Step 4: Cross-asset candles for correlation alignment ───────────────
     // Fetch 1h candles for NQ and DX from mkt_futures_1h (last 5 days)
-    const crossAsset = await step.run('fetch-cross-asset', async () => {
+    const rawCrossAsset = await step.run('fetch-cross-asset', async () => {
       const since = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
       const [nqRows, dxRows] = await Promise.all([
         prisma.mktFutures1h.findMany({
@@ -201,13 +201,22 @@ export const computeSignal = inngest.createFunction(
       return { nqRows, dxRows }
     })
 
+    // step.run serializes through JSON → dates become strings; cast explicitly
+    type CrossAssetResult = {
+      nqRows: Array<{ eventTime: Date | string; open: unknown; high: unknown; low: unknown; close: unknown; volume: unknown }>
+      dxRows: Array<{ eventTime: Date | string; open: unknown; high: unknown; low: unknown; close: unknown; volume: unknown }>
+    }
+    const crossAsset = (rawCrossAsset as unknown) as CrossAssetResult
+
     // Build symbol candle map for correlation computation
     const symbolCandleMap = new Map<string, CandleData[]>([
       ['MES', candles],
     ])
     if (crossAsset.nqRows.length > 0) {
       symbolCandleMap.set('NQ', crossAsset.nqRows.map((r) => ({
-        time: Math.floor(r.eventTime.getTime() / 1000),
+        time: Math.floor(
+          (typeof r.eventTime === 'string' ? new Date(r.eventTime) : r.eventTime as Date).getTime() / 1000,
+        ),
         open: toNum(r.open),
         high: toNum(r.high),
         low: toNum(r.low),
@@ -217,7 +226,9 @@ export const computeSignal = inngest.createFunction(
     }
     if (crossAsset.dxRows.length > 0) {
       symbolCandleMap.set('DX', crossAsset.dxRows.map((r) => ({
-        time: Math.floor(r.eventTime.getTime() / 1000),
+        time: Math.floor(
+          (typeof r.eventTime === 'string' ? new Date(r.eventTime) : r.eventTime as Date).getTime() / 1000,
+        ),
         open: toNum(r.open),
         high: toNum(r.high),
         low: toNum(r.low),

@@ -3,76 +3,60 @@
  *
  * ONE model. ONE config. ONE place to change anything.
  *
- * Provider: Anthropic Claude via Vercel AI Gateway
- * Model: Claude Sonnet 4.5 with Extended Thinking
+ * Provider: Claude Code Max subscription via CLIProxyAPI (OpenAI-compatible)
+ * Model: claude-sonnet-4-5 (configurable via CLAUDE_MODEL)
  *
- * ── Auth paths ──────────────────────────────────────────────────────
+ * ── Auth ────────────────────────────────────────────────────────────
  *
- *   Production/Preview (Vercel):
- *     gateway() provider + OIDC (automatic, $0.00 with Max subscription)
+ *   ALL environments (local dev, Vercel production, Inngest):
+ *     CLAUDE_PROXY_URL=http://localhost:8317/v1   ← CLIProxyAPI, $0.00
  *
- *   Local dev:
- *     gateway() provider + AI_GATEWAY_API_KEY (from `vercel env pull`)
- *     OR: CLAUDE_PROXY_URL for CLIProxyAPI subscription proxy
+ *   No Vercel AI Gateway. No direct Anthropic API key. No per-token cost.
+ *   If CLAUDE_PROXY_URL is not set, AI calls return deterministic fallbacks.
+ *
+ * ── Starting the proxy ──────────────────────────────────────────────
+ *
+ *   npx @anthropic-ai/claude-code --serve --port 8317
+ *   or: npx cliproxyapi --port 8317
  *
  * ── Temperature ────────────────────────────────────────────────────
  *
- * Default: 0.15 (very low creativity — data-driven quant output).
- * When extended thinking is enabled, the server locks temperature at 1.0.
+ *   0.15 (data-driven quant output, minimal hallucination).
+ *   Extended thinking is disabled in proxy mode — CLIProxyAPI does not
+ *   support the Anthropic-specific thinking parameter.
  */
 
 import { createOpenAI } from '@ai-sdk/openai'
-import type { AnthropicLanguageModelOptions } from '@ai-sdk/anthropic'
 import type { LanguageModel } from 'ai'
-import { generateText, gateway } from 'ai'
+import { generateText } from 'ai'
 
 // ── Central config ─────────────────────────────────────────────────
-// Gateway model ID format: "provider/model-name"
-const GATEWAY_MODEL_ID =
-  process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4-5'
-
-// Extended thinking token budget (higher = deeper reasoning)
-const DEFAULT_THINKING_BUDGET = Number(
-  process.env.CLAUDE_THINKING_BUDGET || '10000',
-)
-
-// Temperature: 0.15 = data-driven quant scientist, minimal hallucination.
-const DEFAULT_TEMPERATURE = 0.15
-
-// ── Provider routing ────────────────────────────────────────────────
-// Priority: Proxy > Gateway (default)
-//
-// Proxy: CLIProxyAPI on localhost (OpenAI-compat, Max subscription, $0.00)
-// Gateway: Vercel AI Gateway with OIDC (auto on Vercel) or AI_GATEWAY_API_KEY
 
 const PROXY_URL = process.env.CLAUDE_PROXY_URL || ''
-const USE_PROXY = Boolean(PROXY_URL)
 
-// Proxy mode: OpenAI-compatible endpoint (CLIProxyAPI on localhost:8317)
-const proxyProvider = USE_PROXY
+// Model string sent to the proxy (CLIProxyAPI passes it through to Claude)
+const MODEL_ID = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5'
+
+const DEFAULT_TEMPERATURE = 0.15
+
+// ── Provider ───────────────────────────────────────────────────────
+
+const proxyProvider = PROXY_URL
   ? createOpenAI({
       baseURL: PROXY_URL,
       apiKey: 'subscription', // CLIProxyAPI ignores this field
     })
   : null
 
-/** Get the model instance for the current provider. */
+/** Get the proxy model instance. Throws if proxy is not configured. */
 function getModel(): LanguageModel {
-  if (proxyProvider) return proxyProvider(GATEWAY_MODEL_ID)
-  // Vercel AI Gateway: auto OIDC on Vercel, AI_GATEWAY_API_KEY locally
-  return gateway(GATEWAY_MODEL_ID)
-}
-
-// ── Anthropic-specific options (gateway mode) ───────────────────
-
-function thinkingOptions(
-  budget: number = DEFAULT_THINKING_BUDGET,
-): { anthropic: AnthropicLanguageModelOptions } {
-  return {
-    anthropic: {
-      thinking: { type: 'enabled', budgetTokens: budget },
-    } satisfies AnthropicLanguageModelOptions,
+  if (!proxyProvider) {
+    throw new Error(
+      'AI is not configured. Set CLAUDE_PROXY_URL to your CLIProxyAPI endpoint ' +
+        '(e.g. http://localhost:8317/v1). See .env.example for setup instructions.',
+    )
   }
+  return proxyProvider(MODEL_ID)
 }
 
 // ── Public API ─────────────────────────────────────────────────────
@@ -80,7 +64,10 @@ function thinkingOptions(
 export interface AITextOptions {
   /** Max output tokens (default: 2000) */
   maxTokens?: number
-  /** Thinking budget in tokens (default: 10000). Set 0 to disable thinking. */
+  /**
+   * Thinking budget (ignored in proxy mode — CLIProxyAPI does not support
+   * Anthropic extended thinking). Kept for API compatibility.
+   */
   thinkingBudget?: number
   /** AbortSignal for timeout support */
   signal?: AbortSignal
@@ -94,28 +81,20 @@ export interface AIVisionOptions extends AITextOptions {
 }
 
 /**
- * Generate text with Claude + extended thinking.
+ * Generate text with Claude via Max subscription proxy.
  * Single prompt in, text out. Used by forecast, synthesis, instant-analysis.
  */
 export async function generateAIText(
   prompt: string,
   options: AITextOptions = {},
 ): Promise<{ text: string; reasoningText?: string }> {
-  const {
-    maxTokens = 2000,
-    thinkingBudget = DEFAULT_THINKING_BUDGET,
-    signal,
-  } = options
-
-  const useThinking = !USE_PROXY && thinkingBudget > 0
-  const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
+  const { maxTokens = 2000, signal } = options
 
   const result = await generateText({
     model: getModel(),
     prompt,
     maxOutputTokens: maxTokens,
-    temperature: useThinking ? undefined : DEFAULT_TEMPERATURE,
-    ...(providerOpts && { providerOptions: providerOpts }),
+    temperature: DEFAULT_TEMPERATURE,
     ...(signal && { abortSignal: signal }),
   })
 
@@ -130,16 +109,8 @@ export async function generateAIVision(
   textPrompt: string,
   options: AIVisionOptions,
 ): Promise<{ text: string; reasoningText?: string }> {
-  const {
-    imageBase64,
-    mimeType = 'image/png',
-    maxTokens = 4096,
-    thinkingBudget = DEFAULT_THINKING_BUDGET,
-    signal,
-  } = options
-
-  const useThinking = !USE_PROXY && thinkingBudget > 0
-  const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
+  const { imageBase64, mimeType = 'image/png', maxTokens = 4096, signal } =
+    options
 
   const result = await generateText({
     model: getModel(),
@@ -157,8 +128,7 @@ export async function generateAIVision(
       },
     ],
     maxOutputTokens: maxTokens,
-    temperature: useThinking ? undefined : DEFAULT_TEMPERATURE,
-    ...(providerOpts && { providerOptions: providerOpts }),
+    temperature: DEFAULT_TEMPERATURE,
     ...(signal && { abortSignal: signal }),
   })
 
@@ -173,21 +143,13 @@ export async function generateAIChat(
   messages: { role: 'user' | 'assistant'; content: string }[],
   options: AITextOptions = {},
 ): Promise<{ text: string; reasoningText?: string }> {
-  const {
-    maxTokens = 2000,
-    thinkingBudget = DEFAULT_THINKING_BUDGET,
-    signal,
-  } = options
-
-  const useThinking = !USE_PROXY && thinkingBudget > 0
-  const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
+  const { maxTokens = 2000, signal } = options
 
   const result = await generateText({
     model: getModel(),
     messages,
     maxOutputTokens: maxTokens,
-    temperature: useThinking ? undefined : DEFAULT_TEMPERATURE,
-    ...(providerOpts && { providerOptions: providerOpts }),
+    temperature: DEFAULT_TEMPERATURE,
     ...(signal && { abortSignal: signal }),
   })
 
@@ -196,37 +158,22 @@ export async function generateAIChat(
 
 /**
  * Check if AI is available.
- * Gateway mode is always available (OIDC on Vercel, API key locally).
- * Proxy mode requires CLAUDE_PROXY_URL.
+ * Returns true only when CLAUDE_PROXY_URL is configured (Max subscription proxy).
  */
 export function isAIAvailable(): boolean {
-  // Gateway mode: always available on Vercel (OIDC auto-injected)
-  // Locally: needs AI_GATEWAY_API_KEY from `vercel env pull`
-  return Boolean(
-    USE_PROXY ||
-      process.env.VERCEL ||
-      process.env.AI_GATEWAY_API_KEY ||
-      process.env.VERCEL_OIDC_TOKEN,
-  )
+  return Boolean(PROXY_URL)
 }
 
 /**
  * Get the current model ID (for logging/debugging).
  */
 export function getModelId(): string {
-  return GATEWAY_MODEL_ID
+  return MODEL_ID
 }
 
 /**
  * Get the current auth method (for logging/debugging).
  */
-export function getAuthMethod():
-  | 'proxy'
-  | 'gateway_oidc'
-  | 'gateway_apikey'
-  | 'none' {
-  if (USE_PROXY) return 'proxy'
-  if (process.env.VERCEL) return 'gateway_oidc'
-  if (process.env.AI_GATEWAY_API_KEY) return 'gateway_apikey'
-  return 'none'
+export function getAuthMethod(): 'proxy' | 'none' {
+  return PROXY_URL ? 'proxy' : 'none'
 }

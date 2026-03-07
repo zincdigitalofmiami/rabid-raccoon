@@ -53,7 +53,7 @@ async function queryTable(
         return
       }
       console.table(
-        rows.map((r) => ({
+        rows.map((r: { group: string; count: number; min_date: Date; max_date: Date }) => ({
           [groupCol]: r.group,
           count: r.count,
           from: r.min_date?.toISOString().slice(0, 10) ?? 'N/A',
