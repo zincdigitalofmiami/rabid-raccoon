@@ -68,6 +68,21 @@ export interface TradeFeatureVector {
   // News
   newsVolume24h: number;
   policyNewsVolume24h: number;
+  newsVolume1h: number;
+  newsVelocity: number;
+  breakingNewsFlag: boolean;
+
+  // Volume / microstructure
+  rvol: number;
+  rvolSession: number;
+  vwap: number;
+  priceVsVwap: number;
+  vwapBand: number;
+  poc: number;
+  priceVsPoc: number;
+  inValueArea: boolean;
+  volumeConfirmation: boolean;
+  pocSlope: number;
 }
 
 // ─────────────────────────────────────────────
@@ -730,5 +745,26 @@ export async function computeTradeFeatures(
     // News
     newsVolume24h: newsVol.total,
     policyNewsVolume24h: newsVol.policy,
+    // TODO(cleanup): compute newsVolume1h, newsVelocity, breakingNewsFlag from
+    // the news_signals table (1h window). Not yet implemented — defaults below.
+    newsVolume1h: 0,
+    newsVelocity: 0,
+    breakingNewsFlag: false,
+
+    // Volume / microstructure — not yet computed; neutral placeholder values.
+    // rvol/rvolSession = 1.0 means "volume equal to average" (neutral baseline).
+    // inValueArea = true is the neutral assumption when TPO data is unavailable;
+    // downstream scorers should weight this dimension near zero until computed.
+    // TODO(cleanup): implement intraday VWAP, POC, and RVOL computation.
+    rvol: 1,
+    rvolSession: 1,
+    vwap: 0,
+    priceVsVwap: 0,
+    vwapBand: 0,
+    poc: 0,
+    priceVsPoc: 0,
+    inValueArea: true,
+    volumeConfirmation: false,
+    pocSlope: 0,
   };
 }
