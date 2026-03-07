@@ -39,15 +39,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-// Only use INNGEST_SERVE_HOST on real Vercel (VERCEL_URL is set by the
-// platform; .env.production.local sets it to "" when pulled locally via
-// `vercel env pull`, so this guard keeps the dev server from advertising
-// the production URL and breaking local Inngest connections).
-const serveHost = (process.env.VERCEL_URL ? process.env.INNGEST_SERVE_HOST : "") || "";
-
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  ...(serveHost && { serveHost }),
   functions: [
     // Market Data (Databento)
     ingestMktMes15m, // every hour at :05
