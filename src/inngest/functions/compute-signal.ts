@@ -28,7 +28,6 @@ import { readLatestMes15mRows } from '../../lib/mes-live-queries'
 import { detectSwings } from '../../lib/swing-detection'
 import { calculateFibonacciMultiPeriod } from '../../lib/fibonacci'
 import { detectMeasuredMoves } from '../../lib/measured-move'
-import { advanceBhgSetups } from '../../lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '../../lib/risk-engine'
 import { withCanonicalSetupIds } from '../../lib/setup-id'
 import { getEventContext, loadTodayEvents } from '../../lib/event-awareness'
@@ -37,6 +36,7 @@ import { getMlBaseline } from '../../lib/ml-baseline'
 import { computeCompositeScore } from '../../lib/composite-score'
 import { getTradeReasoning } from '../../lib/trade-reasoning'
 import { computeAlignmentScore } from '../../lib/correlation-filter'
+import { detectFibSignals, loadWarbirdPrediction } from '../../lib/fib-signal-engine'
 import type { CandleData } from '../../lib/types'
 import type { MarketContext } from '../../lib/market-context'
 import type { BhgSetup } from '../../lib/bhg-engine'
@@ -169,14 +169,21 @@ export const computeSignal = inngest.createFunction(
     const candles = rows.map(rowToCandle).reverse()
     const currentPrice = candles[candles.length - 1].close
 
-    // ─── Step 2: BHG pipeline ───────────────────────────────────────────────
-    const { setups, measuredMoves } = await step.run('run-bhg-pipeline', async () => {
+    // ─── Step 2: Fib retracement signal engine ──────────────────────────────
+    const { setups, measuredMoves } = await step.run('run-fib-signal-pipeline', async () => {
       const swings = detectSwings(candles, 5, 5, 20)
       const fibResult = calculateFibonacciMultiPeriod(candles)
       if (!fibResult) return { setups: [] as BhgSetup[], measuredMoves: [] }
 
       const mm = detectMeasuredMoves(swings.highs, swings.lows, currentPrice)
-      const raw = withCanonicalSetupIds(advanceBhgSetups(candles, fibResult, mm), 'M15')
+
+      // Load Warbird ML prediction for direction confirmation
+      const ml = await loadWarbirdPrediction()
+
+      const raw = withCanonicalSetupIds(
+        detectFibSignals(candles, fibResult, ml),
+        'M15',
+      )
       return {
         setups: raw.filter((s) => s.phase === 'TRIGGERED'),
         measuredMoves: mm,

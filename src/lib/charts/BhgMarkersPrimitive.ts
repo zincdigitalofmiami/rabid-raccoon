@@ -1,13 +1,13 @@
 /**
- * Lightweight Charts Series Primitive: BHG Setup Markers
+ * Lightweight Charts Series Primitive: Fib Retracement Signal Markers
  *
- * Renders Touch/Hook/Go markers and Entry/SL/TP level lines on the chart.
- * - TOUCH: small circle at fib level
- * - HOOK: triangle showing rejection direction
- * - GO: filled diamond at confirmation bar
- * - Active GO: Entry/SL/TP1/TP2 dashed lines extending into the future
+ * Renders fib-touch markers and Entry/SL/TP level lines on the chart.
+ * - CONTACT: small circle at fib level (watching, ML not yet confirmed)
+ * - TRIGGERED: Entry/SL/TP1/TP2 dashed lines extending from fib entry
  *
- * Follows the ForecastTargetsPrimitive pattern exactly.
+ * Signals fire when price retraces to a fib level (0.382/0.5/0.618/0.786)
+ * AND the Warbird ML model confirms direction.
+ * (hookTime/goTime fields populated for backward-compatible TRIGGERED setups.)
  */
 
 import type {
