@@ -265,7 +265,7 @@ export function computeSignals(candles: CandleData[]): SignalSummary {
 
   // --- Trend ---
   // CM Ultimate MACD (ChrisMoody CM_MacD_Ult_MTF) — 3 signals
-  // fast=12, slow=26, signal=SMA-9. Histogram 4-color state.
+  // fast=12, slow=26, signal=EMA-9. Histogram 4-color state.
   if (closes.length >= 26 + 9) {
     const macdArr: number[] = []
     for (let i = 0; i < closes.length; i++) {
@@ -275,18 +275,23 @@ export function computeSignals(candles: CandleData[]): SignalSummary {
     }
     if (macdArr.length >= 9) {
       const macdLine = macdArr[macdArr.length - 1]
-      const sigVal = macdArr.slice(-9).reduce((a, b) => a + b, 0) / 9
-      const hist = macdLine - sigVal
-      const histPrev = macdArr.length >= 2
-        ? macdArr[macdArr.length - 2] - (macdArr.slice(-10, -1).reduce((a, b) => a + b, 0) / 9)
-        : hist
-      const histRising = hist > histPrev
-      // Signal 1: MACD line vs zero
-      check(`CM-MACD line ${macdLine > 0 ? 'above' : 'below'} zero (${macdLine.toFixed(2)})`, macdLine > 0)
-      // Signal 2: MACD line vs signal line (color: lime=above, red=below)
-      check(`CM-MACD ${macdLine >= sigVal ? '>' : '<'} signal (${sigVal.toFixed(2)})`, macdLine >= sigVal)
-      // Signal 3: histogram direction (aqua/maroon=rising, blue/red=falling)
-      check(`CM-MACD hist ${histRising ? 'rising' : 'falling'} (${hist.toFixed(2)})`, histRising)
+      const sigVal = ema(macdArr, 9)
+      if (sigVal != null) {
+        const hist = macdLine - sigVal
+        const prevSigVal = ema(macdArr.slice(0, -1), 9)
+        const histPrev = macdArr.length >= 2
+          ? macdArr[macdArr.length - 2] - (prevSigVal ?? sigVal)
+          : hist
+        const histRising = hist > histPrev
+        // Signal 1: MACD line vs zero
+        check(`CM-MACD line ${macdLine > 0 ? 'above' : 'below'} zero (${macdLine.toFixed(2)})`, macdLine > 0)
+        // Signal 2: MACD line vs signal line (color: lime=above, red=below)
+        check(`CM-MACD ${macdLine >= sigVal ? '>' : '<'} signal (${sigVal.toFixed(2)})`, macdLine >= sigVal)
+        // Signal 3: histogram direction (aqua/maroon=rising, blue/red=falling)
+        check(`CM-MACD hist ${histRising ? 'rising' : 'falling'} (${hist.toFixed(2)})`, histRising)
+      } else {
+        neutral += 3
+      }
     } else { neutral += 3 }
   } else { neutral += 3 }
 

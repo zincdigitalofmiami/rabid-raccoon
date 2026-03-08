@@ -234,7 +234,7 @@ function bollingerPos(closes: number[], period: number): number | null {
 
 // ── CM Ultimate MACD (ChrisMoody CM_MacD_Ult_MTF) ────────────────────────────
 // Port of Pine v2 study by ChrisMoody (updated 4-10-2014)
-// fast=12, slow=26, signal=9 (SMA of MACD line, matching Pine's sma())
+// fast=12, slow=26, signal=9 (EMA of MACD line)
 // Histogram 4-color state:
 //   0 = aqua   — hist rising  AND hist > 0  (histA_IsUp)
 //   1 = blue   — hist falling AND hist > 0  (histA_IsDown)
@@ -243,7 +243,7 @@ function bollingerPos(closes: number[], period: number): number | null {
 
 interface CmMacdResult {
   line: number       // fastEMA - slowEMA
-  signal: number     // SMA-9 of line
+  signal: number     // EMA-9 of line
   hist: number       // line - signal
   histPrev: number   // hist[1] — for rising/falling state
   histColor: number  // 0=aqua 1=blue 2=red 3=maroon
@@ -267,13 +267,15 @@ function computeCmMacd(
   }
   if (macdArr.length < signalLength) return null
 
-  // Signal = SMA of MACD line (matching Pine's sma(macd, signalLength))
-  const signalVal = macdArr.slice(-signalLength).reduce((a, b) => a + b, 0) / signalLength
+  // Signal = EMA of MACD line
+  const signalVal = ema(macdArr, signalLength)
+  if (signalVal == null) return null
 
   const line = macdArr[macdArr.length - 1]
   const hist = line - signalVal
+  const prevSignalVal = ema(macdArr.slice(0, -1), signalLength)
   const histPrev = macdArr.length >= 2
-    ? macdArr[macdArr.length - 2] - (macdArr.slice(-signalLength - 1, -1).reduce((a, b) => a + b, 0) / signalLength)
+    ? macdArr[macdArr.length - 2] - (prevSignalVal ?? signalVal)
     : hist
 
   // 4-color state matching Pine logic exactly
@@ -361,7 +363,7 @@ interface GoEventFeatures {
   vol_ratio: number | null
   // CM Ultimate MACD (CM_MacD_Ult_MTF port — ChrisMoody)
   macd_line: number | null        // fast EMA - slow EMA
-  macd_signal: number | null      // SMA-9 of macd_line
+  macd_signal: number | null      // EMA-9 of macd_line
   macd_hist: number | null        // macd_line - macd_signal
   macd_hist_color: number | null  // 0=aqua(up>0) 1=blue(dn>0) 2=red(dn<0) 3=maroon(up<0)
   macd_above_signal: number       // 1 if macd_line >= signal (lime), 0 if below (red)
@@ -530,7 +532,7 @@ function computeGoFeatures(
   const price = closes[closes.length - 1]
 
   // ── CM Ultimate MACD (ChrisMoody CM_MacD_Ult_MTF) ─────────────────────────
-  // Full implementation: fast=12, slow=26, signal=9 (SMA of MACD line)
+  // Full implementation: fast=12, slow=26, signal=9 (EMA of MACD line)
   // Histogram = macd_line - signal, with 4-color state matching Pine logic
   const cmMacd = computeCmMacd(closes, 12, 26, 9)
   const macd_line   = cmMacd?.line   ?? null

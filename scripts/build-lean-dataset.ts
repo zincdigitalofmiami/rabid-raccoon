@@ -746,7 +746,7 @@ function computeWilliamsVixFix(
 
 // ─── CM ULTIMATE MACD (vectorized) ──────────────────────────────────────────
 // Port of ChrisMoody CM_MacD_Ult_MTF — vectorized for full array
-// fast=12, slow=26, signal=9 (SMA of MACD line)
+// fast=12, slow=26, signal=9 (EMA of MACD line)
 // Histogram 4-color: 0=aqua(rise+pos), 1=blue(fall+pos), 2=red(fall+neg), 3=maroon(rise+neg)
 
 interface CmMacdArrayResult {
@@ -790,13 +790,13 @@ function computeCmMacdVectorized(
   const macdLine: number[] = new Array(n).fill(0);
   for (let i = 0; i < n; i++) macdLine[i] = fastEma[i] - slowEma[i];
 
-  // Signal = SMA of MACD line
+  // Signal = EMA of MACD line
   const signalArr: number[] = new Array(n).fill(0);
-  let sigSum = 0;
-  for (let i = 0; i < n; i++) {
-    sigSum += macdLine[i];
-    if (i >= signalLength) sigSum -= macdLine[i - signalLength];
-    if (i >= signalLength - 1) signalArr[i] = sigSum / signalLength;
+  const signalMult = 2 / (signalLength + 1);
+  signalArr[0] = macdLine[0];
+  for (let i = 1; i < n; i++) {
+    signalArr[i] =
+      (macdLine[i] - signalArr[i - 1]) * signalMult + signalArr[i - 1];
   }
 
   // Populate output arrays
@@ -2242,7 +2242,7 @@ async function run(): Promise<void> {
     "wvf_percentile", // wvf / rangeHigh — fear intensity (0-2 scale)
     // CM Ultimate MACD (6) — ChrisMoody momentum
     "macd_line", // fast EMA - slow EMA
-    "macd_signal", // SMA-9 of MACD line
+    "macd_signal", // EMA-9 of MACD line
     "macd_hist", // line - signal (histogram)
     "macd_hist_color", // 0=aqua 1=blue 2=red 3=maroon
     "macd_above_signal", // 1 if line >= signal

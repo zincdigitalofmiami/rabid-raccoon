@@ -352,16 +352,20 @@ export function computeMacdLatest(
     macdLine.push(fastEma - slowEma);
   }
 
-  // Signal = SMA of MACD line
-  const signal = computeSMA(macdLine, signalLength);
+  // Signal = EMA of MACD line
+  const signal: number[] = [];
+  const signalMult = 2 / (signalLength + 1);
+  let signalEma = macdLine[0];
+  for (let i = 0; i < macdLine.length; i++) {
+    signalEma = (macdLine[i] - signalEma) * signalMult + signalEma;
+    signal.push(signalEma);
+  }
 
   const last = closes.length - 1;
   const prev = last - 1;
-  if (signal[last] == null || signal[prev] == null)
-    return { hist: null, histColor: null };
 
-  const hist = macdLine[last] - signal[last]!;
-  const prevHist = macdLine[prev] - signal[prev]!;
+  const hist = macdLine[last] - signal[last];
+  const prevHist = macdLine[prev] - signal[prev];
   const rising = hist > prevHist;
 
   let color: number;
