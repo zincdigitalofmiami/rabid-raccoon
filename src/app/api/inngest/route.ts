@@ -1,3 +1,4 @@
+import { NextRequest, NextResponse } from "next/server";
 import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
 import {
@@ -48,7 +49,7 @@ export const maxDuration = 300;
 // the production URL and breaking local Inngest connections).
 const serveHost = (process.env.VERCEL_URL ? process.env.INNGEST_SERVE_HOST : "") || "";
 
-export const { GET, POST, PUT } = serve({
+const handlers = serve({
   client: inngest,
   ...(serveHost && { serveHost }),
   functions: [
@@ -89,3 +90,34 @@ export const { GET, POST, PUT } = serve({
     backfillMesAllTimeframes,
   ],
 });
+
+function isDeployedCloudRuntime(): boolean {
+  return Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_URL);
+}
+
+function disabledResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      disabled: true,
+      reason: "cloud_inngest_endpoint_disabled",
+      route: "/api/inngest",
+    },
+    { status: 403 },
+  );
+}
+
+export async function GET(request: NextRequest, context: unknown) {
+  if (isDeployedCloudRuntime()) return disabledResponse();
+  return handlers.GET(request, context as Parameters<typeof handlers.GET>[1]);
+}
+
+export async function POST(request: NextRequest, context: unknown) {
+  if (isDeployedCloudRuntime()) return disabledResponse();
+  return handlers.POST(request, context as Parameters<typeof handlers.POST>[1]);
+}
+
+export async function PUT(request: NextRequest, context: unknown) {
+  if (isDeployedCloudRuntime()) return disabledResponse();
+  return handlers.PUT(request, context as Parameters<typeof handlers.PUT>[1]);
+}
