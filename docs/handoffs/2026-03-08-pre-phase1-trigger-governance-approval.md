@@ -49,14 +49,18 @@ Status: Governance package only (no broad implementation started)
 - `pocSlope`
 
 Source of truth:
+- HEAD/main committed runtime source:
+- [compute-signal.ts](/Volumes/Satechi Hub/rabid-raccoon/src/inngest/functions/compute-signal.ts)
+- [compute-volume-features.py](/Volumes/Satechi Hub/rabid-raccoon/scripts/compute-volume-features.py)
+- Local candidate only (not committed in HEAD/main):
 - [volume-contract.ts](/Volumes/Satechi Hub/rabid-raccoon/src/lib/volume-contract.ts)
 - [runtime-volume-features.ts](/Volumes/Satechi Hub/rabid-raccoon/src/lib/runtime-volume-features.ts)
 - [volume-feature-contract.md](/Volumes/Satechi Hub/rabid-raccoon/docs/volume-feature-contract.md)
 
 ### Runtime path
-- Deployed compute path is Node/TypeScript via [compute-signal.ts](/Volumes/Satechi Hub/rabid-raccoon/src/inngest/functions/compute-signal.ts) -> `computeRuntimeVolumeFeatures()`.
-- Python volume script remains local/offline diagnostic utility only.
-- Non-RTH stale-price bug status (2026-03-08): fixed in [runtime-volume-features.ts](/Volumes/Satechi Hub/rabid-raccoon/src/lib/runtime-volume-features.ts) so `priceVsVwap`, `priceVsPoc`, and `inValueArea` use latest bar price while VWAP/POC remain session-anchored.
+- Deployed HEAD/main path shells out from [compute-signal.ts](/Volumes/Satechi Hub/rabid-raccoon/src/inngest/functions/compute-signal.ts) to [compute-volume-features.py](/Volumes/Satechi Hub/rabid-raccoon/scripts/compute-volume-features.py) via `python3`.
+- Node/TypeScript runtime-volume path via `computeRuntimeVolumeFeatures()` is local-candidate only and is not committed/deployed in HEAD/main.
+- Non-RTH stale-price bug fix documented in [runtime-volume-features.ts](/Volumes/Satechi Hub/rabid-raccoon/src/lib/runtime-volume-features.ts) is candidate-only and not HEAD/main committed truth.
 
 ### Volume confirmation semantics
 - Directional confirmation only:
