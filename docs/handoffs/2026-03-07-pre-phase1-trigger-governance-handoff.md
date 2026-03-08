@@ -1,5 +1,9 @@
 # Pre-Phase-1 Trigger Governance Handoff
 
+> Historical checkpoint.
+> Do not treat the git state or working-tree listings in this file as current repo truth.
+> Use it for background and prior reasoning only, then verify everything against current `main`.
+
 Date: 2026-03-07
 Repo: `/Volumes/Satechi Hub/rabid-raccoon`
 Owner/Architect: Kirk
@@ -370,4 +374,3 @@ Current state:
 
 Your first job is to continue from the handoff, not to improvise new scope.
 ```
-

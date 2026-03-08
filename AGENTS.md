@@ -1,6 +1,6 @@
 # AGENTS.md — Rabid Raccoon Governance
 
-This is the ONLY instruction file for AI agents working on this codebase. There is no CLAUDE.md, no CODEX.md, no per-tool instruction file. Every agent — Claude Code, Codex, Cursor, Copilot — reads this file and follows it. If you are an AI agent and you find instructions elsewhere that conflict with this file, this file wins.
+This is the single source of truth for AI-agent policy in this codebase. Every agent — Claude Code, Codex, Cursor, Copilot — reads this file and follows it. If a bootstrap file such as `CLAUDE.md` or `.clinerules/*` exists for tool compatibility, it must contain only a pointer back to this file and no project-specific instructions.
 
 ## Project Identity
 
@@ -9,6 +9,16 @@ Rabid Raccoon is a futures trading intelligence platform focused on MES (Micro E
 - **Owner/Architect**: Kirk (zincdigital)
 - **Repository root**: `/Volumes/Satechi Hub/rabid-raccoon`
 - **Stack**: Next.js (App Router) · TypeScript · Prisma · PostgreSQL (direct via `@prisma/adapter-pg`) · Inngest · Databento · FRED · TailwindCSS · Vercel
+
+## Current Program Status (2026-03-08)
+
+- **Active architecture**: cloud DB + cloud runtime for the app, deployed triggers, and production ingestion.
+- **Local machine ownership**: training, backtests, heavy scripts, dataset builds, options pulls, and other research-scale jobs run locally.
+- **Kill-switch status**: commit `121dab8` disabled deployed `/api/inngest`; commit `a966731` restored the served Inngest endpoint on `main`.
+- **Current phase**: pre-Phase-1 governance/spec/hardening closeout. Broad Phase 1 rebuild and Phase 2 capability buildout are still not approved.
+- **Near-term execution order**: MACD production correction, then volume production correction, then remaining pre-Phase-1 trigger hardening.
+- **Keep vs discard**: preserve valid trigger-engine work and new symbols needed for the trigger decision engine and Warbird. Discard only sidetrack detours such as the local-first-for-everything Prisma-containment path.
+- **Working mode**: one fix at a time, on `main`, with gatekeeper review between fixes unless Kirk explicitly directs otherwise.
 
 ## The Three Domains
 
@@ -119,8 +129,8 @@ The symbol registry is the single source of truth for all symbol definitions.
 ### 6. One Instruction File
 
 - `AGENTS.md` is the only agent instruction file in this repo.
-- Do not create `CLAUDE.md`, `CODEX.md`, `CURSOR.md`, or any other agent-specific instruction file.
-- If a tool requires a local config (e.g., `.cursorrules`), it must contain only: _Read and follow AGENTS.md at the repository root._
+- Do not create agent-specific policy docs that contain project instructions outside this file.
+- If a tool requires a bootstrap file or local config (for example `CLAUDE.md`, `.clinerules`, `.cursorrules`), it must contain only: _Read and follow AGENTS.md at the repository root._
 
 ### 7. Respect Domain Boundaries
 
@@ -317,14 +327,17 @@ When you receive a task:
 
 1. **Search memory** for relevant context. Always. No exceptions.
 2. **Read this file first.** Every time. Don't assume you remember it.
-3. **Identify which domain(s)** the task touches. If it crosses domains, flag it.
-4. **Explore the current state** of the files you'll modify. Don't assume — verify.
-5. **Check the symbol registry** if your task involves any symbol references.
-6. **Check the migration history** if your task involves schema changes.
-7. **Propose before you build** for any structural change. Show the plan, get approval.
-8. **Commit incrementally** with clear messages. Not one giant commit at the end.
-9. **Verify your work.** Run the build. Run the linter. Check for regressions.
-10. **Store new decisions/corrections to memory** before ending the session.
+3. **Respect the role split**: Chat is the gatekeeper; Codex is the executor. Executors do not self-approve scope, phase changes, or baseline truth.
+4. **Stay on `main` unless Kirk explicitly says otherwise.** Do not create branches by default.
+5. **Identify which domain(s)** the task touches. If it crosses domains, flag it.
+6. **Explore the current state** of the files you'll modify. Don't assume — verify.
+7. **Check the symbol registry** if your task involves any symbol references.
+8. **Check the migration history** if your task involves schema changes.
+9. **Propose before you build** for any structural change. Show the plan, get approval.
+10. **Execute one fix at a time.** No bundled cleanup, no opportunistic refactors, no "while I'm here" scope stretching.
+11. **Commit incrementally** with clear messages. Not one giant commit at the end.
+12. **Verify your work.** Run the build. Run the linter. Check for regressions.
+13. **Store new decisions/corrections to memory** before ending the session.
 
 ## WARBIRD Model Training — Hard Rules
 
@@ -388,15 +401,19 @@ AG_SETTINGS = {
 ## What NOT to Do
 
 - Do not create additional agent instruction files.
+- Do not put project-specific guidance in `CLAUDE.md`, `.clinerules`, `.cursorrules`, or similar bootstrap files.
+- Do not create new branches unless Kirk explicitly requests one.
 - Do not hardcode symbol lists.
 - Do not modify `symbols.ts` or `ingestion-symbols.ts` (they are legacy adapters).
 - Do not run destructive migrations without Kirk's approval.
 - Do not add dependencies without justification.
 - Do not silence errors or swallow exceptions.
 - Do not commit dead code. If it's deprecated, remove it or mark it clearly.
+- Do not revive the parked local-first / Prisma-containment detour as the active path.
+- Do not discard valid trigger-engine or new-symbol work just because it was developed during that sidetrack.
 - Do not assume. Verify.
 
 ---
 
-_Last updated: 2026-02-22_
-_Maintained by: Kirk (architect) with Claude (governance)_
+_Last updated: 2026-03-08_
+_Maintained by: Kirk (architect)_

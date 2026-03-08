@@ -4,6 +4,11 @@
 **Architect:** Kirk (Zinc Digital)
 **Assistant:** Claude (furry, caped)
 
+> Historical planning document.
+> Do not treat this file as the current execution plan.
+> Current repo truth lives in `AGENTS.md`, `ARCHITECTURE.md`, `README.md`, and the March 2026 handoff docs.
+> This roadmap predates the return to the cloud DB / cloud runtime production path, the unified Warbird model direction, and the current one-fix-at-a-time-on-main operating rule.
+
 ---
 
 ## VISION

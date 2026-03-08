@@ -1,5 +1,11 @@
 # Pre-Phase-1 Trigger Governance Approval Package
 
+> Current governance reference with one important caution:
+> use this document for trigger-spec decisions, but verify implementation claims against current `main`.
+> The active production path is cloud DB + cloud runtime.
+> The temporary `/api/inngest` disable in `121dab8` was reversed on 2026-03-08 by commit `a966731`.
+> Any local candidate/runtime-volume or Prisma-containment material mentioned elsewhere must not be treated as committed repo truth unless verified on `main`.
+
 Date: 2026-03-08
 Repo: `/Volumes/Satechi Hub/rabid-raccoon`
 Status: Governance package only (no broad implementation started)

@@ -2,6 +2,19 @@
 
 Read AGENTS.md first. This document describes how the system works. AGENTS.md describes how you work on the system.
 
+## Current Operating Model (2026-03-08)
+
+- **Production path**: cloud DB + cloud runtime for the app, deployed `/api/inngest`, and production ingestion/trigger execution.
+- **Local path**: training, backtests, heavy scripts, dataset builds, options pulls, and other research workloads stay local.
+- **Current guardrail**: do not treat the parked local-first-for-everything / Prisma-containment detour as active architecture.
+- **Recent fix**: commit `a966731` restored the deployed `/api/inngest` endpoint after the temporary cloud kill switch in `121dab8`.
+
+## Current Phase
+
+- Pre-Phase-1 governance/spec/hardening closeout.
+- Near-term engineering sequence: MACD production correction, then volume production correction, then remaining trigger hardening.
+- Preserve valid trigger-engine work and new symbols needed for the trigger decision engine and Warbird. Remove only sidetrack work.
+
 ## System Overview
 
 Rabid Raccoon is a futures trading intelligence platform. It answers one question: **"What is MES likely to do, and why?"**
@@ -81,6 +94,12 @@ To answer that, it:
               │  No storage.     │
               └─────────────────┘
 ```
+
+## Execution Boundaries
+
+- **Cloud runtime** owns lightweight runtime reads, the deployed Inngest endpoint, and production trigger/ingestion execution.
+- **Local execution** owns heavy ingest/backfill utilities, dataset builders, training runs, backtests, and diagnostics that do not belong in the cloud request path.
+- **Shared DB truth** lives in Postgres and the Prisma schema, but heavy local workflows should not be confused with the active runtime architecture.
 
 ## Database Architecture
 

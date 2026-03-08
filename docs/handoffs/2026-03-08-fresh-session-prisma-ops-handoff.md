@@ -1,5 +1,11 @@
 # Pre-Phase-1 Fresh Session Handoff (Prisma Ops Reduction)
 
+> Historical parked sidetrack.
+> Do not use this document as the active baseline.
+> The local-first / Prisma-ops reduction path described here is not the current phase path.
+> Current architecture is cloud DB + cloud runtime for production app/trigger/ingestion, with local ownership for training, backtests, heavy scripts, and dataset builds.
+> Preserve valid trigger-engine and new-symbol work separately from this sidetrack; do not revive the detour as current strategy.
+
 Date: 2026-03-08
 Repo: `/Volumes/Satechi Hub/rabid-raccoon`
 Scope: Handoff preparation only (no implementation)
