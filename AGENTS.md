@@ -324,10 +324,16 @@ The Memory MCP is pre-configured for each agent platform:
    - `rabid raccoon memory index`
    - `rabid raccoon current state`
    - `rabid raccoon ai contract`
+   - `main only workflow`
+   - `Max Pro Vercel gateway`
+   - `no fallbacks no placeholders`
+   - `MACD sign-state contract`
+   - `cloud runtime local training`
    - `Kirk_Preferences_Reporting`
    - `rabid-raccoon-operating-contract-2026-03-08`
    - `Rabid Raccoon AGENTS.md Update 2026-03-08`
-6. **Keep repo-local memory clean** — Repo-local memory is for rabid-raccoon only. Do not store cross-project notes, tool setup chatter, or prompt-process clutter here. Store compact factual project state, decisions, corrections, and verified outcomes.
+6. **Prefer short exact queries first** — Before using a long fuzzy query, try exact short searches such as `main only workflow`, `Max Pro Vercel gateway`, `no fallbacks no placeholders`, `MACD sign-state contract`, or `cloud runtime local training`.
+7. **Keep repo-local memory clean** — Repo-local memory is for rabid-raccoon only. Do not store cross-project notes, tool setup chatter, or prompt-process clutter here. Store compact factual project state, decisions, corrections, and verified outcomes.
 
 ## Agent Workflow
 
