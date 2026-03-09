@@ -9,7 +9,7 @@
  * Runs the FULL pipeline once:
  *   1. Refresh MES 1m from Databento
  *   2. Run Python volume features script → volume JSON
- *   3. BHG engine (swings → fibs → measured moves → setups)
+ *   3. Trigger candidate engine (currently backed by legacy BHG logic)
  *   4. Event context from econ_calendar
  *   5. Market context (cached morning-stable via tiered cache)
  *   6. Trade features (with volume + macro — ONE call, not per-setup)
@@ -26,7 +26,6 @@ import { prisma } from '@/lib/prisma'
 import { detectSwings } from '@/lib/swing-detection'
 import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
-import { advanceBhgSetups } from '@/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
 import { refreshMes1mFromDatabento } from '@/lib/mes15m-refresh'
 import { readLatestMes1mRows } from '@/lib/mes-live-queries'
@@ -54,7 +53,12 @@ import { recordScoredTrades } from '@/lib/trade-recorder'
 import { withCanonicalSetupIds } from '@/lib/setup-id'
 import { recordTriggeredSetups, type SetupScoringContext } from '@/lib/bhg-setup-recorder'
 import type { CandleData } from '@/lib/types'
-import type { BhgSetup } from '@/lib/bhg-engine'
+import {
+  generateTriggerCandidates,
+  getTriggeredCandidates,
+  type TriggerCandidate,
+  type TriggerDirection,
+} from '@/lib/trigger-candidates'
 import type { CorrelationAlignment } from '@/lib/correlation-filter'
 import type { MarketContext } from '@/lib/market-context'
 import type { EventContext } from '@/lib/event-awareness'
@@ -176,7 +180,7 @@ function fallbackMarketContext(reason: string): MarketContext {
 }
 
 function fallbackAlignment(
-  direction: BhgSetup['direction'],
+  direction: TriggerDirection,
   reason: string,
 ): CorrelationAlignment {
   return {
@@ -312,7 +316,7 @@ async function computeVolumeFeatures(): Promise<VolumeFeatures> {
 // ── Scored trade type (matches route.ts) ────────────────────────────
 
 export interface ScoredTrade {
-  setup: BhgSetup
+  setup: TriggerCandidate
   risk: RiskResult | null
   features: TradeFeatureVector
   mlBaseline: MlBaseline
@@ -468,7 +472,7 @@ export const computeSignal = inngest.createFunction(
             : 'neutral',
     }
 
-    // Step 4: BHG pipeline
+    // Step 4: Trigger candidate pipeline (currently backed by legacy BHG logic)
     const signal = await step.run('score-setups', async () => {
       const swings = detectSwings(candleData, 5, 5, 20)
       const fibResult = calculateFibonacciMultiPeriod(candleData)
@@ -482,7 +486,7 @@ export const computeSignal = inngest.createFunction(
 
       const measuredMoves = detectMeasuredMoves(swings.highs, swings.lows, currentPrice)
       const setups = withCanonicalSetupIds(
-        advanceBhgSetups(candleData, fibResult, measuredMoves),
+        generateTriggerCandidates(candleData, fibResult, measuredMoves),
         'M15',
       )
 
@@ -500,8 +504,8 @@ export const computeSignal = inngest.createFunction(
         // fallback alignment will handle
       }
 
-      const alignmentByDirection = new Map<BhgSetup['direction'], CorrelationAlignment>()
-      const getAlignment = (direction: BhgSetup['direction']): CorrelationAlignment => {
+      const alignmentByDirection = new Map<TriggerDirection, CorrelationAlignment>()
+      const getAlignment = (direction: TriggerDirection): CorrelationAlignment => {
         const cached = alignmentByDirection.get(direction)
         if (cached) return cached
         const mesSeries = symbolBars.get('MES')
@@ -522,7 +526,7 @@ export const computeSignal = inngest.createFunction(
       }
 
       // Score TRIGGERED setups
-      const triggered = setups.filter((s) => s.phase === 'TRIGGERED')
+      const triggered = getTriggeredCandidates(setups)
 
       const scoredTrades: ScoredTrade[] = await Promise.all(
         triggered.map(async (setup) => {

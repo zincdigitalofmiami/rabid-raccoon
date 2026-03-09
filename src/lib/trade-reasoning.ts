@@ -16,7 +16,7 @@ import type { TradeFeatureVector } from '@/lib/trade-features'
 import type { TradeScore } from '@/lib/composite-score'
 import type { EventContext } from '@/lib/event-awareness'
 import type { MarketContext } from '@/lib/market-context'
-import type { BhgSetup } from '@/lib/bhg-engine'
+import type { TriggerCandidate } from '@/lib/trigger-candidates'
 
 // ─────────────────────────────────────────────
 // Exported types
@@ -70,7 +70,7 @@ function deterministicFallback(
 // ─────────────────────────────────────────────
 
 function buildPrompt(
-  setup: BhgSetup,
+  setup: TriggerCandidate,
   score: TradeScore,
   features: TradeFeatureVector,
   eventContext: EventContext,
@@ -78,7 +78,7 @@ function buildPrompt(
 ): string {
   return `You are a professional MES (Micro E-mini S&P 500) futures trade analyst.
 
-Evaluate this BHG (Touch-Hook-Go) setup and provide your assessment.
+Evaluate this MES intraday trigger candidate and provide your assessment.
 
 SETUP:
 - Direction: ${setup.direction}
@@ -134,7 +134,7 @@ const TIMEOUT_MS = 3000
 const P_CLAMP_RANGE = 0.20
 
 export async function getTradeReasoning(
-  setup: BhgSetup,
+  setup: TriggerCandidate,
   score: TradeScore,
   features: TradeFeatureVector,
   eventContext: EventContext,

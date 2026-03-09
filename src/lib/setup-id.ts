@@ -1,8 +1,8 @@
-import type { BhgSetup } from "@/lib/bhg-engine";
+import type { TriggerCandidate } from "@/lib/trigger-candidates";
 
 const DEFAULT_TIMEFRAME = "M15";
 
-function resolveSetupEpochSeconds(setup: BhgSetup): number {
+function resolveSetupEpochSeconds(setup: TriggerCandidate): number {
   return setup.goTime ?? setup.hookTime ?? setup.touchTime ?? setup.createdAt;
 }
 
@@ -11,7 +11,7 @@ function resolveSetupEpochSeconds(setup: BhgSetup): number {
  * This must remain stable across endpoint polls for the same setup.
  */
 export function canonicalSetupId(
-  setup: BhgSetup,
+  setup: TriggerCandidate,
   timeframe: string = DEFAULT_TIMEFRAME,
 ): string {
   const eventEpochSeconds = resolveSetupEpochSeconds(setup);
@@ -25,9 +25,9 @@ export function canonicalSetupId(
 }
 
 export function withCanonicalSetupIds(
-  setups: BhgSetup[],
+  setups: TriggerCandidate[],
   timeframe: string = DEFAULT_TIMEFRAME,
-): BhgSetup[] {
+): TriggerCandidate[] {
   return setups.map((setup) => ({
     ...setup,
     id: canonicalSetupId(setup, timeframe),

@@ -13,7 +13,6 @@ import { NextResponse } from "next/server";
 import { detectSwings } from "@/lib/swing-detection";
 import { calculateFibonacciMultiPeriod } from "@/lib/fibonacci";
 import { detectMeasuredMoves } from "@/lib/measured-move";
-import { advanceBhgSetups } from "@/lib/bhg-engine";
 import { computeRisk, MES_DEFAULTS } from "@/lib/risk-engine";
 import { readLatestMes15mRows } from "@/lib/mes-live-queries";
 import { getEventContext, loadTodayEvents } from "@/lib/event-awareness";
@@ -21,6 +20,11 @@ import { getMlBaseline } from "@/lib/ml-baseline";
 import { computeCompositeScore } from "@/lib/composite-score";
 import { signalCache } from "@/lib/tiered-cache";
 import { withCanonicalSetupIds } from "@/lib/setup-id";
+import {
+  generateTriggerCandidates,
+  getTriggeredCandidates,
+  type TriggerCandidate,
+} from "@/lib/trigger-candidates";
 import type { CandleData } from "@/lib/types";
 import type { EventContext } from "@/lib/event-awareness";
 import type { TradeFeatureVector } from "@/lib/trade-features";
@@ -41,7 +45,7 @@ const CACHE_HEADERS = {
 // ─────────────────────────────────────────────
 
 export interface ScoredTrade {
-  setup: ReturnType<typeof advanceBhgSetups>[number];
+  setup: TriggerCandidate;
   risk: RiskResult | null;
   features: TradeFeatureVector;
   mlBaseline: MlBaseline;
@@ -149,14 +153,14 @@ async function deterministicFallback(): Promise<UpcomingTradesResponse> {
     currentPrice,
   );
   const setups = withCanonicalSetupIds(
-    advanceBhgSetups(candles, fibResult, measuredMoves),
+    generateTriggerCandidates(candles, fibResult, measuredMoves),
     "M15",
   );
 
   const todayEvents = await loadTodayEvents();
   const eventContext = getEventContext(new Date(), todayEvents);
 
-  const triggered = setups.filter((s) => s.phase === "TRIGGERED");
+  const triggered = getTriggeredCandidates(setups);
 
   const scoredTrades: ScoredTrade[] = triggered.map((setup) => {
     const risk =

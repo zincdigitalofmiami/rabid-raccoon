@@ -11,11 +11,11 @@
 
 import { prisma } from "@/lib/prisma";
 import { toNum } from "@/lib/decimal";
-import type { BhgSetup } from "@/lib/bhg-engine";
 import type { RiskResult } from "@/lib/risk-engine";
 import type { EventContext } from "@/lib/event-awareness";
 import type { MarketContext } from "@/lib/market-context";
 import type { CorrelationAlignment } from "@/lib/correlation-filter";
+import type { TriggerCandidate } from "@/lib/trigger-candidates";
 import type { CandleData, MeasuredMove } from "@/lib/types";
 
 // ─────────────────────────────────────────────
@@ -23,7 +23,7 @@ import type { CandleData, MeasuredMove } from "@/lib/types";
 // ─────────────────────────────────────────────
 
 export interface TradeFeatureVector {
-  // BHG features
+  // Trigger candidate features
   fibRatio: number;
   goType: string;
   hookQuality: number;
@@ -450,7 +450,7 @@ export function computeMacdLatest(
  *  - Multiple hook bars = better confirmation
  */
 export function scoreHookQuality(
-  setup: BhgSetup,
+  setup: TriggerCandidate,
   candles: CandleData[],
 ): number {
   if (!setup.hookBarIndex || !setup.touchBarIndex) return 0.5;
@@ -500,7 +500,7 @@ function countReferenceCrosses(closes: number[], referenceLevel: number): number
 }
 
 function computeAcceptanceContext(
-  setup: BhgSetup,
+  setup: TriggerCandidate,
   candles: CandleData[],
   fibPrices?: number[],
 ): AcceptanceContext {
@@ -649,7 +649,7 @@ function computeAcceptanceContext(
  * Check if a measured move supports the setup direction and score quality.
  */
 export function checkMeasuredMoveAlignment(
-  setup: BhgSetup,
+  setup: TriggerCandidate,
   measuredMoves: MeasuredMove[],
 ): { aligned: boolean; quality: number | null } {
   if (!measuredMoves || measuredMoves.length === 0) {
@@ -954,12 +954,12 @@ export async function getWarbirdMacroFeatures(
 // ─────────────────────────────────────────────
 
 /**
- * Assemble the complete trade feature vector for a single BHG setup.
+ * Assemble the complete trade feature vector for a single trigger candidate.
  *
  * All indicator computations are pure. The only async call is the
  * news_signals count query (cached per minute).
  *
- * @param setup - The BHG setup (must be TRIGGERED phase for scoring)
+ * @param setup - The trigger candidate (must be TRIGGERED phase for scoring)
  * @param candles - Recent candle window (at least 60 bars recommended)
  * @param risk - Pre-computed risk result for this setup
  * @param eventContext - Current event awareness context
@@ -968,7 +968,7 @@ export async function getWarbirdMacroFeatures(
  * @param measuredMoves - Active measured moves (if any)
  */
 export async function computeTradeFeatures(
-  setup: BhgSetup,
+  setup: TriggerCandidate,
   candles: CandleData[],
   risk: RiskResult,
   eventContext: EventContext,
@@ -1006,7 +1006,7 @@ export async function computeTradeFeatures(
   const newsVol1h = await getNewsVolume1h();
 
   return {
-    // BHG
+    // Trigger candidate
     fibRatio: setup.fibRatio,
     goType: setup.goType ?? "BREAK",
     hookQuality,
