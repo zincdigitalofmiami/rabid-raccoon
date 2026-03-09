@@ -35,7 +35,7 @@ function eventPhaseLabel(phase: string): string {
     APPROACHING: "Event Approaching",
     IMMINENT: "Event Imminent",
     BLACKOUT: "Blackout Zone",
-    DIGESTING: "Digesting Data",
+    DIGESTION: "Digesting Data",
     SETTLED: "Post-Event",
   };
   return labels[phase] ?? phase;
@@ -247,7 +247,7 @@ function _EventCard({ phase, label }: { phase: string; label: string }) {
       border: "border-red-500/10",
       dot: "bg-red-400",
     },
-    DIGESTING: {
+    DIGESTION: {
       bg: "bg-blue-500/5",
       text: "text-blue-400",
       border: "border-blue-500/10",

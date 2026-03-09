@@ -42,7 +42,7 @@ export type EventPhase =
   | 'IMMINENT'
   | 'BLACKOUT'
   | 'SHOCK'
-  | 'DIGESTING'
+  | 'DIGESTION'
   | 'SETTLED'
 
 export interface SurpriseData {
@@ -81,8 +81,8 @@ const BLACKOUT_BEFORE_MIN = 3 // BACKTEST-TBD
 /** Minutes after event: BLACKOUT zone ends */
 const BLACKOUT_AFTER_MIN = 5 // BACKTEST-TBD
 
-/** Minutes after event: DIGESTING phase ends, transitions to SETTLED */
-const DIGESTING_WINDOW_MIN = 45 // BACKTEST-TBD
+/** Minutes after event: DIGESTION phase ends, transitions to SETTLED */
+const DIGESTION_WINDOW_MIN = 45 // BACKTEST-TBD
 
 /** Minutes after event: SETTLED phase ends, transitions to CLEAR */
 const SETTLED_WINDOW_MIN = 90 // BACKTEST-TBD
@@ -94,7 +94,7 @@ const CONFIDENCE_ADJ: Record<EventPhase, number> = {
   IMMINENT: 0.5, // BACKTEST-TBD
   BLACKOUT: 0.0, // BACKTEST-TBD
   SHOCK: 0.0, // BACKTEST-TBD
-  DIGESTING: 0.6, // BACKTEST-TBD
+  DIGESTION: 0.6, // BACKTEST-TBD
   SETTLED: 0.9, // BACKTEST-TBD
 }
 
@@ -278,9 +278,9 @@ export function getEventContext(
       })
     }
 
-    if (minutesSince <= DIGESTING_WINDOW_MIN) { // BACKTEST-TBD
+    if (minutesSince <= DIGESTION_WINDOW_MIN) { // BACKTEST-TBD
       const info = toEventInfo(nearestPast.row, nearestPast.time)
-      return buildContext('DIGESTING', info, null, minutesSince, nearestPast.row, {
+      return buildContext('DIGESTION', info, null, minutesSince, nearestPast.row, {
         label: `Digesting ${info.name} (${Math.round(minutesSince)} min ago)`,
         ...enrichment,
       })

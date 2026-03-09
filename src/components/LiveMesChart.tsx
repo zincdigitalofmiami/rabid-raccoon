@@ -776,7 +776,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
                       ? "bg-red-500/10 text-red-400 border-red-500/20"
                       : eventPhase === "APPROACHING"
                         ? "bg-red-500/10 text-red-400 border-red-500/20"
-                        : eventPhase === "DIGESTING"
+                        : eventPhase === "DIGESTION"
                           ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
                           : "bg-white/5 text-white/40 border-white/10"
                 }`}

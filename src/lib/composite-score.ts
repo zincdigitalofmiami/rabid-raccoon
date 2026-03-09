@@ -290,7 +290,7 @@ export function computeCompositeScore(
   if (features.eventPhase === 'SHOCK') {
     flags.push('Shock state — immediate post-release repricing underway')
   }
-  if (features.eventPhase === 'DIGESTING') {
+  if (features.eventPhase === 'DIGESTION') {
     flags.push('Post-event digestion — volatility may be elevated')
   }
   if (features.wvfPercentile != null && features.wvfPercentile > 1.0) {
