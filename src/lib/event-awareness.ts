@@ -41,6 +41,7 @@ export type EventPhase =
   | 'APPROACHING'
   | 'IMMINENT'
   | 'BLACKOUT'
+  | 'SHOCK'
   | 'DIGESTING'
   | 'SETTLED'
 
@@ -92,6 +93,7 @@ const CONFIDENCE_ADJ: Record<EventPhase, number> = {
   APPROACHING: 0.85, // BACKTEST-TBD
   IMMINENT: 0.5, // BACKTEST-TBD
   BLACKOUT: 0.0, // BACKTEST-TBD
+  SHOCK: 0.0, // BACKTEST-TBD
   DIGESTING: 0.6, // BACKTEST-TBD
   SETTLED: 0.9, // BACKTEST-TBD
 }
@@ -268,10 +270,10 @@ export function getEventContext(
     const minutesSince = msSince / 60_000
 
     if (minutesSince <= BLACKOUT_AFTER_MIN) { // BACKTEST-TBD
-      // Still in post-release blackout
+      // Immediate post-release shock takes precedence over normal setup logic.
       const info = toEventInfo(nearestPast.row, nearestPast.time)
-      return buildContext('BLACKOUT', info, null, minutesSince, nearestPast.row, {
-        label: `${info.name} just released — BLACKOUT (${Math.ceil(BLACKOUT_AFTER_MIN - minutesSince)} min remaining)`,
+      return buildContext('SHOCK', info, null, minutesSince, nearestPast.row, {
+        label: `${info.name} just released — SHOCK (${Math.ceil(BLACKOUT_AFTER_MIN - minutesSince)} min remaining)`,
         ...enrichment,
       })
     }

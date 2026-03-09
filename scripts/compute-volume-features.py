@@ -429,6 +429,66 @@ def compute_volume_confirmation(bars: pd.DataFrame) -> bool:
     return True  # Volume is surging — confirmation is positive
 
 
+def compute_volume_pace_acceleration(bars: pd.DataFrame) -> float:
+    """Current 15m volume pace vs prior 15m pace as a relative acceleration."""
+    if len(bars) < 30:
+        return 0.0
+
+    current_15 = bars.tail(15)
+    prior_15 = bars.iloc[-30:-15]
+
+    vol_current = float(current_15["volume"].sum())
+    vol_prior = float(prior_15["volume"].sum())
+
+    if vol_prior <= 0:
+        return 0.0 if vol_current <= 0 else 1.0
+
+    return round(float((vol_current / vol_prior) - 1.0), 4)
+
+
+def classify_volume_state(metrics: dict) -> str:
+    """Classify the current MES volume/liquidity regime into a compact runtime state."""
+    rvol = float(metrics.get("rvol", 1.0))
+    rvol_session = float(metrics.get("rvol_session", 1.0))
+    vwap_band = int(metrics.get("vwap_band", 0))
+    price_vs_poc = float(metrics.get("price_vs_poc", 0.0))
+    in_value_area = bool(metrics.get("in_value_area", True))
+    volume_confirmation = bool(metrics.get("volume_confirmation", False))
+    poc_slope = float(metrics.get("poc_slope", 0.0))
+    pace_acceleration = float(metrics.get("pace_acceleration", 0.0))
+
+    abs_vwap_band = abs(vwap_band)
+    abs_price_vs_poc = abs(price_vs_poc)
+
+    if rvol < 0.85 and rvol_session < 0.9:
+        return "THIN"
+
+    if (
+        rvol >= 1.8
+        and abs_vwap_band >= 2
+        and pace_acceleration <= 0.1
+    ):
+        return "EXHAUSTION"
+
+    if (
+        rvol >= 1.25
+        and in_value_area
+        and abs_price_vs_poc <= 1.0
+        and abs_vwap_band <= 1
+    ):
+        return "ABSORPTION"
+
+    if (
+        volume_confirmation
+        and (rvol >= 1.15 or rvol_session >= 1.1)
+        and pace_acceleration >= 0.25
+        and (abs_vwap_band >= 1 or abs(poc_slope) >= 0.25)
+    ):
+        return "EXPANSION"
+
+    return "BALANCED"
+
+
 # ── Prior Session Extraction ──────────────────────────────────────────────────
 
 def get_prior_session_bars(bars: pd.DataFrame) -> pd.DataFrame:
@@ -483,17 +543,20 @@ def compute_all(test_mode: bool = False) -> dict:
         prior_bars = get_prior_session_bars(bars)
         profile = compute_volume_profile(bars, prior_bars)
         vol_confirm = compute_volume_confirmation(bars)
+        pace_acceleration = compute_volume_pace_acceleration(bars)
 
         features = {
             **rvol,
             **vwap,
             **profile,
             "volume_confirmation": vol_confirm,
+            "pace_acceleration": pace_acceleration,
             "current_price": current_price,
             "computed_at": datetime.now(timezone.utc).isoformat(),
             "bars_used": len(bars),
             "is_rth": is_rth(now_et),
         }
+        features["volume_state"] = classify_volume_state(features)
 
         if test_mode:
             print("\n--- Volume Features ---", file=sys.stderr)

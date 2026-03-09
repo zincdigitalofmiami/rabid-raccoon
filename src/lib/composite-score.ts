@@ -77,6 +77,18 @@ function scoreFib(features: TradeFeatureVector): number {
     }
   }
 
+  // Acceptance / failure quality
+  if (features.acceptanceState === 'ACCEPTED') score += 10
+  else if (features.acceptanceState === 'UNRESOLVED') score -= 4
+  else if (features.acceptanceState === 'REJECTED') score -= 8
+  else if (features.acceptanceState === 'WHIPSAW_RISK') score -= 10
+  else if (features.acceptanceState === 'TRAP_RISK') score -= 14
+  else if (features.acceptanceState === 'FAILED_BREAK') score -= 18
+
+  if (features.sweepFlag) score += 3
+  if (features.blockerDensity === 'CLEAN') score += 4
+  else if (features.blockerDensity === 'CROWDED') score -= 6
+
   return clamp(score, 0, 100)
 }
 
@@ -105,11 +117,13 @@ function scoreRisk(features: TradeFeatureVector): number {
 /**
  * Event awareness score.
  * - BLACKOUT = 0 (no trade)
+ * - SHOCK = 0 (no trade)
  * - CLEAR = 100 (safe)
  * - Others scaled by confidence adjustment
  */
 function scoreEvent(features: TradeFeatureVector): number {
   if (features.eventPhase === 'BLACKOUT') return 0
+  if (features.eventPhase === 'SHOCK') return 0
   if (features.eventPhase === 'CLEAR') return 100
 
   // Scale by confidence adjustment (0-1 → 0-100)
@@ -231,15 +245,19 @@ export function computeCompositeScore(
   else if (composite >= 35) grade = 'C'
   else grade = 'D'
 
-  // BLACKOUT veto — override to D regardless
-  if (features.eventPhase === 'BLACKOUT') {
+  // Hard event veto — override to D regardless
+  if (features.eventPhase === 'BLACKOUT' || features.eventPhase === 'SHOCK') {
     return {
       composite: 0,
       grade: 'D',
       pTp1: 0,
       pTp2: 0,
       subScores,
-      flags: ['BLACKOUT — economic event releasing, no trades'],
+      flags: [
+        features.eventPhase === 'SHOCK'
+          ? 'SHOCK — immediate post-release price discovery, no trades'
+          : 'BLACKOUT — economic event releasing, no trades',
+      ],
     }
   }
 
@@ -262,6 +280,9 @@ export function computeCompositeScore(
   if (features.eventPhase === 'IMMINENT') {
     flags.push('Event imminent — reduced position size recommended')
   }
+  if (features.eventPhase === 'SHOCK') {
+    flags.push('Shock state — immediate post-release repricing underway')
+  }
   if (features.eventPhase === 'DIGESTING') {
     flags.push('Post-event digestion — volatility may be elevated')
   }
@@ -274,6 +295,15 @@ export function computeCompositeScore(
   if (!features.isAligned) {
     flags.push('Cross-asset misalignment — lower conviction')
   }
+  if (features.volumeState === 'THIN') {
+    flags.push('Thin volume — move lacks participation')
+  }
+  if (features.volumeState === 'ABSORPTION') {
+    flags.push('Absorption state — heavy volume with poor progress')
+  }
+  if (features.volumeState === 'EXHAUSTION') {
+    flags.push('Exhaustion state — late move / blowoff risk')
+  }
   if (baseline.confidence === 'low') {
     flags.push('Low sample count — baseline less reliable')
   }
@@ -282,6 +312,18 @@ export function computeCompositeScore(
   }
   if (features.sqzState === 4) {
     flags.push('Squeeze fired — momentum breakout')
+  }
+  if (features.acceptanceState === 'FAILED_BREAK') {
+    flags.push('Failed break — invalidation risk elevated')
+  }
+  if (features.acceptanceState === 'TRAP_RISK') {
+    flags.push('Trap risk — move may be reversing back through structure')
+  }
+  if (features.acceptanceState === 'WHIPSAW_RISK') {
+    flags.push('Whipsaw risk — price is crossing the reference zone repeatedly')
+  }
+  if (features.blockerDensity === 'CROWDED') {
+    flags.push('Crowded path to target — limited open space')
   }
 
   return {

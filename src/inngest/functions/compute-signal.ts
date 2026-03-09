@@ -39,6 +39,7 @@ import {
   computeTradeFeatures,
   getWarbirdMacroFeatures,
   type VolumeFeatures,
+  type VolumeState,
   DEFAULT_VOLUME_FEATURES,
 } from '@/lib/trade-features'
 import { getMlBaseline } from '@/lib/ml-baseline'
@@ -71,6 +72,8 @@ const execAsync = promisify(exec)
 const MIN_DISPLAY_COMPOSITE_SCORE = 45
 const SIGNAL_15M_LOOKBACK = 200
 const SIGNAL_1M_LOOKBACK = SIGNAL_15M_LOOKBACK * 15 + 60
+const MARKET_CONTEXT_ROLE = 'ANALYSIS_DEFAULT'
+const TRIGGER_CORRELATION_ROLE = 'CORRELATION_SET'
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -119,6 +122,26 @@ function buildPriceChanges(symbolBars: Map<string, CandleData[]>): Map<string, n
     changes.set(symbolCode, percentChange(bars))
   }
   return changes
+}
+
+async function loadDailySymbolBarsByRole(roleKey: string): Promise<Map<string, CandleData[]>> {
+  const symbols = await getSymbolsByRole(roleKey)
+  const symbolBars = new Map<string, CandleData[]>()
+
+  const results = await Promise.allSettled(
+    symbols.map(async (symbol) => ({
+      code: symbol.code,
+      bars: await fetchDailyCandlesForSymbol(symbol.code),
+    })),
+  )
+
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue
+    if (result.value.bars.length < 2) continue
+    symbolBars.set(result.value.code, result.value.bars)
+  }
+
+  return symbolBars
 }
 
 function fallbackMarketContext(reason: string): MarketContext {
@@ -204,6 +227,21 @@ function toBoolean(value: unknown, fallback: boolean): boolean {
   return fallback
 }
 
+function toVolumeState(value: unknown, fallback: VolumeState): VolumeState {
+  if (typeof value !== 'string') return fallback
+  const normalized = value.trim().toUpperCase()
+  switch (normalized) {
+    case 'THIN':
+    case 'BALANCED':
+    case 'EXPANSION':
+    case 'EXHAUSTION':
+    case 'ABSORPTION':
+      return normalized
+    default:
+      return fallback
+  }
+}
+
 function parseVolumeScriptPayload(payload: unknown): {
   features: VolumeFeatures
   scriptError: string | null
@@ -231,6 +269,7 @@ function parseVolumeScriptPayload(payload: unknown): {
     features: {
       rvol: toFiniteNumber(source.rvol, DEFAULT_VOLUME_FEATURES.rvol),
       rvolSession: toFiniteNumber(source.rvol_session, DEFAULT_VOLUME_FEATURES.rvolSession),
+      volumeState: toVolumeState(source.volume_state, DEFAULT_VOLUME_FEATURES.volumeState),
       vwap: toFiniteNumber(source.vwap, DEFAULT_VOLUME_FEATURES.vwap),
       priceVsVwap: toFiniteNumber(source.price_vs_vwap, DEFAULT_VOLUME_FEATURES.priceVsVwap),
       vwapBand: Math.trunc(toFiniteNumber(source.vwap_band, DEFAULT_VOLUME_FEATURES.vwapBand)),
@@ -242,6 +281,10 @@ function parseVolumeScriptPayload(payload: unknown): {
         DEFAULT_VOLUME_FEATURES.volumeConfirmation,
       ),
       pocSlope: toFiniteNumber(source.poc_slope, DEFAULT_VOLUME_FEATURES.pocSlope),
+      paceAcceleration: toFiniteNumber(
+        source.pace_acceleration,
+        DEFAULT_VOLUME_FEATURES.paceAcceleration,
+      ),
     },
     scriptError: null,
   }
@@ -391,22 +434,7 @@ export const computeSignal = inngest.createFunction(
         })(),
         (async (): Promise<MarketContext> => {
           try {
-            const analysisSymbols = await getSymbolsByRole('ANALYSIS_DEFAULT')
-            const symbolBars = new Map<string, CandleData[]>()
-
-            const loadResults = await Promise.allSettled(
-              analysisSymbols.map(async (symbol) => {
-                const bars = await fetchDailyCandlesForSymbol(symbol.code)
-                return { symbolCode: symbol.code, bars }
-              }),
-            )
-
-            for (const result of loadResults) {
-              if (result.status === 'rejected') continue
-              const { symbolCode, bars } = result.value
-              if (bars.length < 2) continue
-              symbolBars.set(symbolCode, bars)
-            }
+            const symbolBars = await loadDailySymbolBarsByRole(MARKET_CONTEXT_ROLE)
 
             if (symbolBars.size > 0) {
               const priceChanges = buildPriceChanges(symbolBars)
@@ -464,17 +492,9 @@ export const computeSignal = inngest.createFunction(
       // Build symbol bars for alignment
       const symbolBars = new Map<string, CandleData[]>()
       try {
-        const analysisSymbols = await getSymbolsByRole('ANALYSIS_DEFAULT')
-        const results = await Promise.allSettled(
-          analysisSymbols.map(async (sym) => ({
-            code: sym.code,
-            bars: await fetchDailyCandlesForSymbol(sym.code),
-          })),
-        )
-        for (const r of results) {
-          if (r.status === 'fulfilled' && r.value.bars.length >= 2) {
-            symbolBars.set(r.value.code, r.value.bars)
-          }
+        const correlationBars = await loadDailySymbolBarsByRole(TRIGGER_CORRELATION_ROLE)
+        for (const [code, bars] of correlationBars.entries()) {
+          symbolBars.set(code, bars)
         }
       } catch {
         // fallback alignment will handle
@@ -539,6 +559,17 @@ export const computeSignal = inngest.createFunction(
               themeScores: {},
               compositeAlignment: 0,
               isAligned: true,
+              acceptanceState: 'UNRESOLVED',
+              acceptanceScore: 0.5,
+              sweepFlag: false,
+              bullTrapFlag: false,
+              bearTrapFlag: false,
+              whipsawFlag: false,
+              fakeoutFlag: false,
+              blockerDensity: 'MODERATE',
+              openSpaceRatio: null,
+              wickQuality: null,
+              bodyQuality: null,
               sqzMom: null,
               sqzState: null,
               wvfValue: null,
@@ -553,6 +584,7 @@ export const computeSignal = inngest.createFunction(
               breakingNewsFlag: false,
               rvol: 1,
               rvolSession: 1,
+              volumeState: 'BALANCED',
               vwap: 0,
               priceVsVwap: 0,
               vwapBand: 0,
@@ -561,6 +593,7 @@ export const computeSignal = inngest.createFunction(
               inValueArea: true,
               volumeConfirmation: false,
               pocSlope: 0,
+              paceAcceleration: 0,
             }
             const baseline = getMlBaseline(emptyFeatures)
             const score = computeCompositeScore(emptyFeatures, baseline)
@@ -594,6 +627,7 @@ export const computeSignal = inngest.createFunction(
             measuredMoves,
             macroFeatures,
             volumeFeatures,
+            fibResult.levels.map((level) => level.price),
           )
 
           const mlBaseline = getMlBaseline(features)

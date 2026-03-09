@@ -191,6 +191,17 @@ async function deterministicFallback(): Promise<UpcomingTradesResponse> {
       themeScores: {},
       compositeAlignment: 0,
       isAligned: true,
+      acceptanceState: "UNRESOLVED",
+      acceptanceScore: 0.5,
+      sweepFlag: false,
+      bullTrapFlag: false,
+      bearTrapFlag: false,
+      whipsawFlag: false,
+      fakeoutFlag: false,
+      blockerDensity: "MODERATE",
+      openSpaceRatio: null,
+      wickQuality: null,
+      bodyQuality: null,
       sqzMom: null,
       sqzState: null,
       wvfValue: null,
@@ -205,6 +216,7 @@ async function deterministicFallback(): Promise<UpcomingTradesResponse> {
       breakingNewsFlag: false,
       rvol: 1,
       rvolSession: 1,
+      volumeState: "BALANCED",
       vwap: 0,
       priceVsVwap: 0,
       vwapBand: 0,
@@ -213,6 +225,7 @@ async function deterministicFallback(): Promise<UpcomingTradesResponse> {
       inValueArea: true,
       volumeConfirmation: false,
       pocSlope: 0,
+      paceAcceleration: 0,
     } as TradeFeatureVector;
 
     const baseline = getMlBaseline(emptyFeatures);

@@ -57,6 +57,19 @@ export interface TradeFeatureVector {
   compositeAlignment: number;
   isAligned: boolean;
 
+  // Price-action acceptance / failure
+  acceptanceState: AcceptanceState;
+  acceptanceScore: number;
+  sweepFlag: boolean;
+  bullTrapFlag: boolean;
+  bearTrapFlag: boolean;
+  whipsawFlag: boolean;
+  fakeoutFlag: boolean;
+  blockerDensity: BlockerDensity;
+  openSpaceRatio: number | null;
+  wickQuality: number | null;
+  bodyQuality: number | null;
+
   // Technical (from current candles)
   sqzMom: number | null;
   sqzState: number | null;
@@ -76,6 +89,7 @@ export interface TradeFeatureVector {
   // Volume & Liquidity
   rvol: number;
   rvolSession: number;
+  volumeState: VolumeState;
   vwap: number;
   priceVsVwap: number;
   vwapBand: number;
@@ -84,6 +98,7 @@ export interface TradeFeatureVector {
   inValueArea: boolean;
   volumeConfirmation: boolean;
   pocSlope: number;
+  paceAcceleration: number;
 }
 
 // ─────────────────────────────────────────────
@@ -172,6 +187,30 @@ function stdDev(values: number[]): number | null {
 export interface SqueezeProResult {
   mom: number | null;
   state: number | null; // 0=none, 1=wide, 2=normal, 3=narrow, 4=fired
+}
+
+export type AcceptanceState =
+  | "ACCEPTED"
+  | "REJECTED"
+  | "FAILED_BREAK"
+  | "TRAP_RISK"
+  | "WHIPSAW_RISK"
+  | "UNRESOLVED";
+
+export type BlockerDensity = "CLEAN" | "MODERATE" | "CROWDED";
+
+interface AcceptanceContext {
+  state: AcceptanceState;
+  acceptanceScore: number;
+  sweepFlag: boolean;
+  bullTrapFlag: boolean;
+  bearTrapFlag: boolean;
+  whipsawFlag: boolean;
+  fakeoutFlag: boolean;
+  blockerDensity: BlockerDensity;
+  openSpaceRatio: number | null;
+  wickQuality: number | null;
+  bodyQuality: number | null;
 }
 
 /**
@@ -445,6 +484,163 @@ export function scoreHookQuality(
   return Math.min(score, 1.0);
 }
 
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function countReferenceCrosses(closes: number[], referenceLevel: number): number {
+  if (closes.length < 2) return 0;
+  let crosses = 0;
+  for (let i = 1; i < closes.length; i++) {
+    const prevSign = closes[i - 1] >= referenceLevel ? 1 : -1;
+    const nextSign = closes[i] >= referenceLevel ? 1 : -1;
+    if (prevSign !== nextSign) crosses++;
+  }
+  return crosses;
+}
+
+function computeAcceptanceContext(
+  setup: BhgSetup,
+  candles: CandleData[],
+  fibPrices?: number[],
+): AcceptanceContext {
+  const barIndex = setup.goBarIndex ?? candles.length - 1;
+  const evalCandle = candles[barIndex];
+
+  if (!evalCandle) {
+    return {
+      state: "UNRESOLVED",
+      acceptanceScore: 0.5,
+      sweepFlag: false,
+      bullTrapFlag: false,
+      bearTrapFlag: false,
+      whipsawFlag: false,
+      fakeoutFlag: false,
+      blockerDensity: "MODERATE",
+      openSpaceRatio: null,
+      wickQuality: null,
+      bodyQuality: null,
+    };
+  }
+
+  const referenceLevel =
+    setup.direction === "BULLISH"
+      ? (setup.hookHigh ?? setup.entry ?? evalCandle.close)
+      : (setup.hookLow ?? setup.entry ?? evalCandle.close);
+
+  const lookback = candles.slice(Math.max(0, barIndex - 9), barIndex + 1);
+  const trailing = candles.slice(Math.max(0, barIndex - 4), barIndex + 1);
+  const closes = trailing.map((c) => c.close);
+  const recentLows = lookback.map((c) => c.low);
+  const recentHighs = lookback.map((c) => c.high);
+
+  let sweepFlag = false;
+  if (lookback.length >= 5) {
+    const priorLow = Math.min(...recentLows.slice(0, -2));
+    const priorHigh = Math.max(...recentHighs.slice(0, -2));
+    if (setup.direction === "BULLISH") {
+      sweepFlag = evalCandle.low < priorLow && evalCandle.close > priorLow;
+    } else {
+      sweepFlag = evalCandle.high > priorHigh && evalCandle.close < priorHigh;
+    }
+  }
+
+  const closesAccepted =
+    closes.length >= 2 &&
+    (setup.direction === "BULLISH"
+      ? closes.slice(-2).every((close) => close > referenceLevel)
+      : closes.slice(-2).every((close) => close < referenceLevel));
+
+  const fakeoutFlag =
+    setup.direction === "BULLISH"
+      ? evalCandle.high > referenceLevel && evalCandle.close <= referenceLevel
+      : evalCandle.low < referenceLevel && evalCandle.close >= referenceLevel;
+
+  const bullTrapFlag =
+    setup.direction === "BULLISH" &&
+    trailing.some((c) => c.high > referenceLevel) &&
+    evalCandle.close < referenceLevel;
+
+  const bearTrapFlag =
+    setup.direction === "BEARISH" &&
+    trailing.some((c) => c.low < referenceLevel) &&
+    evalCandle.close > referenceLevel;
+
+  const whipsawFlag = countReferenceCrosses(closes, referenceLevel) >= 2;
+
+  let openSpaceRatio: number | null = null;
+  let blockerDensity: BlockerDensity = "MODERATE";
+  if (setup.entry != null && setup.tp1 != null && fibPrices && fibPrices.length > 0) {
+    const entryToTarget = Math.abs(setup.tp1 - setup.entry);
+    let nearestBlockerDist = Infinity;
+
+    for (const fibPrice of fibPrices) {
+      const isBetween =
+        setup.direction === "BULLISH"
+          ? fibPrice > setup.entry && fibPrice < setup.tp1
+          : fibPrice < setup.entry && fibPrice > setup.tp1;
+      if (!isBetween) continue;
+      nearestBlockerDist = Math.min(nearestBlockerDist, Math.abs(fibPrice - setup.entry));
+    }
+
+    if (entryToTarget > 0) {
+      openSpaceRatio = nearestBlockerDist === Infinity ? 1 : nearestBlockerDist / entryToTarget;
+      blockerDensity =
+        openSpaceRatio >= 0.7 ? "CLEAN" : openSpaceRatio >= 0.35 ? "MODERATE" : "CROWDED";
+    }
+  }
+
+  const wickCandle =
+    setup.hookBarIndex != null && candles[setup.hookBarIndex]
+      ? candles[setup.hookBarIndex]
+      : evalCandle;
+  const body = Math.abs(wickCandle.close - wickCandle.open);
+  const range = wickCandle.high - wickCandle.low;
+  const rejectionWick =
+    setup.direction === "BULLISH"
+      ? wickCandle.close - wickCandle.low
+      : wickCandle.high - wickCandle.close;
+  const wickQuality = body > 0 ? rejectionWick / body : rejectionWick > 0 ? 10 : 0;
+  const bodyQuality = range > 0 ? body / range : 0;
+
+  let state: AcceptanceState;
+  if (fakeoutFlag) state = "FAILED_BREAK";
+  else if (bullTrapFlag || bearTrapFlag) state = "TRAP_RISK";
+  else if (whipsawFlag) state = "WHIPSAW_RISK";
+  else if (closesAccepted) state = "ACCEPTED";
+  else if (
+    setup.direction === "BULLISH"
+      ? evalCandle.close < referenceLevel
+      : evalCandle.close > referenceLevel
+  ) state = "REJECTED";
+  else state = "UNRESOLVED";
+
+  let acceptanceScore = 0.5;
+  if (state === "ACCEPTED") acceptanceScore += 0.25;
+  if (state === "UNRESOLVED") acceptanceScore -= 0.05;
+  if (state === "REJECTED") acceptanceScore -= 0.15;
+  if (state === "FAILED_BREAK") acceptanceScore -= 0.25;
+  if (state === "TRAP_RISK") acceptanceScore -= 0.2;
+  if (state === "WHIPSAW_RISK") acceptanceScore -= 0.15;
+  if (sweepFlag) acceptanceScore += 0.08;
+  if (blockerDensity === "CLEAN") acceptanceScore += 0.08;
+  if (blockerDensity === "CROWDED") acceptanceScore -= 0.08;
+
+  return {
+    state,
+    acceptanceScore: Math.round(clamp01(acceptanceScore) * 10000) / 10000,
+    sweepFlag,
+    bullTrapFlag,
+    bearTrapFlag,
+    whipsawFlag,
+    fakeoutFlag,
+    blockerDensity,
+    openSpaceRatio: openSpaceRatio == null ? null : Math.round(openSpaceRatio * 10000) / 10000,
+    wickQuality: Math.round(wickQuality * 10000) / 10000,
+    bodyQuality: Math.round(bodyQuality * 10000) / 10000,
+  };
+}
+
 // ─────────────────────────────────────────────
 // Measured move alignment
 // ─────────────────────────────────────────────
@@ -516,9 +712,17 @@ export interface WarbirdMacroFeatures {
   epuTrumpPremium: number | null;
 }
 
+export type VolumeState =
+  | "THIN"
+  | "BALANCED"
+  | "EXPANSION"
+  | "EXHAUSTION"
+  | "ABSORPTION";
+
 export interface VolumeFeatures {
   rvol: number;
   rvolSession: number;
+  volumeState: VolumeState;
   vwap: number;
   priceVsVwap: number;
   vwapBand: number;
@@ -527,12 +731,14 @@ export interface VolumeFeatures {
   inValueArea: boolean;
   volumeConfirmation: boolean;
   pocSlope: number;
+  paceAcceleration: number;
 }
 
 /** Default volume features when none are available (pre-market, no data). */
 export const DEFAULT_VOLUME_FEATURES: VolumeFeatures = {
   rvol: 1.0,
   rvolSession: 1.0,
+  volumeState: "BALANCED",
   vwap: 0,
   priceVsVwap: 0,
   vwapBand: 0,
@@ -541,6 +747,7 @@ export const DEFAULT_VOLUME_FEATURES: VolumeFeatures = {
   inValueArea: true,
   volumeConfirmation: false,
   pocSlope: 0,
+  paceAcceleration: 0,
 };
 
 /**
@@ -770,6 +977,7 @@ export async function computeTradeFeatures(
   measuredMoves: MeasuredMove[],
   prefetchedMacro?: WarbirdMacroFeatures,
   prefetchedVolume?: VolumeFeatures,
+  fibPrices?: number[],
 ): Promise<TradeFeatureVector> {
   // Technical indicators (pure, computed from candle window)
   const squeeze = computeSqueezeProLatest(candles);
@@ -781,6 +989,9 @@ export async function computeTradeFeatures(
 
   // Measured move alignment (pure)
   const mmAlign = checkMeasuredMoveAlignment(setup, measuredMoves);
+
+  // Price-action acceptance / failure (pure)
+  const acceptance = computeAcceptanceContext(setup, candles, fibPrices);
 
   // Macro features — use pre-fetched if available (avoids 7 duplicate queries per setup)
   const macro = prefetchedMacro ?? await getWarbirdMacroFeatures(candles);
@@ -829,6 +1040,19 @@ export async function computeTradeFeatures(
     compositeAlignment: alignment.composite,
     isAligned: alignment.isAligned,
 
+    // Acceptance / failure
+    acceptanceState: acceptance.state,
+    acceptanceScore: acceptance.acceptanceScore,
+    sweepFlag: acceptance.sweepFlag,
+    bullTrapFlag: acceptance.bullTrapFlag,
+    bearTrapFlag: acceptance.bearTrapFlag,
+    whipsawFlag: acceptance.whipsawFlag,
+    fakeoutFlag: acceptance.fakeoutFlag,
+    blockerDensity: acceptance.blockerDensity,
+    openSpaceRatio: acceptance.openSpaceRatio,
+    wickQuality: acceptance.wickQuality,
+    bodyQuality: acceptance.bodyQuality,
+
     // Technical
     sqzMom: squeeze.mom,
     sqzState: squeeze.state,
@@ -848,6 +1072,7 @@ export async function computeTradeFeatures(
     // Volume & Liquidity
     rvol: vol.rvol,
     rvolSession: vol.rvolSession,
+    volumeState: vol.volumeState,
     vwap: vol.vwap,
     priceVsVwap: vol.priceVsVwap,
     vwapBand: vol.vwapBand,
@@ -856,5 +1081,6 @@ export async function computeTradeFeatures(
     inValueArea: vol.inValueArea,
     volumeConfirmation: vol.volumeConfirmation,
     pocSlope: vol.pocSlope,
+    paceAcceleration: vol.paceAcceleration,
   };
 }
