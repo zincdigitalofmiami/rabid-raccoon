@@ -773,42 +773,65 @@ function computeCmMacdVectorized(
   const aboveSignal: (number | null)[] = new Array(n).fill(null);
   const histRising: (number | null)[] = new Array(n).fill(null);
 
-  // EMA arrays
-  const fastEma: number[] = new Array(n).fill(0);
-  const slowEma: number[] = new Array(n).fill(0);
-  const fastMult = 2 / (fastLength + 1);
-  const slowMult = 2 / (slowLength + 1);
+  const computeEmaSeries = (
+    values: number[],
+    period: number,
+  ): (number | null)[] => {
+    const emaSeries: (number | null)[] = new Array(values.length).fill(null);
+    if (values.length < period) return emaSeries;
 
-  fastEma[0] = closes[0];
-  slowEma[0] = closes[0];
-  for (let i = 1; i < n; i++) {
-    fastEma[i] = (closes[i] - fastEma[i - 1]) * fastMult + fastEma[i - 1];
-    slowEma[i] = (closes[i] - slowEma[i - 1]) * slowMult + slowEma[i - 1];
+    const mult = 2 / (period + 1);
+    let emaVal =
+      values.slice(0, period).reduce((sum, v) => sum + v, 0) / period;
+    emaSeries[period - 1] = emaVal;
+
+    for (let i = period; i < values.length; i++) {
+      emaVal = (values[i] - emaVal) * mult + emaVal;
+      emaSeries[i] = emaVal;
+    }
+    return emaSeries;
+  };
+
+  // EMA arrays (SMA-seeded, matching repo convention)
+  const fastEma = computeEmaSeries(closes, fastLength);
+  const slowEma = computeEmaSeries(closes, slowLength);
+
+  // MACD line values only where both fast/slow are defined
+  const macdVals: number[] = [];
+  const macdBarIdx: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (fastEma[i] == null || slowEma[i] == null) continue;
+    macdVals.push(fastEma[i]! - slowEma[i]!);
+    macdBarIdx.push(i);
   }
 
-  // MACD line = fast - slow
-  const macdLine: number[] = new Array(n).fill(0);
-  for (let i = 0; i < n; i++) macdLine[i] = fastEma[i] - slowEma[i];
-
   // Signal = EMA of MACD line (SMA-seeded)
-  const signalArr: number[] = new Array(n).fill(0);
+  const signalArr: (number | null)[] = new Array(macdVals.length).fill(null);
   const signalMult = 2 / (signalLength + 1);
-  let signalEma =
-    macdLine.slice(0, signalLength).reduce((sum, v) => sum + v, 0) /
-    signalLength;
-  signalArr[signalLength - 1] = signalEma;
-  for (let i = signalLength; i < n; i++) {
-    signalEma = (macdLine[i] - signalEma) * signalMult + signalEma;
-    signalArr[i] =
-      signalEma;
+  if (macdVals.length >= signalLength) {
+    let signalEma =
+      macdVals.slice(0, signalLength).reduce((sum, v) => sum + v, 0) /
+      signalLength;
+    signalArr[signalLength - 1] = signalEma;
+    for (let i = signalLength; i < macdVals.length; i++) {
+      signalEma = (macdVals[i] - signalEma) * signalMult + signalEma;
+      signalArr[i] = signalEma;
+    }
   }
 
   // Populate output arrays
-  for (let i = warmup; i < n; i++) {
-    const l = macdLine[i];
-    const s = signalArr[i];
+  for (let j = 0; j < macdVals.length; j++) {
+    const s = signalArr[j];
+    if (s == null) continue;
+
+    const i = macdBarIdx[j];
+    if (i < warmup) continue;
+
+    const l = macdVals[j];
     const h = l - s;
-    const hPrev = i > warmup ? macdLine[i - 1] - signalArr[i - 1] : h;
+    const prevMacd = j > 0 ? macdVals[j - 1] : l;
+    const prevSignal = j > 0 ? signalArr[j - 1] : null;
+    const hPrev = prevMacd - (prevSignal ?? s);
 
     line[i] = l;
     sig[i] = s;

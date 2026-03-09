@@ -338,18 +338,33 @@ export function computeMacdLatest(
   if (candles.length < warmup + 2) return { hist: null, histColor: null };
 
   const closes = candles.map((c) => c.close);
-  const fastMult = 2 / (fastLength + 1);
-  const slowMult = 2 / (slowLength + 1);
+  const computeEmaSeries = (
+    values: number[],
+    period: number,
+  ): (number | null)[] => {
+    const emaSeries: (number | null)[] = new Array(values.length).fill(null);
+    if (values.length < period) return emaSeries;
 
-  // EMA computation
-  let fastEma = closes[0];
-  let slowEma = closes[0];
+    const mult = 2 / (period + 1);
+    let emaVal =
+      values.slice(0, period).reduce((sum, v) => sum + v, 0) / period;
+    emaSeries[period - 1] = emaVal;
+
+    for (let i = period; i < values.length; i++) {
+      emaVal = (values[i] - emaVal) * mult + emaVal;
+      emaSeries[i] = emaVal;
+    }
+    return emaSeries;
+  };
+
+  // EMA computation (SMA-seeded, matching repo convention)
+  const fastEma = computeEmaSeries(closes, fastLength);
+  const slowEma = computeEmaSeries(closes, slowLength);
   const macdLine: number[] = [];
 
   for (let i = 0; i < closes.length; i++) {
-    fastEma = (closes[i] - fastEma) * fastMult + fastEma;
-    slowEma = (closes[i] - slowEma) * slowMult + slowEma;
-    macdLine.push(fastEma - slowEma);
+    if (fastEma[i] == null || slowEma[i] == null) continue;
+    macdLine.push(fastEma[i]! - slowEma[i]!);
   }
 
   // Signal = EMA of MACD line (SMA-seeded)
@@ -364,7 +379,7 @@ export function computeMacdLatest(
     signal[i] = signalEma;
   }
 
-  const last = closes.length - 1;
+  const last = macdLine.length - 1;
   const prev = last - 1;
   if (signal[last] == null || signal[prev] == null)
     return { hist: null, histColor: null };
