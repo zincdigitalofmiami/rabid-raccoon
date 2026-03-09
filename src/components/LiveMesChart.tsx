@@ -30,6 +30,7 @@ import { PivotLinesPrimitive } from "@/lib/charts/PivotLinesPrimitive";
 import { mapMeasuredMoveAndCoreToTargets } from "@/lib/charts/blendTargets";
 import { ensureFutureWhitespace } from "@/lib/charts/ensureFutureWhitespace";
 import { calculateFibonacciMultiPeriod } from "@/lib/fibonacci";
+import { getEventDisplayPhase } from "@/lib/event-display";
 import TV from "@/lib/colors";
 
 type MesPoint = {
@@ -246,6 +247,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
     const bhgPrimitiveRef = useRef<BhgMarkersPrimitive | null>(null);
     const pivotPrimitiveRef = useRef<PivotLinesPrimitive | null>(null);
     const initialViewportAppliedRef = useRef(false);
+    const displayEventPhase = getEventDisplayPhase(eventPhase);
 
     // Gap-free points (sequential times for chart rendering)
     const pointsRef = useRef<MesPoint[]>([]);
@@ -769,19 +771,18 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
             </span>
             {eventPhase && eventPhase !== "CLEAR" && (
               <span
+                title={eventLabel ?? undefined}
                 className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
-                  eventPhase === "BLACKOUT"
+                  displayEventPhase === "LOCKOUT"
                     ? "bg-red-500/10 text-red-400 border-red-500/20"
-                    : eventPhase === "IMMINENT"
-                      ? "bg-red-500/10 text-red-400 border-red-500/20"
-                      : eventPhase === "APPROACHING"
-                        ? "bg-red-500/10 text-red-400 border-red-500/20"
-                        : eventPhase === "DIGESTION"
+                    : displayEventPhase === "WATCH"
+                      ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                      : displayEventPhase === "REPRICE"
                           ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
                           : "bg-white/5 text-white/40 border-white/10"
                 }`}
               >
-                {eventLabel ?? eventPhase}
+                {displayEventPhase}
               </span>
             )}
           </div>

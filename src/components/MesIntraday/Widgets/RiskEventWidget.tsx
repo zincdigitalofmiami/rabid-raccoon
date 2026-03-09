@@ -1,5 +1,10 @@
 import type { RiskResult } from "@/lib/risk-engine";
 import type { EventContext } from "@/lib/event-awareness";
+import {
+  getEventDisplayLabel,
+  getEventDisplayPhase,
+  isActiveEventDisplayPhase,
+} from "@/lib/event-display";
 import type { GprResponse, GprRegime } from "@/hooks/useGpr";
 
 interface Props {
@@ -85,7 +90,17 @@ export function RiskEventWidget({ risk, eventContext, gpr }: Props) {
           : "Standby";
 
   const phase = eventContext?.phase || "CLEAR";
-  const isImminent = phase === "IMMINENT" || phase === "APPROACHING";
+  const displayPhase = getEventDisplayPhase(phase);
+  const displayLabel = getEventDisplayLabel(eventContext);
+  const hasActiveEventRisk = isActiveEventDisplayPhase(phase);
+  const phaseBadgeClass =
+    displayPhase === "LOCKOUT"
+      ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+      : displayPhase === "WATCH"
+        ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+        : displayPhase === "REPRICE"
+          ? "bg-sky-500/10 text-sky-300 border-sky-500/20"
+          : "bg-[var(--zf-control)] text-[var(--zf-text-muted)] border-[var(--zf-border-soft)]";
 
   return (
     <div className="bg-[var(--zf-surface-elev)] border border-[var(--zf-border)] rounded-xl p-8 flex flex-col justify-between shadow-lg shadow-black/20">
@@ -114,7 +129,7 @@ export function RiskEventWidget({ risk, eventContext, gpr }: Props) {
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-[var(--zf-text-muted)] text-sm font-bold tracking-widest uppercase relative pr-4">
             Live Catalysts
-            {isImminent && (
+            {hasActiveEventRisk && (
               <span className="absolute -right-2 top-0 flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
@@ -122,23 +137,22 @@ export function RiskEventWidget({ risk, eventContext, gpr }: Props) {
             )}
           </h3>
           <span
-            className={`px-3 py-1 rounded-sm text-xs font-bold uppercase border tracking-wider ${isImminent ? "bg-rose-500/10 text-rose-400 border-rose-500/20 animate-pulse" : "bg-[var(--zf-control)] text-[var(--zf-text-muted)] border-[var(--zf-border-soft)]"}`}
+            className={`px-3 py-1 rounded-sm text-xs font-bold uppercase border tracking-wider ${phaseBadgeClass} ${hasActiveEventRisk ? "animate-pulse" : ""}`}
           >
-            {phase}
+            {displayPhase}
           </span>
         </div>
 
         {/* Terminal/Feed style list */}
         <ul className="space-y-4 font-mono text-sm bg-[var(--zf-surface)] p-4 rounded-lg border border-[var(--zf-border-soft)]">
           <li
-            className={`flex gap-4 items-start group cursor-default ${isImminent ? "text-orange-400" : "text-[var(--zf-text)]"}`}
+            className={`flex gap-4 items-start group cursor-default ${hasActiveEventRisk ? "text-orange-400" : "text-[var(--zf-text)]"}`}
           >
             <span className="shrink-0 opacity-50 text-[var(--zf-text-muted)]">
               Live
             </span>
             <span className="font-semibold transition-colors">
-              {eventContext?.label ||
-                "No active scheduled events or shocks detected."}
+              {displayLabel}
             </span>
           </li>
         </ul>

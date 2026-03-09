@@ -1,6 +1,10 @@
 "use client";
 
 import { useRef } from "react";
+import {
+  getEventDisplayLabel,
+  getEventDisplayPhase,
+} from "@/lib/event-display";
 import LiveMesChart, { LiveMesChartHandle } from "./LiveMesChart";
 import { useUpcomingTrades, ScoredTrade } from "@/hooks/useUpcomingTrades";
 import { useMesSetups } from "@/hooks/useMesSetups";
@@ -27,18 +31,6 @@ function gradeLabel(grade: string): string {
     D: "Weak",
   };
   return labels[grade] ?? grade;
-}
-
-function eventPhaseLabel(phase: string): string {
-  const labels: Record<string, string> = {
-    CLEAR: "Clear Skies",
-    APPROACHING: "Event Approaching",
-    IMMINENT: "Event Imminent",
-    BLACKOUT: "Blackout Zone",
-    DIGESTION: "Digesting Data",
-    SETTLED: "Post-Event",
-  };
-  return labels[phase] ?? phase;
 }
 
 // ─────────────────────────────────────────────
@@ -219,41 +211,36 @@ function TradeCard({ trade }: { trade: ScoredTrade }) {
 // ─────────────────────────────────────────────
 
 function _EventCard({ phase, label }: { phase: string; label: string }) {
+  const displayPhase = getEventDisplayPhase(phase);
   const colors: Record<
     string,
     { bg: string; text: string; border: string; dot: string }
   > = {
-    CLEAR: {
+    OPEN: {
       bg: "bg-emerald-500/5",
       text: "text-emerald-400",
       border: "border-emerald-500/10",
       dot: "bg-emerald-400",
     },
-    APPROACHING: {
+    WATCH: {
       bg: "bg-yellow-500/5",
       text: "text-yellow-400",
       border: "border-yellow-500/10",
       dot: "bg-yellow-400",
     },
-    IMMINENT: {
-      bg: "bg-orange-500/5",
-      text: "text-orange-400",
-      border: "border-orange-500/10",
-      dot: "bg-orange-400",
-    },
-    BLACKOUT: {
+    LOCKOUT: {
       bg: "bg-red-500/5",
       text: "text-red-400",
       border: "border-red-500/10",
       dot: "bg-red-400",
     },
-    DIGESTION: {
+    REPRICE: {
       bg: "bg-blue-500/5",
       text: "text-blue-400",
       border: "border-blue-500/10",
       dot: "bg-blue-400",
     },
-    SETTLED: {
+    NORMAL: {
       bg: "bg-white/[0.02]",
       text: "text-white/50",
       border: "border-white/[0.06]",
@@ -261,14 +248,14 @@ function _EventCard({ phase, label }: { phase: string; label: string }) {
     },
   };
 
-  const c = colors[phase] ?? colors.CLEAR;
+  const c = colors[displayPhase] ?? colors.OPEN;
 
   return (
     <div className={`rounded-xl border ${c.border} ${c.bg} p-5`}>
       <div className="flex items-center gap-3 mb-2">
         <div className={`w-2.5 h-2.5 rounded-full ${c.dot}`} />
         <span className={`text-lg font-bold ${c.text}`}>
-          {eventPhaseLabel(phase)}
+          {displayPhase}
         </span>
       </div>
       <p className="text-sm text-white/40 pl-[22px]">{label}</p>
@@ -285,6 +272,7 @@ export default function TradeDashboard() {
 
   const { data: tradesData, loading: tradesLoading } = useUpcomingTrades();
   const { data: setupsData } = useMesSetups();
+  const chartEventLabel = getEventDisplayLabel(tradesData.eventContext);
   const chartSetups = [
     ...tradesData.trades.map((trade) => trade.setup),
     ...(setupsData?.setups?.filter((setup) => setup.phase !== "TRIGGERED") ??
@@ -303,7 +291,7 @@ export default function TradeDashboard() {
             ref={chartRef}
             setups={chartSetups}
             eventPhase={tradesData.eventContext?.phase}
-            eventLabel={tradesData.eventContext?.label}
+            eventLabel={chartEventLabel}
           />
         </div>
       </div>
