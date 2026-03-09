@@ -393,9 +393,9 @@ export function computeMacdLatest(
   const hist = line - sig;
 
   return {
-    aboveZero: line >= 0,
-    aboveSignal: line >= sig,
-    histAboveZero: hist >= 0,
+    aboveZero: line > 0,
+    aboveSignal: line > sig,
+    histAboveZero: hist > 0,
   };
 }
 

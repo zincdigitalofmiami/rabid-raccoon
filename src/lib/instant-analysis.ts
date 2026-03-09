@@ -285,9 +285,9 @@ export function computeSignals(candles: CandleData[]): SignalSummary {
         // Signal 1: MACD line vs zero
         check(`CM-MACD line ${macdLine > 0 ? 'above' : 'below'} zero (${macdLine.toFixed(2)})`, macdLine > 0)
         // Signal 2: MACD line vs signal line (color: lime=above, red=below)
-        check(`CM-MACD ${macdLine >= sigVal ? '>' : '<'} signal (${sigVal.toFixed(2)})`, macdLine >= sigVal)
+        check(`CM-MACD ${macdLine > sigVal ? '>' : '<='} signal (${sigVal.toFixed(2)})`, macdLine > sigVal)
         // Signal 3: histogram above/below zero
-        check(`CM-MACD hist ${hist >= 0 ? 'above' : 'below'} zero (${hist.toFixed(2)})`, hist >= 0)
+        check(`CM-MACD hist ${hist > 0 ? 'above' : 'below/equal'} zero (${hist.toFixed(2)})`, hist > 0)
       } else {
         neutral += 3
       }

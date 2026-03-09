@@ -824,9 +824,9 @@ function computeCmMacdVectorized(
     const l = macdVals[j];
     const h = l - s;
 
-    aboveZero[i] = l >= 0 ? 1 : 0;
-    aboveSignal[i] = l >= s ? 1 : 0;
-    histAboveZero[i] = h >= 0 ? 1 : 0;
+    aboveZero[i] = l > 0 ? 1 : 0;
+    aboveSignal[i] = l > s ? 1 : 0;
+    histAboveZero[i] = h > 0 ? 1 : 0;
   }
 
   return { aboveZero, aboveSignal, histAboveZero };
@@ -2252,9 +2252,9 @@ async function run(): Promise<void> {
     "wvf_signal", // 1 = fear spike (above BB or percentile), 0 = normal
     "wvf_percentile", // wvf / rangeHigh — fear intensity (0-2 scale)
     // MACD sign-state (3) — simplified stable contract
-    "macd_above_zero", // 1 if MACD line >= 0
-    "macd_above_signal", // 1 if MACD line >= signal line
-    "macd_hist_above_zero", // 1 if histogram >= 0
+    "macd_above_zero", // 1 if MACD line > 0
+    "macd_above_signal", // 1 if MACD line > signal line
+    "macd_hist_above_zero", // 1 if histogram > 0
     // Vol acceleration (3) — volatility regime features
     "vol_accel", // std8 / std8[t-8] — vol acceleration (>1 = increasing)
     "vol_regime", // std24 / std120 — short vs long-term vol

@@ -269,9 +269,9 @@ function computeCmMacd(
   const hist = line - signalVal
 
   return {
-    aboveZero: line >= 0 ? 1 : 0,
-    aboveSignal: line >= signalVal ? 1 : 0,
-    histAboveZero: hist >= 0 ? 1 : 0,
+    aboveZero: line > 0 ? 1 : 0,
+    aboveSignal: line > signalVal ? 1 : 0,
+    histAboveZero: hist > 0 ? 1 : 0,
   }
 }
 
