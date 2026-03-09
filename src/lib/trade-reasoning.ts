@@ -36,13 +36,15 @@ export interface TradeReasoning {
 // Deterministic fallback
 // ─────────────────────────────────────────────
 
-function deterministicFallback(
+export function buildDeterministicTradeReasoning(
   score: TradeScore,
   features: TradeFeatureVector,
   reason: string,
 ): TradeReasoning {
   const risks: string[] = []
   if (features.eventPhase === 'BLACKOUT') risks.push('Economic event releasing — no trades')
+  if (features.eventPhase === 'SHOCK') risks.push('Post-release shock state')
+  if (features.eventPhase === 'APPROACHING') risks.push('Event approaching — require stronger confirmation')
   if (features.eventPhase === 'IMMINENT') risks.push('Event imminent — reduced size')
   if (!features.isAligned) risks.push('Cross-asset misalignment')
   if (features.riskGrade === 'D') risks.push('Low risk-reward ratio')
@@ -142,12 +144,12 @@ export async function getTradeReasoning(
 ): Promise<TradeReasoning> {
   // Guardrail: BLACKOUT = no AI, deterministic only
   if (features.eventPhase === 'BLACKOUT') {
-    return deterministicFallback(score, features, 'BLACKOUT — AI reasoning skipped.')
+    return buildDeterministicTradeReasoning(score, features, 'BLACKOUT — AI reasoning skipped.')
   }
 
   // Guardrail: low-quality setups don't warrant AI cost
   if (score.composite < 40) {
-    return deterministicFallback(score, features, 'Score below threshold — AI reasoning skipped.')
+    return buildDeterministicTradeReasoning(score, features, 'Score below threshold — AI reasoning skipped.')
   }
 
   if (!isAIAvailable()) {

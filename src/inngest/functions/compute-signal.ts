@@ -43,7 +43,7 @@ import {
 } from '@/lib/trade-features'
 import { getMlBaseline } from '@/lib/ml-baseline'
 import { computeCompositeScore } from '@/lib/composite-score'
-import { getTradeReasoning } from '@/lib/trade-reasoning'
+import { buildDeterministicTradeReasoning, getTradeReasoning } from '@/lib/trade-reasoning'
 import { fetchDailyCandlesForSymbol } from '@/lib/fetch-candles'
 import { getSymbolsByRole } from '@/lib/symbol-registry'
 import { buildMarketContext } from '@/lib/market-context'
@@ -659,7 +659,15 @@ export const computeSignal = inngest.createFunction(
             features,
             evCtx,
             marketContextResult,
-          )
+          ).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err)
+            console.warn('[compute-signal] AI reasoning degraded:', message)
+            return buildDeterministicTradeReasoning(
+              score,
+              features,
+              `AI reasoning degraded: ${message}`,
+            )
+          })
 
           return { setup, risk, features, mlBaseline, score, reasoning }
         }),
