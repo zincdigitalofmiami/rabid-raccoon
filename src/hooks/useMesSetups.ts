@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { BhgSetup } from "@/lib/bhg-engine";
 import type { FibResult, MeasuredMove } from "@/lib/types";
 import type { RiskResult } from "@/lib/risk-engine";
 import type { EventContext } from "@/lib/event-awareness";
+import type { TriggerCandidate } from "@/lib/trigger-candidates";
 
-export interface EnrichedSetup extends BhgSetup {
+export interface EnrichedSetup extends TriggerCandidate {
   risk?: RiskResult;
   pTp1?: number | null;
   pTp2?: number | null;

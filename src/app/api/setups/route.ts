@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { detectSwings } from '@/lib/swing-detection'
 import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
-import { advanceBhgSetups } from '@/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
 import { toNum } from '@/lib/decimal'
 import { withCanonicalSetupIds } from '@/lib/setup-id'
@@ -10,11 +9,15 @@ import type { CandleData } from '@/lib/types'
 import { getEventContext, loadTodayEvents } from '@/lib/event-awareness'
 import { intradayCache } from '@/lib/tiered-cache'
 import { readLatestMes15mRows } from '@/lib/mes-live-queries'
+import {
+  generateTriggerCandidates,
+  type TriggerCandidate,
+} from '@/lib/trigger-candidates'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-type SetupResponseItem = ReturnType<typeof advanceBhgSetups>[number] & {
+type SetupResponseItem = TriggerCandidate & {
   risk?: ReturnType<typeof computeRisk>
 }
 
@@ -85,9 +88,9 @@ async function buildResponseBody(): Promise<SetupsResponseBody> {
 
   const measuredMoves = detectMeasuredMoves(swings.highs, swings.lows, currentPrice)
 
-  // 3. Run BHG state machine
+  // 3. Generate current trigger candidates via the neutral contract seam
   const setups = withCanonicalSetupIds(
-    advanceBhgSetups(candles, fibResult, measuredMoves),
+    generateTriggerCandidates(candles, fibResult, measuredMoves),
     'M15',
   )
 

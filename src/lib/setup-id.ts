@@ -2,8 +2,16 @@ import type { TriggerCandidate } from "@/lib/trigger-candidates";
 
 const DEFAULT_TIMEFRAME = "M15";
 
-function resolveSetupEpochSeconds(setup: TriggerCandidate): number {
-  return setup.goTime ?? setup.hookTime ?? setup.touchTime ?? setup.createdAt;
+type SetupIdentity = Pick<
+  TriggerCandidate,
+  "direction" | "fibRatio" | "fibLevel" | "createdAt"
+> &
+  Partial<
+    Pick<TriggerCandidate, "candidateTime" | "goTime" | "hookTime" | "touchTime">
+  >;
+
+function resolveSetupEpochSeconds(setup: SetupIdentity): number {
+  return setup.candidateTime ?? setup.goTime ?? setup.hookTime ?? setup.touchTime ?? setup.createdAt;
 }
 
 /**
@@ -11,7 +19,7 @@ function resolveSetupEpochSeconds(setup: TriggerCandidate): number {
  * This must remain stable across endpoint polls for the same setup.
  */
 export function canonicalSetupId(
-  setup: TriggerCandidate,
+  setup: SetupIdentity,
   timeframe: string = DEFAULT_TIMEFRAME,
 ): string {
   const eventEpochSeconds = resolveSetupEpochSeconds(setup);
