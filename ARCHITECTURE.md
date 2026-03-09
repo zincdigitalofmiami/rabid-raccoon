@@ -399,8 +399,8 @@ predict.py / warbird-signal.ts
 
 | Component        | Detail                                                                      |
 | ---------------- | --------------------------------------------------------------------------- |
-| Database         | PostgreSQL via Prisma Accelerate (`prisma+postgres://`)                     |
-| Direct DB access | Requires `DIRECT_DATABASE_URL` (direct `postgres://` string) for migrations |
+| Database         | PostgreSQL via Prisma (`DIRECT_URL` / `LOCAL_DATABASE_URL` direct by default; Accelerate only with `USE_ACCELERATE=1` + `DATABASE_URL`) |
+| Direct DB access | `DIRECT_URL` (or `LOCAL_DATABASE_URL` fallback) is the normal direct path for runtime and migrations |
 | Hosting          | Vercel (dashboard)                                                          |
 | Scheduling       | Inngest (managed, event-driven)                                             |
 | Market data      | Databento (REST, requires `DATABENTO_API_KEY`)                              |
