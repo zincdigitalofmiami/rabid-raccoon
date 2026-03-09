@@ -48,7 +48,7 @@ export const maxDuration = 300;
 // the production URL and breaking local Inngest connections).
 const serveHost = (process.env.VERCEL_URL ? process.env.INNGEST_SERVE_HOST : "") || "";
 
-export const { GET, POST, PUT } = serve({
+const handlers = serve({
   client: inngest,
   ...(serveHost && { serveHost }),
   functions: [
@@ -89,3 +89,17 @@ export const { GET, POST, PUT } = serve({
     backfillMesAllTimeframes,
   ],
 });
+
+export const GET = handlers.GET;
+export const PUT = handlers.PUT;
+
+function normalizeProbeRequest(request: Request): Request {
+  const url = new URL(request.url);
+  if (url.searchParams.get("probe") !== "ping") return request;
+  url.searchParams.set("probe", "trust");
+  return new Request(url, request);
+}
+
+export async function POST(request: Request) {
+  return handlers.POST(normalizeProbeRequest(request) as never, undefined);
+}
