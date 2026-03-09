@@ -26,6 +26,12 @@ import type { AnthropicLanguageModelOptions } from '@ai-sdk/anthropic'
 import type { LanguageModel } from 'ai'
 import { generateText, gateway } from 'ai'
 
+export type AIAuthMethod =
+  | 'proxy'
+  | 'gateway_oidc'
+  | 'gateway_apikey'
+  | 'none'
+
 // ── Central config ─────────────────────────────────────────────────
 // Gateway model ID format: "provider/model-name"
 const GATEWAY_MODEL_ID =
@@ -47,6 +53,10 @@ const DEFAULT_TEMPERATURE = 0.15
 
 const PROXY_URL = process.env.CLAUDE_PROXY_URL || ''
 const USE_PROXY = Boolean(PROXY_URL)
+
+function hasGatewayOidcContext(): boolean {
+  return Boolean(process.env.VERCEL || process.env.VERCEL_OIDC_TOKEN)
+}
 
 // Proxy mode: OpenAI-compatible endpoint (CLIProxyAPI on localhost:8317)
 const proxyProvider = USE_PROXY
@@ -204,9 +214,8 @@ export function isAIAvailable(): boolean {
   // Locally: needs AI_GATEWAY_API_KEY from `vercel env pull`
   return Boolean(
     USE_PROXY ||
-      process.env.VERCEL ||
-      process.env.AI_GATEWAY_API_KEY ||
-      process.env.VERCEL_OIDC_TOKEN,
+      hasGatewayOidcContext() ||
+      process.env.AI_GATEWAY_API_KEY,
   )
 }
 
@@ -221,12 +230,106 @@ export function getModelId(): string {
  * Get the current auth method (for logging/debugging).
  */
 export function getAuthMethod():
-  | 'proxy'
-  | 'gateway_oidc'
-  | 'gateway_apikey'
-  | 'none' {
+  AIAuthMethod {
   if (USE_PROXY) return 'proxy'
-  if (process.env.VERCEL) return 'gateway_oidc'
+  if (hasGatewayOidcContext()) return 'gateway_oidc'
   if (process.env.AI_GATEWAY_API_KEY) return 'gateway_apikey'
   return 'none'
+}
+
+export interface AIProviderStatus {
+  modelId: string
+  authMethod: AIAuthMethod
+  configured: boolean
+  available: boolean
+}
+
+export function getAIProviderStatus(): AIProviderStatus {
+  const authMethod = getAuthMethod()
+  return {
+    modelId: getModelId(),
+    authMethod,
+    configured: authMethod !== 'none',
+    available: isAIAvailable(),
+  }
+}
+
+export type AIErrorCategory =
+  | 'availability'
+  | 'service_unavailable'
+  | 'rate_limited'
+  | 'timeout'
+  | 'unknown'
+
+export interface AIErrorClassification {
+  category: AIErrorCategory
+  publicMessage: string
+  rawMessage: string
+}
+
+/**
+ * Classify provider/runtime failures into deterministic fallback buckets.
+ * This keeps dashboard messaging truthful without leaking provider-specific jargon.
+ */
+export function classifyAIError(error: unknown): AIErrorClassification {
+  const rawMessage = error instanceof Error ? error.message : String(error ?? '')
+  const msg = rawMessage.toLowerCase()
+
+  if (
+    /insufficient funds|insufficient credits?|billing|quota|payment required/.test(
+      msg,
+    )
+  ) {
+    return {
+      category: 'service_unavailable',
+      publicMessage: 'AI gateway is currently unavailable (billing or quota issue).',
+      rawMessage,
+    }
+  }
+
+  if (/rate limit|too many requests|429/.test(msg)) {
+    return {
+      category: 'rate_limited',
+      publicMessage: 'AI service is temporarily rate-limited.',
+      rawMessage,
+    }
+  }
+
+  if (/timeout|timed out|abort|aborted|deadline exceeded/.test(msg)) {
+    return {
+      category: 'timeout',
+      publicMessage: 'AI service timed out.',
+      rawMessage,
+    }
+  }
+
+  if (
+    /api[_ -]?key|credentials|unauthorized|forbidden|auth(?:entication)?|not set|missing/.test(
+      msg,
+    )
+  ) {
+    return {
+      category: 'availability',
+      publicMessage: 'AI provider is not configured in this environment.',
+      rawMessage,
+    }
+  }
+
+  if (
+    /gateway|service unavailable|bad gateway|upstream|internal server error|502|503|504|connection reset|socket hang up/.test(
+      msg,
+    )
+  ) {
+    return {
+      category: 'service_unavailable',
+      publicMessage: 'AI service is temporarily unavailable.',
+      rawMessage,
+    }
+  }
+
+  return {
+    category: 'unknown',
+    publicMessage: 'AI service is unavailable.',
+    rawMessage,
+  }
 }

@@ -1,4 +1,4 @@
-import { generateAIText, isAIAvailable } from './ai-provider'
+import { classifyAIError, generateAIText, isAIAvailable } from './ai-provider'
 import {
   ForecastResponse,
   MarketSummary,
@@ -235,7 +235,7 @@ Hard constraints:
 - Output valid JSON and nothing else.`
 
   if (!isAIAvailable()) {
-    return deterministicForecast(input, 'missing ANTHROPIC_API_KEY')
+    return deterministicForecast(input, 'AI provider is not configured in this environment.')
   }
 
   try {
@@ -243,7 +243,7 @@ Hard constraints:
 
     const text = response.text?.trim()
     if (!text) {
-      return deterministicForecast(input, 'Claude returned empty text')
+      return deterministicForecast(input, 'AI model returned empty text')
     }
 
     let parsed: unknown
@@ -251,7 +251,7 @@ Hard constraints:
       parsed = JSON.parse(text)
     } catch {
       const m = text.match(/\{[\s\S]*\}/)
-      if (!m) return deterministicForecast(input, 'Failed to parse JSON from Claude')
+      if (!m) return deterministicForecast(input, 'Failed to parse JSON from AI response')
       parsed = JSON.parse(m[0])
     }
 
@@ -263,7 +263,7 @@ Hard constraints:
       generatedAt: new Date().toISOString(),
     }
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error)
-    return deterministicForecast(input, msg)
+    const classified = classifyAIError(error)
+    return deterministicForecast(input, classified.publicMessage)
   }
 }

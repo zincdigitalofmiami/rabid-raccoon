@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { generateAIVision, isAIAvailable } from '@/lib/ai-provider'
+import { classifyAIError, generateAIVision, isAIAvailable } from '@/lib/ai-provider'
 import { prisma } from '@/lib/prisma'
 import { aggregateCandles } from '@/lib/analyse-data'
 import { toNum } from '@/lib/decimal'
@@ -66,7 +66,7 @@ function formatCandles(candles: CandleData[], limit: number): string {
 export async function POST(request: Request): Promise<Response> {
   if (!isAIAvailable()) {
     return NextResponse.json(
-      { error: 'ANTHROPIC_API_KEY not set' },
+      { error: 'AI provider is not configured in this environment.' },
       { status: 503 }
     )
   }
@@ -163,10 +163,24 @@ Respond with ONLY valid JSON matching this schema (no markdown, no code fences):
     const analysis: ChartAnalysisResponse = JSON.parse(jsonText)
     return NextResponse.json(analysis)
   } catch (error) {
+    const classified = classifyAIError(error)
     const msg = error instanceof Error ? error.message : String(error)
     console.error('[analyse/chart]', msg)
+
+    if (
+      classified.category === 'availability' ||
+      classified.category === 'service_unavailable' ||
+      classified.category === 'rate_limited' ||
+      classified.category === 'timeout'
+    ) {
+      return NextResponse.json(
+        { error: `Chart analysis unavailable: ${classified.publicMessage}` },
+        { status: 503 }
+      )
+    }
+
     return NextResponse.json(
-      { error: `Chart analysis failed: ${msg}` },
+      { error: 'Chart analysis failed: AI service error' },
       { status: 500 }
     )
   }

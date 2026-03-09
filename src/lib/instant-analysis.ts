@@ -9,7 +9,7 @@
  * says BUY or SELL. No black boxes.
  */
 
-import { generateAIText, isAIAvailable } from './ai-provider'
+import { classifyAIError, generateAIText, isAIAvailable } from './ai-provider'
 import { CandleData, FibLevel, SwingPoint, MeasuredMove } from './types'
 import { detectSwings } from './swing-detection'
 import { calculateFibonacciMultiPeriod } from './fibonacci'
@@ -35,13 +35,13 @@ interface AnalysisAiResponse {
 
 async function requestAnalysisOverlay(prompt: string): Promise<AnalysisAiResponse> {
   if (!isAIAvailable()) {
-    throw new Error('ANTHROPIC_API_KEY environment variable is not set')
+    throw new Error('AI provider is not configured in this environment')
   }
 
   const { text } = await generateAIText(prompt, { maxTokens: 3000 })
 
   if (!text) {
-    throw new Error('Claude returned empty text')
+    throw new Error('AI model returned empty text')
   }
 
   const trimmed = text.trim()
@@ -50,7 +50,7 @@ async function requestAnalysisOverlay(prompt: string): Promise<AnalysisAiRespons
   } catch {
     const m = trimmed.match(/\{[\s\S]*\}/)
     if (!m) {
-      throw new Error('Failed to parse JSON from Claude response')
+      throw new Error('Failed to parse JSON from AI response')
     }
     return JSON.parse(m[0]) as AnalysisAiResponse
   }
@@ -1354,10 +1354,11 @@ CRITICAL:
   try {
     parsed = await requestAnalysisOverlay(prompt)
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'AI overlay unavailable'
-    const publicMsg = /openai_api_key|api key|not set/i.test(msg)
-      ? 'AI overlay disabled in this environment.'
-      : 'AI overlay unavailable.'
+    const classified = classifyAIError(error)
+    const publicMsg =
+      classified.category === 'availability'
+        ? 'AI overlay disabled in this environment.'
+        : `${classified.publicMessage} Running deterministic overlay.`
     const deterministic = runDeterministicAnalysis(allData, symbolNames, marketContext)
     return {
       ...deterministic,

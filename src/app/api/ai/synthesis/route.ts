@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { generateAIText, isAIAvailable } from "@/lib/ai-provider";
+import { classifyAIError, generateAIText, isAIAvailable } from "@/lib/ai-provider";
 
 export const maxDuration = 60;
 
@@ -87,7 +87,8 @@ Required content:
 
     if (!isAIAvailable()) {
       return NextResponse.json({
-        narrative: `${fallbackNarrative} AI synthesis is running in fallback mode (missing API key).`,
+        narrative: `${fallbackNarrative} AI synthesis is running in deterministic fallback mode (AI provider unavailable in this environment).`,
+        degraded: true,
       });
     }
 
@@ -101,11 +102,13 @@ Required content:
 
     return NextResponse.json({ narrative });
   } catch (error) {
+    const classified = classifyAIError(error);
     console.error("AI Synthesis error:", error);
     return NextResponse.json({
       narrative:
-        "MES bias is NEUTRAL (confidence pending). Cross-asset alignment or event/risk inputs are still initializing.",
-      error: "AI synthesis failed",
+        `MES bias is NEUTRAL (confidence pending). Cross-asset alignment or event/risk inputs are still initializing. AI synthesis is running in deterministic fallback mode (${classified.publicMessage}).`,
+      degraded: true,
+      error: "AI synthesis degraded",
     });
   }
 }

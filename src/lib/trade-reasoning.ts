@@ -11,7 +11,7 @@
  *   - 3 second timeout, falls back to Layer 1 only
  */
 
-import { generateAIChat, isAIAvailable } from './ai-provider'
+import { classifyAIError, generateAIChat, isAIAvailable } from './ai-provider'
 import type { TradeFeatureVector } from '@/lib/trade-features'
 import type { TradeScore } from '@/lib/composite-score'
 import type { EventContext } from '@/lib/event-awareness'
@@ -151,7 +151,11 @@ export async function getTradeReasoning(
   }
 
   if (!isAIAvailable()) {
-    return deterministicFallback(score, features, 'No Anthropic API key configured.')
+    return deterministicFallback(
+      score,
+      features,
+      'AI provider is not configured in this environment.',
+    )
   }
 
   const prompt = buildPrompt(setup, score, features, eventContext, marketContext)
@@ -173,7 +177,7 @@ export async function getTradeReasoning(
 
     const content = response.text?.trim()
     if (!content) {
-      return deterministicFallback(score, features, 'Claude returned empty response.')
+      return deterministicFallback(score, features, 'AI model returned empty response.')
     }
 
     // Parse JSON — strip code fences if present
@@ -183,7 +187,11 @@ export async function getTradeReasoning(
     }
     const jsonMatch = jsonText.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
-      return deterministicFallback(score, features, 'Failed to parse JSON from Claude.')
+      return deterministicFallback(
+        score,
+        features,
+        'Failed to parse JSON from AI response.',
+      )
     }
 
     const parsed = JSON.parse(jsonMatch[0]) as {
@@ -223,10 +231,11 @@ export async function getTradeReasoning(
       source: 'ai',
     }
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err)
-    const reason = message.includes('abort') || message.includes('Abort')
-      ? 'AI timeout — using Layer 1 only.'
-      : `AI error: ${message.slice(0, 80)}`
+    const classified = classifyAIError(err)
+    const reason =
+      classified.category === 'timeout'
+        ? 'AI timeout — using Layer 1 only.'
+        : `${classified.publicMessage} Using Layer 1 only.`
     return deterministicFallback(score, features, reason)
   }
 }
