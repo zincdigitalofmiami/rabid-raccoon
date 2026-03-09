@@ -13,7 +13,6 @@
  *
  *   Local dev:
  *     gateway() provider + Vercel CLI/OIDC context
- *     OR: CLAUDE_PROXY_URL for CLIProxyAPI subscription proxy
  *
  * ── Temperature ────────────────────────────────────────────────────
  *
@@ -21,13 +20,11 @@
  * When extended thinking is enabled, the server locks temperature at 1.0.
  */
 
-import { createOpenAI } from '@ai-sdk/openai'
 import type { AnthropicLanguageModelOptions } from '@ai-sdk/anthropic'
 import type { LanguageModel } from 'ai'
 import { generateText, gateway } from 'ai'
 
 export type AIAuthMethod =
-  | 'proxy'
   | 'gateway_oidc'
   | 'none'
 
@@ -45,30 +42,15 @@ const DEFAULT_THINKING_BUDGET = Number(
 const DEFAULT_TEMPERATURE = 0.15
 
 // ── Provider routing ────────────────────────────────────────────────
-// Priority: Proxy > Gateway (default)
-//
-// Proxy: CLIProxyAPI on localhost (OpenAI-compat, Max subscription, $0.00)
-// Gateway: Vercel AI Gateway with OIDC/CLI auth context
-
-const PROXY_URL = process.env.CLAUDE_PROXY_URL || ''
-const USE_PROXY = Boolean(PROXY_URL)
+// OIDC-only path: Vercel AI Gateway via OIDC/CLI auth context.
 
 function hasGatewayOidcContext(): boolean {
   return Boolean(process.env.VERCEL || process.env.VERCEL_OIDC_TOKEN)
 }
 
-// Proxy mode: OpenAI-compatible endpoint (CLIProxyAPI on localhost:8317)
-const proxyProvider = USE_PROXY
-  ? createOpenAI({
-      baseURL: PROXY_URL,
-      apiKey: 'subscription', // CLIProxyAPI ignores this field
-    })
-  : null
-
 /** Get the model instance for the current provider. */
 function getModel(): LanguageModel {
-  if (proxyProvider) return proxyProvider(GATEWAY_MODEL_ID)
-  // Vercel AI Gateway via OIDC/CLI auth context
+  // Vercel AI Gateway via OIDC/CLI auth context only.
   return gateway(GATEWAY_MODEL_ID)
 }
 
@@ -116,7 +98,7 @@ export async function generateAIText(
     signal,
   } = options
 
-  const useThinking = !USE_PROXY && thinkingBudget > 0
+  const useThinking = thinkingBudget > 0
   const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
 
   const result = await generateText({
@@ -147,7 +129,7 @@ export async function generateAIVision(
     signal,
   } = options
 
-  const useThinking = !USE_PROXY && thinkingBudget > 0
+  const useThinking = thinkingBudget > 0
   const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
 
   const result = await generateText({
@@ -188,7 +170,7 @@ export async function generateAIChat(
     signal,
   } = options
 
-  const useThinking = !USE_PROXY && thinkingBudget > 0
+  const useThinking = thinkingBudget > 0
   const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
 
   const result = await generateText({
@@ -205,11 +187,10 @@ export async function generateAIChat(
 
 /**
  * Check if AI is available.
- * Gateway mode is available when OIDC/CLI auth context is present.
- * Proxy mode requires CLAUDE_PROXY_URL.
+ * OIDC-only mode is available when OIDC/CLI auth context is present.
  */
 export function isAIAvailable(): boolean {
-  return Boolean(USE_PROXY || hasGatewayOidcContext())
+  return hasGatewayOidcContext()
 }
 
 /**
@@ -224,7 +205,6 @@ export function getModelId(): string {
  */
 export function getAuthMethod():
   AIAuthMethod {
-  if (USE_PROXY) return 'proxy'
   if (hasGatewayOidcContext()) return 'gateway_oidc'
   return 'none'
 }
