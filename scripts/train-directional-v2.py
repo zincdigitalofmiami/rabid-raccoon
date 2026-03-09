@@ -100,10 +100,9 @@ CURATED_FEATURES = [
     "wvf_percentile",       # VFix relative to history (IC=+0.013)
 
     # ── MACD ─────────────────────────────────────────────────────────────────
-    "macd_line",            # MACD value
-    "macd_signal",          # signal line
-    "macd_hist",            # histogram
-    "macd_hist_color",      # histogram color state
+    "macd_above_zero",      # MACD line above/below zero
+    "macd_above_signal",    # MACD line above/below signal line
+    "macd_hist_above_zero", # histogram above/below zero
 
     # ── Volume acceleration ──────────────────────────────────────────────────
     "vol_accel",            # volume acceleration

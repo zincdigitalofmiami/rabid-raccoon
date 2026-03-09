@@ -149,12 +149,9 @@ FEATURE_TV_MAP = {
     "sqz_state":           {"indicator": "Squeeze Momentum", "setting": "Squeeze on/off dots", "chart": "15m, 1h"},
     "sqz_bars_in_squeeze": {"indicator": "Squeeze Momentum", "setting": "Duration of squeeze state", "chart": "15m, 1h"},
     # MACD
-    "macd_line":           {"indicator": "MACD", "setting": "Check dataset builder for fast/slow/signal params", "chart": "15m, 1h"},
-    "macd_signal":         {"indicator": "MACD", "setting": "Signal line value", "chart": "15m, 1h"},
-    "macd_hist":           {"indicator": "MACD", "setting": "Histogram value", "chart": "15m, 1h"},
-    "macd_hist_color":     {"indicator": "MACD", "setting": "Histogram color (rising/falling)", "chart": "15m, 1h"},
+    "macd_above_zero":     {"indicator": "MACD", "setting": "MACD line above/below zero", "chart": "15m, 1h"},
     "macd_above_signal":   {"indicator": "MACD", "setting": "MACD line above signal line", "chart": "15m, 1h"},
-    "macd_hist_rising":    {"indicator": "MACD", "setting": "Histogram increasing", "chart": "15m, 1h"},
+    "macd_hist_above_zero":{"indicator": "MACD", "setting": "Histogram above/below zero", "chart": "15m, 1h"},
     # Williams Vix Fix
     "wvf_value":           {"indicator": "Williams Vix Fix", "setting": "WVF value (volatility bottom detector)", "chart": "1h"},
     "wvf_signal":          {"indicator": "Williams Vix Fix", "setting": "Signal line cross", "chart": "1h"},

@@ -62,8 +62,9 @@ export interface TradeFeatureVector {
   sqzState: number | null;
   wvfValue: number | null;
   wvfPercentile: number | null;
-  macdHist: number | null;
-  macdHistColor: number | null;
+  macdAboveZero: boolean | null;
+  macdAboveSignal: boolean | null;
+  macdHistAboveZero: boolean | null;
 
   // News
   newsVolume24h: number;
@@ -320,12 +321,13 @@ export function computeWvfLatest(
 // ─────────────────────────────────────────────
 
 export interface MacdResult {
-  hist: number | null;
-  histColor: number | null; // 0=aqua, 1=blue, 2=red, 3=maroon
+  aboveZero: boolean | null;
+  aboveSignal: boolean | null;
+  histAboveZero: boolean | null;
 }
 
 /**
- * Compute MACD histogram and color for the latest bar.
+ * Compute simplified MACD sign-state features for the latest bar.
  * Requires at least slowLength + signalLength candles.
  */
 export function computeMacdLatest(
@@ -335,7 +337,9 @@ export function computeMacdLatest(
   signalLength = 9,
 ): MacdResult {
   const warmup = slowLength + signalLength - 1;
-  if (candles.length < warmup + 2) return { hist: null, histColor: null };
+  if (candles.length < warmup + 2) {
+    return { aboveZero: null, aboveSignal: null, histAboveZero: null };
+  }
 
   const closes = candles.map((c) => c.close);
   const computeEmaSeries = (
@@ -382,22 +386,17 @@ export function computeMacdLatest(
   const last = macdLine.length - 1;
   const prev = last - 1;
   if (signal[last] == null || signal[prev] == null)
-    return { hist: null, histColor: null };
+    return { aboveZero: null, aboveSignal: null, histAboveZero: null };
 
-  const hist = macdLine[last] - signal[last]!;
-  const prevHist = macdLine[prev] - signal[prev]!;
-  const rising = hist > prevHist;
+  const line = macdLine[last];
+  const sig = signal[last]!;
+  const hist = line - sig;
 
-  let color: number;
-  if (hist > 0 && rising)
-    color = 0; // aqua — bullish momentum growing
-  else if (hist > 0 && !rising)
-    color = 1; // blue — bullish but fading
-  else if (hist <= 0 && !rising)
-    color = 2; // red — bearish momentum growing
-  else color = 3; // maroon — bearish but recovering
-
-  return { hist, histColor: color };
+  return {
+    aboveZero: line >= 0,
+    aboveSignal: line >= sig,
+    histAboveZero: hist >= 0,
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -835,8 +834,9 @@ export async function computeTradeFeatures(
     sqzState: squeeze.state,
     wvfValue: wvf.value,
     wvfPercentile: wvf.percentile,
-    macdHist: macd.hist,
-    macdHistColor: macd.histColor,
+    macdAboveZero: macd.aboveZero,
+    macdAboveSignal: macd.aboveSignal,
+    macdHistAboveZero: macd.histAboveZero,
 
     // News
     newsVolume24h: newsVol.total,

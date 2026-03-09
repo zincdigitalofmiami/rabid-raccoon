@@ -51,7 +51,7 @@ LEAN_FEATURES = [
     "sqz_state",            # in/out of squeeze (IC 0.008)
     "wvf_value",            # Williams VIX Fix (IC 0.015)
     "wvf_percentile",       # VIX fix percentile (IC 0.013)
-    "macd_hist",            # MACD histogram
+    "macd_hist_above_zero", # MACD histogram sign
 
     # ── Cross-Asset Returns & Vol (10) ──
     "nq_vol_ratio",         # NQ volume regime (IC 0.015)

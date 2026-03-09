@@ -24,16 +24,9 @@ Status: Governance package only (no broad implementation started)
 - `1d`: model/context-only (initial)
 
 ### Canonical MACD fields
-- `macdLine`
-- `macdSignal`
-- `macdHist`
-- `macdAboveSignal`
 - `macdAboveZero`
-- `macdSignalAboveZero`
-- `macdBullCross`
-- `macdBearCross`
-- `macdHistRising`
-- `macdHistColor` (display/state, not primary scoring truth)
+- `macdAboveSignal`
+- `macdHistAboveZero`
 
 ### Validation / parity plan
 - Use TradingView CSV fixtures for field-level parity (line/signal/hist/cross states).

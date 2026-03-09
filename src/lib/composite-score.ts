@@ -136,7 +136,7 @@ function scoreCorrelation(features: TradeFeatureVector): number {
 /**
  * Technical indicator score.
  * - Squeeze fired (state 4) = strong
- * - MACD histogram confirming direction = good
+ * - MACD state agreement = good
  * - WVF fear spike = caution
  */
 function scoreTechnical(features: TradeFeatureVector): number {
@@ -154,11 +154,20 @@ function scoreTechnical(features: TradeFeatureVector): number {
     if (Math.abs(features.sqzMom) > 2) score += 5
   }
 
-  // MACD histogram
-  if (features.macdHistColor != null) {
-    if (features.macdHistColor === 0) score += 10  // aqua — strong bullish
-    else if (features.macdHistColor === 3) score += 7 // maroon — bearish recovering (could be reversal)
-    else if (features.macdHistColor === 2) score -= 5  // red — bearish momentum
+  // MACD sign-state coherence. Reward clean agreement, not bullish/bearish direction.
+  if (
+    features.macdAboveZero != null &&
+    features.macdAboveSignal != null &&
+    features.macdHistAboveZero != null
+  ) {
+    const bullishVotes = [
+      features.macdAboveZero,
+      features.macdAboveSignal,
+      features.macdHistAboveZero,
+    ].filter(Boolean).length
+
+    if (bullishVotes === 0 || bullishVotes === 3) score += 8
+    else score -= 3
   }
 
   // WVF fear spike — caution

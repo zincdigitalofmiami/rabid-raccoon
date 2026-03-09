@@ -747,15 +747,12 @@ function computeWilliamsVixFix(
 // ─── CM ULTIMATE MACD (vectorized) ──────────────────────────────────────────
 // Port of ChrisMoody CM_MacD_Ult_MTF — vectorized for full array
 // fast=12, slow=26, signal=9 (EMA of MACD line)
-// Histogram 4-color: 0=aqua(rise+pos), 1=blue(fall+pos), 2=red(fall+neg), 3=maroon(rise+neg)
+// Reduced MACD contract: sign-state only for stability.
 
 interface CmMacdArrayResult {
-  line: (number | null)[];
-  signal: (number | null)[];
-  hist: (number | null)[];
-  histColor: (number | null)[];
+  aboveZero: (number | null)[];
   aboveSignal: (number | null)[];
-  histRising: (number | null)[];
+  histAboveZero: (number | null)[];
 }
 
 function computeCmMacdVectorized(
@@ -766,12 +763,9 @@ function computeCmMacdVectorized(
 ): CmMacdArrayResult {
   const n = closes.length;
   const warmup = slowLength + signalLength - 1;
-  const line: (number | null)[] = new Array(n).fill(null);
-  const sig: (number | null)[] = new Array(n).fill(null);
-  const hist: (number | null)[] = new Array(n).fill(null);
-  const histColor: (number | null)[] = new Array(n).fill(null);
+  const aboveZero: (number | null)[] = new Array(n).fill(null);
   const aboveSignal: (number | null)[] = new Array(n).fill(null);
-  const histRising: (number | null)[] = new Array(n).fill(null);
+  const histAboveZero: (number | null)[] = new Array(n).fill(null);
 
   const computeEmaSeries = (
     values: number[],
@@ -829,23 +823,13 @@ function computeCmMacdVectorized(
 
     const l = macdVals[j];
     const h = l - s;
-    const prevMacd = j > 0 ? macdVals[j - 1] : l;
-    const prevSignal = j > 0 ? signalArr[j - 1] : null;
-    const hPrev = prevMacd - (prevSignal ?? s);
 
-    line[i] = l;
-    sig[i] = s;
-    hist[i] = h;
+    aboveZero[i] = l >= 0 ? 1 : 0;
     aboveSignal[i] = l >= s ? 1 : 0;
-    histRising[i] = h > hPrev ? 1 : 0;
-
-    const rising = h > hPrev;
-    if (h > 0)
-      histColor[i] = rising ? 0 : 1; // aqua : blue
-    else histColor[i] = !rising ? 2 : 3; // red : maroon
+    histAboveZero[i] = h >= 0 ? 1 : 0;
   }
 
-  return { line, signal: sig, hist, histColor, aboveSignal, histRising };
+  return { aboveZero, aboveSignal, histAboveZero };
 }
 
 // ─── ROLLING PEARSON CORRELATION (vectorized) ───────────────────────────────
@@ -2152,7 +2136,7 @@ async function run(): Promise<void> {
   console.log("[lean-dataset] Computing CM Ultimate MACD...");
   const macd = computeCmMacdVectorized(closes, 12, 26, 9);
   console.log(
-    `  MACD: ${macd.line.filter((v) => v != null).length} bars with values`,
+    `  MACD: ${macd.aboveSignal.filter((v) => v != null).length} bars with sign-state values`,
   );
 
   // ── 7d. Cross-asset rolling correlations ──
@@ -2267,13 +2251,10 @@ async function run(): Promise<void> {
     "wvf_value", // raw WVF (higher = more fear)
     "wvf_signal", // 1 = fear spike (above BB or percentile), 0 = normal
     "wvf_percentile", // wvf / rangeHigh — fear intensity (0-2 scale)
-    // CM Ultimate MACD (6) — ChrisMoody momentum
-    "macd_line", // fast EMA - slow EMA
-    "macd_signal", // EMA-9 of MACD line
-    "macd_hist", // line - signal (histogram)
-    "macd_hist_color", // 0=aqua 1=blue 2=red 3=maroon
-    "macd_above_signal", // 1 if line >= signal
-    "macd_hist_rising", // 1 if histogram increasing
+    // MACD sign-state (3) — simplified stable contract
+    "macd_above_zero", // 1 if MACD line >= 0
+    "macd_above_signal", // 1 if MACD line >= signal line
+    "macd_hist_above_zero", // 1 if histogram >= 0
     // Vol acceleration (3) — volatility regime features
     "vol_accel", // std8 / std8[t-8] — vol acceleration (>1 = increasing)
     "vol_regime", // std24 / std120 — short vs long-term vol
@@ -2497,13 +2478,10 @@ async function run(): Promise<void> {
     const wvfSignal = wvf.signal[i];
     const wvfPercentile = wvf.percentile[i];
 
-    // CM Ultimate MACD features
-    const macdLine = macd.line[i];
-    const macdSignalVal = macd.signal[i];
-    const macdHist = macd.hist[i];
-    const macdHistColor = macd.histColor[i];
+    // MACD sign-state features
+    const macdAboveZero = macd.aboveZero[i];
     const macdAboveSignal = macd.aboveSignal[i];
-    const macdHistRising = macd.histRising[i];
+    const macdHistAboveZero = macd.histAboveZero[i];
 
     // Vol acceleration features
     const std8Prev = i >= 8 ? std8[i - 8] : null;
@@ -2820,13 +2798,10 @@ async function run(): Promise<void> {
       wvfValue,
       wvfSignal,
       wvfPercentile,
-      // CM Ultimate MACD (6)
-      macdLine,
-      macdSignalVal,
-      macdHist,
-      macdHistColor,
+      // MACD sign-state (3)
+      macdAboveZero,
       macdAboveSignal,
-      macdHistRising,
+      macdHistAboveZero,
       // Vol acceleration (3)
       volAccel,
       volRegime,
@@ -3167,12 +3142,9 @@ async function run(): Promise<void> {
     "vol_spike",
     "vwap_dist",
     "vol_trend_5",
-    "macd_line",
-    "macd_signal",
-    "macd_hist",
-    "macd_hist_color",
+    "macd_above_zero",
     "macd_above_signal",
-    "macd_hist_rising",
+    "macd_hist_above_zero",
     "vol_accel",
     "vol_regime",
     "vol_of_vol",

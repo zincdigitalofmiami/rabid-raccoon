@@ -107,7 +107,9 @@ MARKET CONTEXT:
 TECHNICALS:
 - Squeeze: state=${features.sqzState ?? 'N/A'} mom=${features.sqzMom?.toFixed(2) ?? 'N/A'}
 - WVF percentile: ${features.wvfPercentile?.toFixed(2) ?? 'N/A'}
-- MACD hist: ${features.macdHist?.toFixed(4) ?? 'N/A'} color=${features.macdHistColor ?? 'N/A'}
+- MACD above zero: ${features.macdAboveZero == null ? 'N/A' : features.macdAboveZero ? 'YES' : 'NO'}
+- MACD above signal: ${features.macdAboveSignal == null ? 'N/A' : features.macdAboveSignal ? 'YES' : 'NO'}
+- MACD hist above zero: ${features.macdHistAboveZero == null ? 'N/A' : features.macdHistAboveZero ? 'YES' : 'NO'}
 
 NEWS (24h): ${features.newsVolume24h} total, ${features.policyNewsVolume24h} policy
 

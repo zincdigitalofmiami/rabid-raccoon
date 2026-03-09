@@ -103,16 +103,9 @@ Canonical MACD spec:
 - `macdHist = macdLine - macdSignal`
 
 Approved live/shared MACD fields:
-- `macdLine`
-- `macdSignal`
-- `macdHist`
-- `macdAboveSignal`
 - `macdAboveZero`
-- `macdSignalAboveZero`
-- `macdBullCross`
-- `macdBearCross`
-- `macdHistRising`
-- `macdHistColor` as display/state only, not primary scoring truth
+- `macdAboveSignal`
+- `macdHistAboveZero`
 
 Timeframe ownership:
 - `15m` = trigger-critical

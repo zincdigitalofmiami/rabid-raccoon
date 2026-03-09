@@ -264,8 +264,8 @@ export function computeSignals(candles: CandleData[]): SignalSummary {
   }
 
   // --- Trend ---
-  // CM Ultimate MACD (ChrisMoody CM_MacD_Ult_MTF) — 3 signals
-  // fast=12, slow=26, signal=EMA-9. Histogram 4-color state.
+  // CM Ultimate MACD (ChrisMoody CM_MacD_Ult_MTF) — 3 sign-state signals
+  // fast=12, slow=26, signal=EMA-9.
   if (closes.length >= 26 + 9) {
     const macdArr: number[] = []
     for (let i = 0; i < closes.length; i++) {
@@ -282,13 +282,12 @@ export function computeSignals(candles: CandleData[]): SignalSummary {
         const histPrev = macdArr.length >= 2
           ? macdArr[macdArr.length - 2] - (prevSigVal ?? sigVal)
           : hist
-        const histRising = hist > histPrev
         // Signal 1: MACD line vs zero
         check(`CM-MACD line ${macdLine > 0 ? 'above' : 'below'} zero (${macdLine.toFixed(2)})`, macdLine > 0)
         // Signal 2: MACD line vs signal line (color: lime=above, red=below)
         check(`CM-MACD ${macdLine >= sigVal ? '>' : '<'} signal (${sigVal.toFixed(2)})`, macdLine >= sigVal)
-        // Signal 3: histogram direction (aqua/maroon=rising, blue/red=falling)
-        check(`CM-MACD hist ${histRising ? 'rising' : 'falling'} (${hist.toFixed(2)})`, histRising)
+        // Signal 3: histogram above/below zero
+        check(`CM-MACD hist ${hist >= 0 ? 'above' : 'below'} zero (${hist.toFixed(2)})`, hist >= 0)
       } else {
         neutral += 3
       }
