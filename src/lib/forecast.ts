@@ -235,7 +235,7 @@ Hard constraints:
 - Output valid JSON and nothing else.`
 
   if (!isAIAvailable()) {
-    return deterministicForecast(input, 'AI provider is not configured in this environment.')
+    throw new Error('AI forecast unavailable: AI provider connection is not configured (CLI/OIDC).')
   }
 
   try {
@@ -243,7 +243,7 @@ Hard constraints:
 
     const text = response.text?.trim()
     if (!text) {
-      return deterministicForecast(input, 'AI model returned empty text')
+      throw new Error('AI forecast unavailable: model returned empty text.')
     }
 
     let parsed: unknown
@@ -251,7 +251,7 @@ Hard constraints:
       parsed = JSON.parse(text)
     } catch {
       const m = text.match(/\{[\s\S]*\}/)
-      if (!m) return deterministicForecast(input, 'Failed to parse JSON from AI response')
+      if (!m) throw new Error('AI forecast unavailable: failed to parse JSON response.')
       parsed = JSON.parse(m[0])
     }
 
@@ -264,6 +264,6 @@ Hard constraints:
     }
   } catch (error) {
     const classified = classifyAIError(error)
-    return deterministicForecast(input, classified.publicMessage)
+    throw new Error(`AI forecast unavailable: ${classified.publicMessage}`)
   }
 }

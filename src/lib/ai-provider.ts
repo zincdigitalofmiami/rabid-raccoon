@@ -12,7 +12,7 @@
  *     gateway() provider + OIDC (automatic, $0.00 with Max subscription)
  *
  *   Local dev:
- *     gateway() provider + AI_GATEWAY_API_KEY (from `vercel env pull`)
+ *     gateway() provider + Vercel CLI/OIDC context
  *     OR: CLAUDE_PROXY_URL for CLIProxyAPI subscription proxy
  *
  * ── Temperature ────────────────────────────────────────────────────
@@ -29,7 +29,6 @@ import { generateText, gateway } from 'ai'
 export type AIAuthMethod =
   | 'proxy'
   | 'gateway_oidc'
-  | 'gateway_apikey'
   | 'none'
 
 // ── Central config ─────────────────────────────────────────────────
@@ -49,7 +48,7 @@ const DEFAULT_TEMPERATURE = 0.15
 // Priority: Proxy > Gateway (default)
 //
 // Proxy: CLIProxyAPI on localhost (OpenAI-compat, Max subscription, $0.00)
-// Gateway: Vercel AI Gateway with OIDC (auto on Vercel) or AI_GATEWAY_API_KEY
+// Gateway: Vercel AI Gateway with OIDC/CLI auth context
 
 const PROXY_URL = process.env.CLAUDE_PROXY_URL || ''
 const USE_PROXY = Boolean(PROXY_URL)
@@ -69,7 +68,7 @@ const proxyProvider = USE_PROXY
 /** Get the model instance for the current provider. */
 function getModel(): LanguageModel {
   if (proxyProvider) return proxyProvider(GATEWAY_MODEL_ID)
-  // Vercel AI Gateway: auto OIDC on Vercel, AI_GATEWAY_API_KEY locally
+  // Vercel AI Gateway via OIDC/CLI auth context
   return gateway(GATEWAY_MODEL_ID)
 }
 
@@ -206,17 +205,11 @@ export async function generateAIChat(
 
 /**
  * Check if AI is available.
- * Gateway mode is always available (OIDC on Vercel, API key locally).
+ * Gateway mode is available when OIDC/CLI auth context is present.
  * Proxy mode requires CLAUDE_PROXY_URL.
  */
 export function isAIAvailable(): boolean {
-  // Gateway mode: always available on Vercel (OIDC auto-injected)
-  // Locally: needs AI_GATEWAY_API_KEY from `vercel env pull`
-  return Boolean(
-    USE_PROXY ||
-      hasGatewayOidcContext() ||
-      process.env.AI_GATEWAY_API_KEY,
-  )
+  return Boolean(USE_PROXY || hasGatewayOidcContext())
 }
 
 /**
@@ -233,7 +226,6 @@ export function getAuthMethod():
   AIAuthMethod {
   if (USE_PROXY) return 'proxy'
   if (hasGatewayOidcContext()) return 'gateway_oidc'
-  if (process.env.AI_GATEWAY_API_KEY) return 'gateway_apikey'
   return 'none'
 }
 
@@ -310,7 +302,7 @@ export function classifyAIError(error: unknown): AIErrorClassification {
   ) {
     return {
       category: 'availability',
-      publicMessage: 'AI provider is not configured in this environment.',
+      publicMessage: 'AI provider connection is not configured (CLI/OIDC).',
       rawMessage,
     }
   }

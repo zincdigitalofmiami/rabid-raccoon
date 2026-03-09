@@ -35,7 +35,7 @@ interface AnalysisAiResponse {
 
 async function requestAnalysisOverlay(prompt: string): Promise<AnalysisAiResponse> {
   if (!isAIAvailable()) {
-    throw new Error('AI provider is not configured in this environment')
+    throw new Error('AI provider connection is not configured (CLI/OIDC).')
   }
 
   const { text } = await generateAIText(prompt, { maxTokens: 3000 })
@@ -1355,25 +1355,10 @@ CRITICAL:
     parsed = await requestAnalysisOverlay(prompt)
   } catch (error) {
     const classified = classifyAIError(error)
-    const publicMsg =
-      classified.category === 'availability'
-        ? 'AI overlay disabled in this environment.'
-        : `${classified.publicMessage} Running deterministic overlay.`
-    const deterministic = runDeterministicAnalysis(allData, symbolNames, marketContext)
-    return {
-      ...deterministic,
-      narrative: `${deterministic.narrative} ${publicMsg}`,
-      chartData,
-      totalSignalsAnalysed: grandTotal,
-    }
+    throw new Error(`AI overlay unavailable: ${classified.publicMessage}`)
   }
   if (!parsed) {
-    const deterministic = runDeterministicAnalysis(allData, symbolNames, marketContext)
-    return {
-      ...deterministic,
-      chartData,
-      totalSignalsAnalysed: grandTotal,
-    }
+    throw new Error('AI overlay unavailable: model returned empty response.')
   }
 
   // Step 4: Merge raw signal data with AI levels

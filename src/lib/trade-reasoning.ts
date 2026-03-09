@@ -1,14 +1,14 @@
 /**
  * trade-reasoning.ts — AI Reasoning Layer (Layer 2)
  *
- * Per-trade OpenAI rationale for qualifying setups (composite score ≥ 50).
+ * Per-trade AI rationale for qualifying setups (composite score ≥ 50).
  * Follows the model cascade pattern from forecast.ts.
  *
  * Guardrails:
  *   - AI p(TP1) must be within ±0.20 of ML baseline
  *   - VIX > 30 forces risk warning
  *   - BLACKOUT phase = no reasoning (deterministic fallback)
- *   - 3 second timeout, falls back to Layer 1 only
+ *   - 3 second timeout for AI call
  */
 
 import { classifyAIError, generateAIChat, isAIAvailable } from './ai-provider'
@@ -151,11 +151,7 @@ export async function getTradeReasoning(
   }
 
   if (!isAIAvailable()) {
-    return deterministicFallback(
-      score,
-      features,
-      'AI provider is not configured in this environment.',
-    )
+    throw new Error('AI reasoning unavailable: AI provider connection is not configured (CLI/OIDC).')
   }
 
   const prompt = buildPrompt(setup, score, features, eventContext, marketContext)
@@ -177,7 +173,7 @@ export async function getTradeReasoning(
 
     const content = response.text?.trim()
     if (!content) {
-      return deterministicFallback(score, features, 'AI model returned empty response.')
+      throw new Error('AI reasoning unavailable: model returned empty response.')
     }
 
     // Parse JSON — strip code fences if present
@@ -187,11 +183,7 @@ export async function getTradeReasoning(
     }
     const jsonMatch = jsonText.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
-      return deterministicFallback(
-        score,
-        features,
-        'Failed to parse JSON from AI response.',
-      )
+      throw new Error('AI reasoning unavailable: failed to parse JSON response.')
     }
 
     const parsed = JSON.parse(jsonMatch[0]) as {
@@ -232,11 +224,7 @@ export async function getTradeReasoning(
     }
   } catch (err: unknown) {
     const classified = classifyAIError(err)
-    const reason =
-      classified.category === 'timeout'
-        ? 'AI timeout — using Layer 1 only.'
-        : `${classified.publicMessage} Using Layer 1 only.`
-    return deterministicFallback(score, features, reason)
+    throw new Error(`AI reasoning unavailable: ${classified.publicMessage}`)
   }
 }
 

@@ -194,7 +194,7 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // Generate AI forecast via OpenAI
+    // Generate AI forecast
     const forecast = await generateForecast({
       symbols: summaries,
       compositeSignal,
