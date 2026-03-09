@@ -320,6 +320,14 @@ The Memory MCP is pre-configured for each agent platform:
 2. **Store immediately** — When Kirk states a preference, makes a correction, or you learn something project-specific, write it to memory before moving on.
 3. **Never skip memory** — Even if a task seems simple. Past context prevents repeated mistakes.
 4. **Memory is shared** — All agents read/write the same `.claude/memory.jsonl`. Keep entries clean and factual.
+5. **Use the anchor-node fallback when search is weak** — Memory search may return empty even when valid project memory exists. If search is weak or empty, open these nodes directly before proceeding:
+   - `rabid raccoon memory index`
+   - `rabid raccoon current state`
+   - `rabid raccoon ai contract`
+   - `Kirk_Preferences_Reporting`
+   - `rabid-raccoon-operating-contract-2026-03-08`
+   - `Rabid Raccoon AGENTS.md Update 2026-03-08`
+6. **Keep repo-local memory clean** — Repo-local memory is for rabid-raccoon only. Do not store cross-project notes, tool setup chatter, or prompt-process clutter here. Store compact factual project state, decisions, corrections, and verified outcomes.
 
 ## Agent Workflow
 
