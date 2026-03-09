@@ -19,6 +19,7 @@ Rabid Raccoon is a futures trading intelligence platform focused on MES (Micro E
 - **Near-term execution order**: MACD production correction, then volume production correction, then remaining pre-Phase-1 trigger hardening.
 - **Keep vs discard**: preserve valid trigger-engine work and new symbols needed for the trigger decision engine and Warbird. Discard only sidetrack detours such as the local-first-for-everything Prisma-containment path.
 - **Working mode**: one fix at a time, on `main`, with gatekeeper review between fixes unless Kirk explicitly directs otherwise.
+- **Reference audit**: [docs/plans/2026-03-09-runtime-data-flow-audit.md](docs/plans/2026-03-09-runtime-data-flow-audit.md) captures the verified March 9, 2026 Prisma/local drift, ingress, scheduler, route, and data-flow state.
 
 ## The Three Domains
 
