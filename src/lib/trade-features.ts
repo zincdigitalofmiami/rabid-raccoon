@@ -56,6 +56,11 @@ export interface TradeFeatureVector {
   // Correlation
   compositeAlignment: number;
   isAligned: boolean;
+  correlationDetails: string;
+  activeCorrelationSymbols: string[];
+  alignedCorrelationSymbols: string[];
+  divergingCorrelationSymbols: string[];
+  ignoredCorrelationSymbols: string[];
 
   // Price-action acceptance / failure
   acceptanceState: AcceptanceState;
@@ -1039,6 +1044,11 @@ export async function computeTradeFeatures(
     // Correlation
     compositeAlignment: alignment.composite,
     isAligned: alignment.isAligned,
+    correlationDetails: alignment.details,
+    activeCorrelationSymbols: alignment.activeSymbols ?? [],
+    alignedCorrelationSymbols: alignment.alignedSymbols ?? [],
+    divergingCorrelationSymbols: alignment.divergingSymbols ?? [],
+    ignoredCorrelationSymbols: alignment.ignoredSymbols ?? [],
 
     // Acceptance / failure
     acceptanceState: acceptance.state,

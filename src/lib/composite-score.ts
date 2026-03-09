@@ -136,15 +136,22 @@ function scoreEvent(features: TradeFeatureVector): number {
  * - Misaligned = penalize
  */
 function scoreCorrelation(features: TradeFeatureVector): number {
+  let score: number
+
   // compositeAlignment is -1 to +1 where positive = aligned with setup direction
   // isAligned already factors in direction
   if (features.isAligned) {
     // Scale positive alignment to 60-100 range
-    return Math.round(60 + Math.abs(features.compositeAlignment) * 40)
+    score = Math.round(60 + Math.abs(features.compositeAlignment) * 40)
+  } else {
+    // Misaligned — penalize proportionally
+    score = Math.round(40 - Math.abs(features.compositeAlignment) * 40)
   }
 
-  // Misaligned — penalize proportionally
-  return Math.round(40 - Math.abs(features.compositeAlignment) * 40)
+  if (features.alignedCorrelationSymbols.length >= 3) score += 4
+  if (features.divergingCorrelationSymbols.length >= 2) score -= 8
+
+  return clamp(score, 0, 100)
 }
 
 /**
@@ -294,6 +301,12 @@ export function computeCompositeScore(
   }
   if (!features.isAligned) {
     flags.push('Cross-asset misalignment — lower conviction')
+  }
+  if (features.alignedCorrelationSymbols.length >= 3) {
+    flags.push(`Correlation basket confirms: ${features.alignedCorrelationSymbols.join(', ')}`)
+  }
+  if (features.divergingCorrelationSymbols.length >= 2) {
+    flags.push(`Correlation divergences: ${features.divergingCorrelationSymbols.join(', ')}`)
   }
   if (features.volumeState === 'THIN') {
     flags.push('Thin volume — move lacks participation')
