@@ -790,13 +790,17 @@ function computeCmMacdVectorized(
   const macdLine: number[] = new Array(n).fill(0);
   for (let i = 0; i < n; i++) macdLine[i] = fastEma[i] - slowEma[i];
 
-  // Signal = EMA of MACD line
+  // Signal = EMA of MACD line (SMA-seeded)
   const signalArr: number[] = new Array(n).fill(0);
   const signalMult = 2 / (signalLength + 1);
-  signalArr[0] = macdLine[0];
-  for (let i = 1; i < n; i++) {
+  let signalEma =
+    macdLine.slice(0, signalLength).reduce((sum, v) => sum + v, 0) /
+    signalLength;
+  signalArr[signalLength - 1] = signalEma;
+  for (let i = signalLength; i < n; i++) {
+    signalEma = (macdLine[i] - signalEma) * signalMult + signalEma;
     signalArr[i] =
-      (macdLine[i] - signalArr[i - 1]) * signalMult + signalArr[i - 1];
+      signalEma;
   }
 
   // Populate output arrays
