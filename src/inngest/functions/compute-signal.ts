@@ -169,6 +169,69 @@ const EMPTY_EVENT_CONTEXT: EventContext = {
 
 // ── Volume features from Python ─────────────────────────────────────
 
+function toFiniteNumber(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return fallback
+}
+
+function toBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true') return true
+    if (normalized === 'false') return false
+  }
+  return fallback
+}
+
+function parseVolumeScriptPayload(payload: unknown): {
+  features: VolumeFeatures
+  scriptError: string | null
+} {
+  const root = payload && typeof payload === 'object'
+    ? (payload as Record<string, unknown>)
+    : {}
+  const source = root.features && typeof root.features === 'object'
+    ? (root.features as Record<string, unknown>)
+    : root
+
+  const scriptError =
+    typeof root.error === 'string' && root.error.trim().length > 0
+      ? root.error.trim()
+      : null
+
+  if (scriptError) {
+    return {
+      features: { ...DEFAULT_VOLUME_FEATURES },
+      scriptError,
+    }
+  }
+
+  return {
+    features: {
+      rvol: toFiniteNumber(source.rvol, DEFAULT_VOLUME_FEATURES.rvol),
+      rvolSession: toFiniteNumber(source.rvol_session, DEFAULT_VOLUME_FEATURES.rvolSession),
+      vwap: toFiniteNumber(source.vwap, DEFAULT_VOLUME_FEATURES.vwap),
+      priceVsVwap: toFiniteNumber(source.price_vs_vwap, DEFAULT_VOLUME_FEATURES.priceVsVwap),
+      vwapBand: Math.trunc(toFiniteNumber(source.vwap_band, DEFAULT_VOLUME_FEATURES.vwapBand)),
+      poc: toFiniteNumber(source.poc, DEFAULT_VOLUME_FEATURES.poc),
+      priceVsPoc: toFiniteNumber(source.price_vs_poc, DEFAULT_VOLUME_FEATURES.priceVsPoc),
+      inValueArea: toBoolean(source.in_value_area, DEFAULT_VOLUME_FEATURES.inValueArea),
+      volumeConfirmation: toBoolean(
+        source.volume_confirmation,
+        DEFAULT_VOLUME_FEATURES.volumeConfirmation,
+      ),
+      pocSlope: toFiniteNumber(source.poc_slope, DEFAULT_VOLUME_FEATURES.pocSlope),
+    },
+    scriptError: null,
+  }
+}
+
 async function computeVolumeFeatures(): Promise<VolumeFeatures> {
   try {
     const scriptPath = path.resolve(process.cwd(), 'scripts/compute-volume-features.py')
@@ -177,19 +240,11 @@ async function computeVolumeFeatures(): Promise<VolumeFeatures> {
       { timeout: 30_000, cwd: process.cwd() },
     )
 
-    const json = JSON.parse(stdout.trim())
-    return {
-      rvol: json.rvol ?? 1,
-      rvolSession: json.rvol_session ?? 1,
-      vwap: json.vwap ?? 0,
-      priceVsVwap: json.price_vs_vwap ?? 0,
-      vwapBand: json.vwap_band ?? 0,
-      poc: json.poc ?? 0,
-      priceVsPoc: json.price_vs_poc ?? 0,
-      inValueArea: json.in_value_area ?? true,
-      volumeConfirmation: json.volume_confirmation ?? false,
-      pocSlope: json.poc_slope ?? 0,
+    const parsed = parseVolumeScriptPayload(JSON.parse(stdout.trim()))
+    if (parsed.scriptError) {
+      console.warn(`[compute-signal] Volume script reported error: ${parsed.scriptError}`)
     }
+    return parsed.features
   } catch (err) {
     console.warn('[compute-signal] Volume features failed:', err instanceof Error ? err.message : err)
     return { ...DEFAULT_VOLUME_FEATURES }
