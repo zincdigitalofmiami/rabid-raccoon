@@ -22,15 +22,15 @@ import {
   UTCTimestamp,
 } from "lightweight-charts";
 import type { ForecastResponse, MeasuredMove, CandleData } from "@/lib/types";
-import type { BhgSetup } from "@/lib/bhg-engine";
 import type { PivotLine, PivotTimeframe } from "@/lib/pivots";
 import { ForecastTargetsPrimitive } from "@/lib/charts/ForecastTargetsPrimitive";
-import { BhgMarkersPrimitive } from "@/lib/charts/BhgMarkersPrimitive";
+import { TriggerMarkersPrimitive } from "@/lib/charts/BhgMarkersPrimitive";
 import { PivotLinesPrimitive } from "@/lib/charts/PivotLinesPrimitive";
 import { mapMeasuredMoveAndCoreToTargets } from "@/lib/charts/blendTargets";
 import { ensureFutureWhitespace } from "@/lib/charts/ensureFutureWhitespace";
 import { calculateFibonacciMultiPeriod } from "@/lib/fibonacci";
 import { getEventDisplayPhase } from "@/lib/event-display";
+import type { TriggerCandidate } from "@/lib/trigger-candidates";
 import TV from "@/lib/colors";
 
 type MesPoint = {
@@ -156,11 +156,11 @@ function toCandle(point: MesPoint): CandleData {
   };
 }
 
-function setupSortTime(setup: BhgSetup): number {
+function setupSortTime(setup: TriggerCandidate): number {
   return setup.goTime ?? setup.hookTime ?? setup.touchTime ?? setup.createdAt;
 }
 
-function isRenderableGoSetup(setup: BhgSetup): boolean {
+function isRenderableGoSetup(setup: TriggerCandidate): boolean {
   if (setup.phase !== "TRIGGERED") return false;
   if (
     setup.entry == null ||
@@ -185,9 +185,9 @@ function isRenderableGoSetup(setup: BhgSetup): boolean {
 }
 
 function selectSetupsForChart(
-  setups: BhgSetup[],
+  setups: TriggerCandidate[],
   lastTimeSec: number | null,
-): BhgSetup[] {
+): TriggerCandidate[] {
   if (setups.length === 0) return [];
 
   const goCandidates = setups
@@ -233,7 +233,7 @@ export interface LiveMesChartHandle {
 
 interface LiveMesChartProps {
   forecast?: ForecastResponse | null;
-  setups?: BhgSetup[];
+  setups?: TriggerCandidate[];
   eventPhase?: string;
   eventLabel?: string;
 }
@@ -244,7 +244,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick", Time> | null>(null);
     const primitiveRef = useRef<ForecastTargetsPrimitive | null>(null);
-    const bhgPrimitiveRef = useRef<BhgMarkersPrimitive | null>(null);
+    const triggerPrimitiveRef = useRef<TriggerMarkersPrimitive | null>(null);
     const pivotPrimitiveRef = useRef<PivotLinesPrimitive | null>(null);
     const initialViewportAppliedRef = useRef(false);
     const displayEventPhase = getEventDisplayPhase(eventPhase);
@@ -420,9 +420,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       const primitive = new ForecastTargetsPrimitive();
       series.attachPrimitive(primitive);
 
-      // Attach BHG markers primitive
-      const bhgPrimitive = new BhgMarkersPrimitive();
-      series.attachPrimitive(bhgPrimitive);
+      // Attach trigger candidate markers primitive
+      const triggerPrimitive = new TriggerMarkersPrimitive();
+      series.attachPrimitive(triggerPrimitive);
 
       // Attach pivot lines primitive (custom canvas — no axis boxes, solid lines)
       const pivotPrimitive = new PivotLinesPrimitive();
@@ -431,7 +431,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       chartRef.current = chart;
       seriesRef.current = series;
       primitiveRef.current = primitive;
-      bhgPrimitiveRef.current = bhgPrimitive;
+      triggerPrimitiveRef.current = triggerPrimitive;
       pivotPrimitiveRef.current = pivotPrimitive;
 
       const resizeObserver = new ResizeObserver(() => {
@@ -442,13 +442,13 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       return () => {
         resizeObserver.disconnect();
         series.detachPrimitive(primitive);
-        series.detachPrimitive(bhgPrimitive);
+        series.detachPrimitive(triggerPrimitive);
         series.detachPrimitive(pivotPrimitive);
         chart.remove();
         chartRef.current = null;
         seriesRef.current = null;
         primitiveRef.current = null;
-        bhgPrimitiveRef.current = null;
+        triggerPrimitiveRef.current = null;
         pivotPrimitiveRef.current = null;
       };
     }, []);
@@ -648,16 +648,16 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       primitiveRef.current.setTargets(targets);
     }, [activeMove, lastPrice]);
 
-    // --- Wire BHG setups to primitive ---
+    // --- Wire trigger candidates to primitive ---
     useEffect(() => {
-      if (!bhgPrimitiveRef.current) return;
+      if (!triggerPrimitiveRef.current) return;
 
       if (
         !chartSetups ||
         chartSetups.length === 0 ||
         pointsRef.current.length === 0
       ) {
-        bhgPrimitiveRef.current.setMarkers(null);
+        triggerPrimitiveRef.current.setMarkers(null);
         return;
       }
 
@@ -678,7 +678,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           s.goTime != null ? (realToGapFree(s.goTime) ?? s.goTime) : s.goTime,
       }));
 
-      bhgPrimitiveRef.current.setMarkers({
+      triggerPrimitiveRef.current.setMarkers({
         setups: mappedSetups,
         lastTime: lastGfTime,
         futureBars: 16,

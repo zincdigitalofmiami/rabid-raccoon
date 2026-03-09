@@ -1,5 +1,5 @@
 /**
- * Lightweight Charts Series Primitive: BHG Setup Markers
+ * Lightweight Charts Series Primitive: Trigger Candidate Markers
  *
  * Renders Touch/Hook/Go markers and Entry/SL/TP level lines on the chart.
  * - TOUCH: small circle at fib level
@@ -22,12 +22,12 @@ import type {
   Coordinate,
 } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
-import type { BhgSetup } from '../bhg-engine'
+import type { TriggerCandidate } from '../trigger-candidates'
 
 // ─── Marker Data ─────────────────────────────────────────────────────────────
 
 export interface BhgMarkerData {
-  setups: BhgSetup[]
+  setups: TriggerCandidate[]
   /** Unix seconds — last candle time, used as start for level projections */
   lastTime: number
   /** How many bars into the future to project entry/SL/TP lines */
@@ -115,7 +115,7 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
     })
   }
 
-  private _drawTouch(ctx: CanvasRenderingContext2D, setup: BhgSetup) {
+  private _drawTouch(ctx: CanvasRenderingContext2D, setup: TriggerCandidate) {
     const x = this._timeToX!(setup.touchTime! as unknown as Time)
     const y = this._priceToY!(setup.touchPrice!)
     if (x == null || y == null) return
@@ -129,7 +129,7 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
     ctx.stroke()
   }
 
-  private _drawHook(ctx: CanvasRenderingContext2D, setup: BhgSetup) {
+  private _drawHook(ctx: CanvasRenderingContext2D, setup: TriggerCandidate) {
     const x = this._timeToX!(setup.hookTime! as unknown as Time)
     const hookPrice = setup.hookClose!
     const y = this._priceToY!(hookPrice)
@@ -160,7 +160,7 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
     ctx.stroke()
   }
 
-  private _drawGo(ctx: CanvasRenderingContext2D, setup: BhgSetup) {
+  private _drawGo(ctx: CanvasRenderingContext2D, setup: TriggerCandidate) {
     const x = this._timeToX!(setup.goTime! as unknown as Time)
     const y = this._priceToY!(setup.entry!)
     if (x == null || y == null) return
@@ -189,7 +189,7 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
 
   private _drawLevelLines(
     ctx: CanvasRenderingContext2D,
-    setup: BhgSetup,
+    setup: TriggerCandidate,
     lastTime: number,
     futureEnd: number,
     chartWidth: number,
@@ -307,7 +307,7 @@ class BhgLevelAxisView implements ISeriesPrimitiveAxisView {
 
 // ─── Main Primitive ──────────────────────────────────────────────────────────
 
-export class BhgMarkersPrimitive implements ISeriesPrimitive<Time> {
+export class TriggerMarkersPrimitive implements ISeriesPrimitive<Time> {
   private _data: BhgMarkerData | null = null
   private _paneView = new BhgMarkersPaneView()
   private _axisViews: BhgLevelAxisView[] = []
