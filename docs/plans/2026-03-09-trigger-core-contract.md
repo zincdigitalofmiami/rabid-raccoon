@@ -283,10 +283,8 @@ Correlation is a co-equal confirmation layer with volume/liquidity. It is not a 
 
 Do not use `ANALYSIS_DEFAULT` as the trigger correlation source.
 
-Create and use a trigger-owned role, at minimum:
-
-- `TRIGGER_CORRELATION_CORE`
-- optional later: `TRIGGER_CORRELATION_SECONDARY`
+The live trigger correlation source is `CORRELATION_SET`. Its approved active
+membership is now frozen to the Databento Standard-supported basket below.
 
 ### Required core symbols
 
@@ -294,26 +292,26 @@ The trigger correlation core should include:
 
 - `MES`
 - `NQ`
-- `VX`
-- `DX`
-- `US10Y`
+- `RTY`
 - `ZN`
+- `CL`
+- `6E`
 
 Rationale:
 
 - `NQ` for equity leadership / tech risk tone
-- `VX` for vol confirmation or vol stress
-- `DX` for USD regime
-- `US10Y` and `ZN` for rates / duration interpretation
+- `RTY` for breadth / financing sensitivity
+- `ZN` for rates / duration interpretation
+- `CL` for inflation shock transmission
+- `6E` as the approved CME-path USD proxy
 
-### Secondary symbols
+Not approved for the live trigger basket:
 
-Secondary symbols may be used when they are actually leading the tape:
-
-- `CL`
+- `VX`
+- `DX`
 - `GC`
-
-They are optional, regime-dependent confirmations, not mandatory daily inputs.
+- `YM`
+- FRED daily-only series
 
 ### Correlation output requirement
 

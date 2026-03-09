@@ -242,10 +242,10 @@ Use a small, adaptive set of high-value symbols. Not every symbol matters every 
 Core candidate set:
 
 - NQ
-- VX / VIX complex
-- DXY / USD proxy
-- US10Y / ZN / rates complex
-- CL and GC when they are actually driving macro tone
+- RTY
+- ZN
+- CL
+- 6E (inverse USD proxy)
 
 Rules:
 
