@@ -190,9 +190,17 @@ function fallbackAlignment(
     vix: 0,
     dxy: 0,
     nq: 0,
+    rty: 0,
+    zn: 0,
+    cl: 0,
+    euro: 0,
     composite: 0,
     isAligned: true,
     details: `${direction} neutral fallback: ${reason}`,
+    activeSymbols: [],
+    alignedSymbols: [],
+    divergingSymbols: [],
+    ignoredSymbols: [],
   }
 }
 
