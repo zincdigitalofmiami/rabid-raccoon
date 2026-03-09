@@ -51,7 +51,10 @@ import { computeAlignmentScore } from '@/lib/correlation-filter'
 import { signalCache } from '@/lib/tiered-cache'
 import { recordScoredTrades } from '@/lib/trade-recorder'
 import { withCanonicalSetupIds } from '@/lib/setup-id'
-import { recordTriggeredSetups, type SetupScoringContext } from '@/lib/bhg-setup-recorder'
+import {
+  recordTriggeredCandidates,
+  type TriggerScoringContext,
+} from '@/lib/trigger-candidate-recorder'
 import type { CandleData } from '@/lib/types'
 import {
   generateTriggerCandidates,
@@ -651,8 +654,8 @@ export const computeSignal = inngest.createFunction(
 
       scoredTrades.sort((a, b) => b.score.composite - a.score.composite)
 
-      // Record setups + outcomes (fire-and-forget within Inngest step)
-      const scoringBySetupId = new Map<string, SetupScoringContext>(
+      // Record triggered candidates + scored trade snapshots (fire-and-forget)
+      const scoringBySetupId = new Map<string, TriggerScoringContext>(
         scoredTrades.map((trade) => [
           trade.setup.id,
           {
@@ -665,8 +668,8 @@ export const computeSignal = inngest.createFunction(
         ]),
       )
 
-      recordTriggeredSetups(triggered, scoringBySetupId).catch((err) =>
-        console.warn('[compute-signal] Setup persistence failed:', err),
+      recordTriggeredCandidates(triggered, scoringBySetupId).catch((err) =>
+        console.warn('[compute-signal] Trigger candidate persistence failed:', err),
       )
       recordScoredTrades(scoredTrades, currentPrice, evCtx).catch((err) =>
         console.warn('[compute-signal] Recording failed:', err),
