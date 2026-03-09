@@ -12,10 +12,20 @@ const DEFAULT_MIN_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_CANDLES_TO_UPSERT = 500;
 const MAX_1M_CANDLES_TO_UPSERT = 1200; // ~20 hours of 1m bars
 const BATCH_SIZE = 40;
-const REFRESH_LOCK_KEY = 15_001_515;
+const REFRESH_LOCK_KEYS = {
+  oneMinute: 15_001_501,
+  fifteenMinute: 15_001_515,
+} as const;
 
-let lastRefreshAttemptAtMs = 0;
-let inFlightRefresh: Promise<RefreshResult> | null = null;
+const lastRefreshAttemptAtMs = {
+  oneMinute: 0,
+  fifteenMinute: 0,
+};
+
+const inFlightRefresh = {
+  oneMinute: null as Promise<RefreshResult> | null,
+  fifteenMinute: null as Promise<RefreshResult> | null,
+};
 
 interface RefreshResult {
   attempted: boolean;
@@ -81,15 +91,17 @@ function aggregateTo15m(candles: CandleData[]): CandleData[] {
   return out;
 }
 
-async function currentLatestEventTime(): Promise<Date | null> {
+async function currentLatestEventTime(timeframe: "1m" | "15m"): Promise<Date | null> {
   const pool = getDirectPool();
   const result = await pool.query(
-    'SELECT "eventTime" FROM "mkt_futures_mes_15m" ORDER BY "eventTime" DESC LIMIT 1',
+    `SELECT "eventTime" FROM ${
+      timeframe === "1m" ? '"mkt_futures_mes_1m"' : '"mkt_futures_mes_15m"'
+    } ORDER BY "eventTime" DESC LIMIT 1`,
   );
   return result.rows[0]?.eventTime ?? null;
 }
 
-async function tryAcquireRefreshLock(): Promise<{
+async function tryAcquireRefreshLock(lockKey: number): Promise<{
   acquired: boolean;
   release: () => Promise<void>;
 }> {
@@ -99,7 +111,7 @@ async function tryAcquireRefreshLock(): Promise<{
   try {
     const result = await client.query<{ locked: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS locked",
-      [REFRESH_LOCK_KEY],
+      [lockKey],
     );
     const acquired = result.rows[0]?.locked === true;
 
@@ -115,7 +127,7 @@ async function tryAcquireRefreshLock(): Promise<{
       acquired: true,
       release: async () => {
         try {
-          await client.query("SELECT pg_advisory_unlock($1)", [REFRESH_LOCK_KEY]);
+          await client.query("SELECT pg_advisory_unlock($1)", [lockKey]);
         } finally {
           client.release();
         }
@@ -127,28 +139,38 @@ async function tryAcquireRefreshLock(): Promise<{
   }
 }
 
-export async function refreshMes15mFromDatabento(options?: {
+async function refreshMesFromDatabento(
+  timeframe: "1m" | "15m",
+  options?: {
   force?: boolean;
   lookbackMinutes?: number;
   minRefreshIntervalMs?: number;
-}): Promise<RefreshResult> {
-  if (inFlightRefresh) {
-    return inFlightRefresh;
+  },
+): Promise<RefreshResult> {
+  const refreshKey = timeframe === "1m" ? "oneMinute" : "fifteenMinute";
+  const lockKey =
+    timeframe === "1m" ? REFRESH_LOCK_KEYS.oneMinute : REFRESH_LOCK_KEYS.fifteenMinute;
+
+  if (inFlightRefresh[refreshKey]) {
+    return inFlightRefresh[refreshKey];
   }
 
-  inFlightRefresh = (async (): Promise<RefreshResult> => {
+  inFlightRefresh[refreshKey] = (async (): Promise<RefreshResult> => {
     const force = options?.force === true;
     const minRefreshIntervalMs = Math.max(
       30_000,
       options?.minRefreshIntervalMs ?? DEFAULT_MIN_REFRESH_INTERVAL_MS,
     );
 
-    if (!force && Date.now() - lastRefreshAttemptAtMs < minRefreshIntervalMs) {
+    if (
+      !force &&
+      Date.now() - lastRefreshAttemptAtMs[refreshKey] < minRefreshIntervalMs
+    ) {
       return {
         attempted: false,
         refreshed: false,
         rowsUpserted: 0,
-        latestEventTime: await currentLatestEventTime(),
+        latestEventTime: await currentLatestEventTime(timeframe),
         reason: "refresh-throttled",
       };
     }
@@ -158,24 +180,24 @@ export async function refreshMes15mFromDatabento(options?: {
         attempted: false,
         refreshed: false,
         rowsUpserted: 0,
-        latestEventTime: await currentLatestEventTime(),
+        latestEventTime: await currentLatestEventTime(timeframe),
         reason: "missing-databento-api-key",
       };
     }
 
-    const refreshLock = await tryAcquireRefreshLock();
+    const refreshLock = await tryAcquireRefreshLock(lockKey);
     if (!refreshLock.acquired) {
       return {
         attempted: false,
         refreshed: false,
         rowsUpserted: 0,
-        latestEventTime: await currentLatestEventTime(),
+        latestEventTime: await currentLatestEventTime(timeframe),
         reason: "refresh-locked",
       };
     }
 
     try {
-      lastRefreshAttemptAtMs = Date.now();
+      lastRefreshAttemptAtMs[refreshKey] = Date.now();
 
       const lookbackMinutes = Math.max(
         120,
@@ -198,6 +220,7 @@ export async function refreshMes15mFromDatabento(options?: {
       const sorted1m = dedupeAndSort(toCandles(records));
 
       const candles1m = sorted1m.slice(-MAX_1M_CANDLES_TO_UPSERT);
+      let rowsUpserted1m = 0;
       if (candles1m.length > 0) {
         const UPSERT_1M_SQL = `
           INSERT INTO "mkt_futures_mes_1m" (
@@ -237,6 +260,7 @@ export async function refreshMes15mFromDatabento(options?: {
               ]);
             }
             await client1m.query("COMMIT");
+            rowsUpserted1m += batch.length;
           }
         } catch (err1m) {
           await client1m.query("ROLLBACK").catch(() => {});
@@ -244,6 +268,19 @@ export async function refreshMes15mFromDatabento(options?: {
         } finally {
           client1m.release();
         }
+      }
+
+      if (timeframe === "1m") {
+        return {
+          attempted: true,
+          refreshed: candles1m.length > 0,
+          rowsUpserted: rowsUpserted1m,
+          latestEventTime:
+            candles1m.length > 0
+              ? asUtcDateFromUnixSeconds(candles1m[candles1m.length - 1].time)
+              : await currentLatestEventTime("1m"),
+          ...(candles1m.length === 0 ? { reason: "no-candles-returned" } : {}),
+        };
       }
 
       const candles15m = aggregateTo15m(sorted1m).slice(
@@ -254,7 +291,7 @@ export async function refreshMes15mFromDatabento(options?: {
           attempted: true,
           refreshed: false,
           rowsUpserted: 0,
-          latestEventTime: await currentLatestEventTime(),
+          latestEventTime: await currentLatestEventTime("15m"),
           reason: "no-candles-returned",
         };
       }
@@ -324,15 +361,31 @@ export async function refreshMes15mFromDatabento(options?: {
         attempted: true,
         refreshed: false,
         rowsUpserted: 0,
-        latestEventTime: await currentLatestEventTime(),
+        latestEventTime: await currentLatestEventTime(timeframe),
         reason: message,
       };
     } finally {
       await refreshLock.release();
     }
   })().finally(() => {
-    inFlightRefresh = null;
+    inFlightRefresh[refreshKey] = null;
   });
 
-  return inFlightRefresh;
+  return inFlightRefresh[refreshKey]!;
+}
+
+export async function refreshMes1mFromDatabento(options?: {
+  force?: boolean;
+  lookbackMinutes?: number;
+  minRefreshIntervalMs?: number;
+}): Promise<RefreshResult> {
+  return refreshMesFromDatabento("1m", options);
+}
+
+export async function refreshMes15mFromDatabento(options?: {
+  force?: boolean;
+  lookbackMinutes?: number;
+  minRefreshIntervalMs?: number;
+}): Promise<RefreshResult> {
+  return refreshMesFromDatabento("15m", options);
 }

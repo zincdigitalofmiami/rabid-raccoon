@@ -7,7 +7,7 @@
  *      high-impact release is imminent or just dropped
  *
  * Runs the FULL pipeline once:
- *   1. Refresh MES 15m from Databento
+ *   1. Refresh MES 1m from Databento
  *   2. Run Python volume features script → volume JSON
  *   3. BHG engine (swings → fibs → measured moves → setups)
  *   4. Event context from econ_calendar
@@ -28,8 +28,8 @@ import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
 import { advanceBhgSetups } from '@/lib/bhg-engine'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
-import { refreshMes15mFromDatabento } from '@/lib/mes15m-refresh'
-import { toNum } from '@/lib/decimal'
+import { refreshMes1mFromDatabento } from '@/lib/mes15m-refresh'
+import { readLatestMes1mRows } from '@/lib/mes-live-queries'
 import {
   getEventContext,
   loadTodayEvents,
@@ -52,7 +52,6 @@ import { signalCache } from '@/lib/tiered-cache'
 import { recordScoredTrades } from '@/lib/trade-recorder'
 import { withCanonicalSetupIds } from '@/lib/setup-id'
 import { recordTriggeredSetups, type SetupScoringContext } from '@/lib/bhg-setup-recorder'
-import type { Decimal } from '@prisma/client/runtime/client'
 import type { CandleData } from '@/lib/types'
 import type { BhgSetup } from '@/lib/bhg-engine'
 import type { CorrelationAlignment } from '@/lib/correlation-filter'
@@ -70,25 +69,41 @@ import path from 'path'
 const execAsync = promisify(exec)
 
 const MIN_DISPLAY_COMPOSITE_SCORE = 45
+const SIGNAL_15M_LOOKBACK = 200
+const SIGNAL_1M_LOOKBACK = SIGNAL_15M_LOOKBACK * 15 + 60
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-function rowToCandle(row: {
-  eventTime: Date
-  open: Decimal | number
-  high: Decimal | number
-  low: Decimal | number
-  close: Decimal | number
-  volume: bigint | null
-}): CandleData {
-  return {
-    time: Math.floor(row.eventTime.getTime() / 1000),
-    open: toNum(row.open),
-    high: toNum(row.high),
-    low: toNum(row.low),
-    close: toNum(row.close),
-    volume: row.volume ? Number(row.volume) : undefined,
+function aggregateCandles(candles: CandleData[], periodMinutes: number): CandleData[] {
+  if (candles.length === 0) return []
+  const periodSec = periodMinutes * 60
+  const result: CandleData[] = []
+  let bucket: CandleData | null = null
+  let bucketStart = 0
+
+  for (const candle of candles) {
+    const aligned = Math.floor(candle.time / periodSec) * periodSec
+    if (bucket === null || aligned !== bucketStart) {
+      if (bucket) result.push(bucket)
+      bucket = {
+        time: aligned,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume || 0,
+      }
+      bucketStart = aligned
+    } else {
+      bucket.high = Math.max(bucket.high, candle.high)
+      bucket.low = Math.min(bucket.low, candle.low)
+      bucket.close = candle.close
+      bucket.volume = (bucket.volume || 0) + (candle.volume || 0)
+    }
   }
+
+  if (bucket) result.push(bucket)
+  return result
 }
 
 function percentChange(bars: CandleData[]): number {
@@ -313,24 +328,31 @@ export const computeSignal = inngest.createFunction(
     { event: 'econ/event.approaching' },
   ],
   async ({ step }) => {
-    // Step 1: Refresh MES 15m data from Databento
-    const refreshResult = await step.run('refresh-mes-15m', async () =>
-      refreshMes15mFromDatabento({ force: true, lookbackMinutes: 120 }),
+    // Step 1: Refresh MES 1m data from Databento. This signal path derives its
+    // 15m working candles locally and should not rewrite the shared 15m table.
+    const refreshResult = await step.run('refresh-mes-1m', async () =>
+      refreshMes1mFromDatabento({ force: true, lookbackMinutes: 120 }),
     )
 
-    // Step 2: Load 15m candles from DB
-    const candles = await step.run('load-15m-candles', async () => {
-      const rows = await prisma.mktFuturesMes15m.findMany({
-        orderBy: { eventTime: 'desc' },
-        take: 200,
-      })
+    // Step 2: Load 1m candles from DB and derive the local 15m working set.
+    const candles = await step.run('load-1m-and-derive-15m-candles', async () => {
+      const rows = await readLatestMes1mRows(SIGNAL_1M_LOOKBACK)
+      const candles1m = [...rows].reverse().map((row) => ({
+        time: Math.floor(row.eventTime.getTime() / 1000),
+        open: row.open,
+        high: row.high,
+        low: row.low,
+        close: row.close,
+        volume: row.volume,
+      }))
+      const candles15m = aggregateCandles(candles1m, 15).slice(-SIGNAL_15M_LOOKBACK)
 
-      if (rows.length < 10) {
+      if (candles15m.length < 10) {
         return { candles: [] as CandleData[], error: 'Insufficient data' }
       }
 
       return {
-        candles: [...rows].reverse().map(rowToCandle),
+        candles: candles15m,
         error: null,
       }
     })
