@@ -159,12 +159,54 @@ function aggregateTo15mFrom1m(rows: Mes1mRow[]): MesRow[] {
   return out
 }
 
+async function loadSnapshotRows(backfillCount: number): Promise<MesRow[]> {
+  const oneMinuteBackfill = Math.max(backfillCount * 15 + 240, 2400)
+  const initial1m = await readLatestMes1mRows(oneMinuteBackfill)
+
+  const aggregated15m = aggregateTo15mFrom1m(initial1m).slice(-backfillCount)
+  const fallback15m =
+    aggregated15m.length === 0 ? await readLatestMes15mRows(backfillCount) : []
+  const initial = aggregated15m.length > 0 ? aggregated15m : fallback15m
+
+  return [...initial]
+    .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime())
+    .filter((r) => !isWeekendBar(r.eventTime))
+}
+
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url)
   const backfill = Number(url.searchParams.get('backfill') || '96')
+  const snapshotOnly = url.searchParams.get('snapshot') === '1'
   const backfillCount = Number.isFinite(backfill)
     ? Math.max(20, Math.min(1000, Math.trunc(backfill)))
     : 96
+
+  if (snapshotOnly) {
+    try {
+      const initial = await loadSnapshotRows(backfillCount)
+
+      if (initial.length === 0) {
+        return Response.json(
+          {
+            error:
+              'No MES 15m data in DB yet. Start ingestion: npm run ingest:mes:live:stream',
+          },
+          { status: 503 }
+        )
+      }
+
+      return Response.json({
+        points: initial.map(asPoint),
+        live: false,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return Response.json(
+        { error: `Failed to load MES 15m snapshot: ${message}` },
+        { status: 500 }
+      )
+    }
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -179,16 +221,7 @@ export async function GET(request: Request): Promise<Response> {
       }
 
       try {
-        // Serve DB data immediately — don't block on Databento refresh
-        // Background refresh runs on first poll interval (60s)
-        const oneMinuteBackfill = Math.max(backfillCount * 15 + 240, 2400)
-        const initial1m = await readLatestMes1mRows(oneMinuteBackfill)
-
-        const aggregated15m = aggregateTo15mFrom1m(initial1m).slice(-backfillCount)
-        const fallback15m = aggregated15m.length === 0
-          ? await readLatestMes15mRows(backfillCount)
-          : []
-        const initial = aggregated15m.length > 0 ? aggregated15m : fallback15m
+        const initial = await loadSnapshotRows(backfillCount)
 
         if (initial.length === 0) {
           pushErrorAndClose(
@@ -197,16 +230,13 @@ export async function GET(request: Request): Promise<Response> {
           return
         }
 
-        const sorted = [...initial]
-          .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime())
-          .filter((r) => !isWeekendBar(r.eventTime))
-        for (const row of sorted) {
+        for (const row of initial) {
           knownRows.set(row.eventTime.getTime(), rowFingerprint(row))
         }
 
         controller.enqueue(
           encodeSse('snapshot', {
-            points: sorted.map(asPoint),
+            points: initial.map(asPoint),
           })
         )
       } catch (error) {

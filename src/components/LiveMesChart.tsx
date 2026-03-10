@@ -52,6 +52,10 @@ const DEFAULT_BAR_SPACING = 10;
 const MIN_BAR_SPACING = 8;
 const MAX_TOUCH_MARKERS = 1;
 const MAX_HOOK_MARKERS = 1;
+// TODO(cleanup): Re-enable live SSE after Vercel Fluid cost is brought under control.
+const LIVE_MES_STREAM_PAUSED = true;
+const LIVE_MES_STREAM_PAUSED_MESSAGE =
+  "Live MES stream temporarily paused to reduce Vercel runtime cost.";
 
 // ─── Pivot Line Colors (per timeframe) ──────────────────────────────────────
 const PIVOT_COLORS: Record<PivotTimeframe, string> = {
@@ -455,8 +459,6 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
 
     // --- SSE stream ---
     useEffect(() => {
-      const eventSource = new EventSource("/api/live/mes15m?backfill=1000");
-
       const updateSessionStats = (points: MesPoint[]) => {
         if (points.length === 0) return;
         const last = points[points.length - 1];
@@ -479,11 +481,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
         }
       };
 
-      const onSnapshot = (event: MessageEvent) => {
+      const applySnapshot = (rawPoints: MesPoint[]) => {
         try {
-          const data = JSON.parse(event.data) as { points: MesPoint[] };
           if (!seriesRef.current) return;
-          const rawPoints = data.points || [];
           if (rawPoints.length === 0) return;
 
           // Store original real-time points (for fib calc, stats, setup selection)
@@ -542,6 +542,50 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           setStatus("error");
           setError(e instanceof Error ? e.message : "Invalid snapshot");
         }
+      };
+
+      if (LIVE_MES_STREAM_PAUSED) {
+        let cancelled = false;
+
+        async function loadSnapshotOnly() {
+          try {
+            const res = await fetch("/api/live/mes15m?snapshot=1&backfill=1000", {
+              cache: "no-store",
+            });
+            const data = (await res.json()) as
+              | { points: MesPoint[]; live?: boolean }
+              | { error: string };
+
+            if (cancelled) return;
+            if (!res.ok || !("points" in data)) {
+              throw new Error(
+                "error" in data ? data.error : "Failed to load paused MES snapshot",
+              );
+            }
+
+            applySnapshot(data.points || []);
+            setStatus("error");
+            setError(LIVE_MES_STREAM_PAUSED_MESSAGE);
+          } catch (e) {
+            if (cancelled) return;
+            setStatus("error");
+            setError(
+              e instanceof Error ? e.message : LIVE_MES_STREAM_PAUSED_MESSAGE,
+            );
+          }
+        }
+
+        loadSnapshotOnly();
+        return () => {
+          cancelled = true;
+        };
+      }
+
+      const eventSource = new EventSource("/api/live/mes15m?backfill=1000");
+
+      const onSnapshot = (event: MessageEvent) => {
+        const data = JSON.parse(event.data) as { points: MesPoint[] };
+        applySnapshot(data.points || []);
       };
 
       const onUpdate = (event: MessageEvent) => {
