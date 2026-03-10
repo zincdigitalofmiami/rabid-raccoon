@@ -52,10 +52,11 @@ const DEFAULT_BAR_SPACING = 10;
 const MIN_BAR_SPACING = 8;
 const MAX_TOUCH_MARKERS = 1;
 const MAX_HOOK_MARKERS = 1;
-// TODO(cleanup): Re-enable live SSE after Vercel Fluid cost is brought under control.
-const LIVE_MES_STREAM_PAUSED = true;
-const LIVE_MES_STREAM_PAUSED_MESSAGE =
-  "Live MES stream temporarily paused to reduce Vercel runtime cost.";
+const LIVE_MES_USE_POLLING = true;
+const LIVE_MES_POLL_INTERVAL_MS = 10_000;
+const LIVE_MES_POLL_BARS = 12;
+const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
+const FNV_PRIME_32 = 0x01000193;
 
 // ─── Pivot Line Colors (per timeframe) ──────────────────────────────────────
 const PIVOT_COLORS: Record<PivotTimeframe, string> = {
@@ -158,6 +159,37 @@ function toCandle(point: MesPoint): CandleData {
     close: point.close,
     volume: point.volume,
   };
+}
+
+function pointFingerprint(point: MesPoint): string {
+  return [
+    point.time * 1000,
+    point.open,
+    point.high,
+    point.low,
+    point.close,
+    point.volume ?? 0,
+  ].join("|");
+}
+
+function updateFnv1a32(hash: number, value: string): number {
+  let next = hash;
+  for (let i = 0; i < value.length; i++) {
+    next ^= value.charCodeAt(i);
+    next = Math.imul(next, FNV_PRIME_32);
+  }
+  return next >>> 0;
+}
+
+function pollWindowFingerprint(points: MesPoint[]): string {
+  let hash = FNV_OFFSET_BASIS_32;
+  for (const point of points) {
+    hash = updateFnv1a32(hash, pointFingerprint(point));
+    hash = updateFnv1a32(hash, "\n");
+  }
+  const lastPoint = points[points.length - 1];
+  const lastTimeMs = lastPoint ? lastPoint.time * 1000 : 0;
+  return `${points.length}:${lastTimeMs}:${hash.toString(16)}`;
 }
 
 function setupSortTime(setup: TriggerCandidate): number {
@@ -263,6 +295,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       gfToReal: new Map(),
       baseTime: 0,
     });
+    const pollFingerprintRef = useRef<string | null>(null);
 
     const [status, setStatus] = useState<StreamStatus>("connecting");
     const [error, setError] = useState<string | null>(null);
@@ -457,7 +490,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       };
     }, []);
 
-    // --- SSE stream ---
+    // --- Live data feed ---
     useEffect(() => {
       const updateSessionStats = (points: MesPoint[]) => {
         if (points.length === 0) return;
@@ -538,61 +571,18 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
 
           setStatus("live");
           setError(null);
+          pollFingerprintRef.current = pollWindowFingerprint(
+            rawPoints.slice(-LIVE_MES_POLL_BARS),
+          );
         } catch (e) {
           setStatus("error");
           setError(e instanceof Error ? e.message : "Invalid snapshot");
         }
       };
 
-      if (LIVE_MES_STREAM_PAUSED) {
-        let cancelled = false;
-
-        async function loadSnapshotOnly() {
-          try {
-            const res = await fetch("/api/live/mes15m?snapshot=1&backfill=1000", {
-              cache: "no-store",
-            });
-            const data = (await res.json()) as
-              | { points: MesPoint[]; live?: boolean }
-              | { error: string };
-
-            if (cancelled) return;
-            if (!res.ok || !("points" in data)) {
-              throw new Error(
-                "error" in data ? data.error : "Failed to load paused MES snapshot",
-              );
-            }
-
-            applySnapshot(data.points || []);
-            setStatus("error");
-            setError(LIVE_MES_STREAM_PAUSED_MESSAGE);
-          } catch (e) {
-            if (cancelled) return;
-            setStatus("error");
-            setError(
-              e instanceof Error ? e.message : LIVE_MES_STREAM_PAUSED_MESSAGE,
-            );
-          }
-        }
-
-        loadSnapshotOnly();
-        return () => {
-          cancelled = true;
-        };
-      }
-
-      const eventSource = new EventSource("/api/live/mes15m?backfill=1000");
-
-      const onSnapshot = (event: MessageEvent) => {
-        const data = JSON.parse(event.data) as { points: MesPoint[] };
-        applySnapshot(data.points || []);
-      };
-
-      const onUpdate = (event: MessageEvent) => {
+      const applyUpdates = (updates: MesPoint[]) => {
         try {
-          const data = JSON.parse(event.data) as { points: MesPoint[] };
           if (!seriesRef.current) return;
-          const updates = data.points || [];
           if (updates.length === 0) return;
 
           // Merge updates into existing real points
@@ -644,6 +634,149 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           setStatus("error");
           setError(e instanceof Error ? e.message : "Invalid update");
         }
+      };
+
+      if (LIVE_MES_USE_POLLING) {
+        let cancelled = false;
+        let pollInterval: ReturnType<typeof setInterval> | null = null;
+        let pollInFlight = false;
+
+        async function fetchPollWindow() {
+          if (pollInFlight) {
+            return;
+          }
+          pollInFlight = true;
+          try {
+            const params = new URLSearchParams({
+              poll: "1",
+              bars: String(LIVE_MES_POLL_BARS),
+            });
+            const previousFingerprint = pollFingerprintRef.current;
+            if (previousFingerprint) {
+              params.set("fingerprint", previousFingerprint);
+            }
+            const res = await fetch(
+              `/api/live/mes15m?${params.toString()}`,
+              { cache: "no-store" },
+            );
+            const data = (await res.json()) as
+              | {
+                  points: MesPoint[];
+                  live?: boolean;
+                  changed?: boolean;
+                  fingerprint?: string;
+                }
+              | { error: string };
+            if (!res.ok || !("points" in data)) {
+              throw new Error(
+                "error" in data ? data.error : "Failed to poll MES 15m updates",
+              );
+            }
+
+            const nextFingerprint =
+              typeof data.fingerprint === "string" ? data.fingerprint : null;
+            if (
+              nextFingerprint != null &&
+              nextFingerprint === previousFingerprint
+            ) {
+              return;
+            }
+            if (data.changed === false) {
+              if (nextFingerprint != null) {
+                pollFingerprintRef.current = nextFingerprint;
+              }
+              return;
+            }
+
+            const points = data.points || [];
+            if (points.length === 0) {
+              if (nextFingerprint != null) {
+                pollFingerprintRef.current = nextFingerprint;
+              }
+              return;
+            }
+
+            if (nextFingerprint != null) {
+              pollFingerprintRef.current = nextFingerprint;
+            } else {
+              const localFingerprint = pollWindowFingerprint(points);
+              if (localFingerprint === previousFingerprint) {
+                return;
+              }
+              pollFingerprintRef.current = localFingerprint;
+            }
+
+            applyUpdates(points);
+          } finally {
+            pollInFlight = false;
+          }
+        }
+
+        async function startPollingFeed() {
+          try {
+            const snapshotRes = await fetch(
+              "/api/live/mes15m?snapshot=1&backfill=1000",
+              {
+                cache: "no-store",
+              },
+            );
+            const snapshotData = (await snapshotRes.json()) as
+              | { points: MesPoint[]; live?: boolean }
+              | { error: string };
+
+            if (cancelled) return;
+            if (!snapshotRes.ok || !("points" in snapshotData)) {
+              throw new Error(
+                "error" in snapshotData
+                  ? snapshotData.error
+                  : "Failed to load MES 15m snapshot",
+              );
+            }
+
+            applySnapshot(snapshotData.points || []);
+            await fetchPollWindow();
+            if (cancelled) return;
+
+            pollInterval = setInterval(() => {
+              if (cancelled) return;
+              fetchPollWindow().catch((e) => {
+                if (cancelled) return;
+                setStatus("error");
+                setError(
+                  e instanceof Error
+                    ? e.message
+                    : "Live poll disconnected. Verify MES ingestion is running.",
+                );
+              });
+            }, LIVE_MES_POLL_INTERVAL_MS);
+          } catch (e) {
+            if (cancelled) return;
+            setStatus("error");
+            setError(
+              e instanceof Error
+                ? e.message
+                : "Failed to start MES 15m polling feed.",
+            );
+          }
+        }
+
+        startPollingFeed();
+        return () => {
+          cancelled = true;
+          if (pollInterval) clearInterval(pollInterval);
+        };
+      }
+
+      const eventSource = new EventSource("/api/live/mes15m?backfill=1000");
+
+      const onSnapshot = (event: MessageEvent) => {
+        const data = JSON.parse(event.data) as { points: MesPoint[] };
+        applySnapshot(data.points || []);
+      };
+
+      const onUpdate = (event: MessageEvent) => {
+        const data = JSON.parse(event.data) as { points: MesPoint[] };
+        applyUpdates(data.points || []);
       };
 
       const onSseError = () => {
