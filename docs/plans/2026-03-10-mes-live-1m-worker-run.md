@@ -1,9 +1,15 @@
 # 2026-03-10 MES Live 1m Worker Run Notes
 
-Worker entrypoint:
+Worker runtime manifest:
 
 ```bash
-.venv-finance/bin/python scripts/ingest-mes-live-1m.py
+requirements-mes-live-1m-worker.txt
+```
+
+Canonical worker entrypoint:
+
+```bash
+bash scripts/run-mes-live-1m-worker.sh
 ```
 
 ## Guardrails
@@ -19,6 +25,12 @@ Worker entrypoint:
 
 - `DATABENTO_API_KEY`
 - `DIRECT_URL` (preferred) or `LOCAL_DATABASE_URL`
+
+## Host-Native Dependency Install
+
+```bash
+pip install -r requirements-mes-live-1m-worker.txt
+```
 
 ## Fixed Subscription Contract
 
@@ -83,7 +95,7 @@ Catch-up structured results include:
 Dry config check:
 
 ```bash
-.venv-finance/bin/python scripts/ingest-mes-live-1m.py --check-config
+bash scripts/run-mes-live-1m-worker.sh --check-config
 ```
 
 Compile check:
@@ -97,14 +109,10 @@ Compile check:
 For real ownership cutover launch (not ad-hoc local probe), start with:
 
 ```bash
-.venv-finance/bin/python scripts/ingest-mes-live-1m.py \
-  --log-ingestion-runs \
-  --dataset GLBX.MDP3 \
-  --schema OHLCV_1M \
-  --symbol MES.c.0 \
-  --stype-in continuous
+bash scripts/run-mes-live-1m-worker.sh
 ```
 
+The launcher already enforces the approved production contract and `--log-ingestion-runs`.
 Do not pass `--snapshot` or `--allow-contract-override` for cutover mode.
 
 ## Current Gap

@@ -16,6 +16,8 @@
 ### Candidate replacement
 
 - [scripts/ingest-mes-live-1m.py](../../scripts/ingest-mes-live-1m.py)
+- Runtime manifest: [requirements-mes-live-1m-worker.txt](../../requirements-mes-live-1m-worker.txt)
+- Canonical launcher: [scripts/run-mes-live-1m-worker.sh](../../scripts/run-mes-live-1m-worker.sh)
 - Dedicated live `databento.Live` worker
 - Writes only `mkt_futures_mes_1m`
 - Fixed contract: `GLBX.MDP3 / OHLCV_1M / MES.c.0 / continuous / snapshot=false`
@@ -54,6 +56,11 @@ Reason this fits the MES-only 1m worker:
 - Disable autoscaling for this service.
 - Do not run a parallel duplicate deployment/standby worker during cutover.
 
+Render Background Worker commands (host-native, no Docker):
+
+- build command: `pip install -r requirements-mes-live-1m-worker.txt`
+- start command: `bash scripts/run-mes-live-1m-worker.sh`
+
 ### Non-goals for this cutover
 
 - No Kubernetes rollout
@@ -66,8 +73,9 @@ Reason this fits the MES-only 1m worker:
 
 ### Runtime prerequisites
 
-- Python environment can run:
-  - `scripts/ingest-mes-live-1m.py`
+- Python environment can install and run:
+  - `requirements-mes-live-1m-worker.txt`
+  - `scripts/run-mes-live-1m-worker.sh`
 - Required env vars present:
   - `DATABENTO_API_KEY`
   - `DIRECT_URL` (preferred) or `LOCAL_DATABASE_URL`
@@ -75,7 +83,7 @@ Reason this fits the MES-only 1m worker:
 ### Quick readiness checks
 
 ```bash
-.venv-finance/bin/python scripts/ingest-mes-live-1m.py --check-config
+bash scripts/run-mes-live-1m-worker.sh --check-config
 .venv-finance/bin/python -m py_compile scripts/ingest-mes-live-1m.py
 ```
 
@@ -124,7 +132,8 @@ FROM "mkt_futures_mes_1m";
 3. Demote/pause `ingest-mkt-mes-1m` in Inngest control plane (do not code-edit cron for this step).
 4. Wait ~2 minutes and confirm no new `sourceSchema=ohlcv-1m` writes are arriving.
 5. Start the dedicated worker process with fixed contract + ingestion run logging:
-   - `.venv-finance/bin/python scripts/ingest-mes-live-1m.py --log-ingestion-runs --dataset GLBX.MDP3 --schema OHLCV_1M --symbol MES.c.0 --stype-in continuous`
+   - `bash scripts/run-mes-live-1m-worker.sh`
+   - Launcher defaults are the approved contract + `--log-ingestion-runs`.
    - Do not pass `--snapshot` or `--allow-contract-override` in cutover mode.
 6. Verify worker logs:
    - subscription request succeeded
