@@ -12,6 +12,7 @@ Worker entrypoint:
 - It does not write `mkt_futures_mes_15m`.
 - It does not own chart rendering or trigger logic.
 - Do not run two active authoritative MES 1m writers at the same time.
+- Run this as exactly one external worker instance (no autoscaling, no standby duplicate).
 - Until cutover approval, existing Inngest `mkt-mes-1m` remains the active production owner.
 
 ## Required Environment
@@ -90,6 +91,21 @@ Compile check:
 ```bash
 .venv-finance/bin/python -m py_compile scripts/ingest-mes-live-1m.py
 ```
+
+## Cutover Launch Truth
+
+For real ownership cutover launch (not ad-hoc local probe), start with:
+
+```bash
+.venv-finance/bin/python scripts/ingest-mes-live-1m.py \
+  --log-ingestion-runs \
+  --dataset GLBX.MDP3 \
+  --schema OHLCV_1M \
+  --symbol MES.c.0 \
+  --stype-in continuous
+```
+
+Do not pass `--snapshot` or `--allow-contract-override` for cutover mode.
 
 ## Current Gap
 

@@ -47,6 +47,13 @@ Reason this fits the MES-only 1m worker:
 - Built-in logs are sufficient for this narrow ingestion service
 - Fast path to deploy without designing a larger infra platform
 
+### Minimal host safety settings (Render)
+
+- Run exactly `1` worker instance (fixed single instance).
+- Enable restart-on-failure for the worker process.
+- Disable autoscaling for this service.
+- Do not run a parallel duplicate deployment/standby worker during cutover.
+
 ### Non-goals for this cutover
 
 - No Kubernetes rollout
@@ -104,6 +111,8 @@ FROM "mkt_futures_mes_1m";
 
 - Confirm operator and exact timestamp for ownership switch.
 - Confirm Inngest owner will be demoted in control plane during cutover window.
+- Confirm external worker service is configured for exactly one running instance.
+- Confirm no standby/duplicate MES live worker is active.
 - Do not run both writers as authoritative at the same time.
 
 ---
@@ -114,8 +123,9 @@ FROM "mkt_futures_mes_1m";
 2. Confirm dedicated worker host is ready but not yet started.
 3. Demote/pause `ingest-mkt-mes-1m` in Inngest control plane (do not code-edit cron for this step).
 4. Wait ~2 minutes and confirm no new `sourceSchema=ohlcv-1m` writes are arriving.
-5. Start the dedicated worker process:
-   - `python scripts/ingest-mes-live-1m.py` (production runtime args as needed)
+5. Start the dedicated worker process with fixed contract + ingestion run logging:
+   - `.venv-finance/bin/python scripts/ingest-mes-live-1m.py --log-ingestion-runs --dataset GLBX.MDP3 --schema OHLCV_1M --symbol MES.c.0 --stype-in continuous`
+   - Do not pass `--snapshot` or `--allow-contract-override` in cutover mode.
 6. Verify worker logs:
    - subscription request succeeded
    - periodic flush with advancing `latest_event`
@@ -127,6 +137,9 @@ FROM "mkt_futures_mes_1m";
    - `mkt_futures_mes_1m` latest `eventTime` remains near wall clock (minute-fresh)
    - `/api/live/mes15m` continues receiving fresh underlying 1m, so active 15m bar can update minute-to-minute
 9. Keep monitoring for at least 15 continuous minutes before declaring cutover stable.
+10. Stability declaration guard:
+    - Cutover operator captures DB query outputs + worker log excerpts for the full 15-minute window.
+    - Reviewer/gatekeeper confirms all stability criteria before declaring cutover complete.
 
 ---
 
@@ -137,9 +150,9 @@ FROM "mkt_futures_mes_1m";
 Rollback if any of the following persists during market-open window:
 
 - no new `LIVE_OHLCV_1M_CONTINUOUS` rows for >2 minutes
-- repeated worker crash/restart loop
+- worker exits/restarts 2+ times within 10 minutes
 - event lag grows beyond acceptable bound (example: >180s for 3 consecutive checks)
-- chart-facing freshness degrades materially after switch
+- new `sourceSchema=ohlcv-1m` rows appear after Inngest owner is paused (duplicate-writer signal)
 
 ### Rollback order
 
@@ -185,6 +198,14 @@ SELECT
 FROM "mkt_futures_mes_1m"
 ORDER BY "eventTime" DESC
 LIMIT 15;
+```
+
+```sql
+SELECT "sourceSchema", count(*) AS rows_5m
+FROM "mkt_futures_mes_1m"
+WHERE "ingestedAt" >= (now() AT TIME ZONE 'utc') - interval '5 minutes'
+GROUP BY "sourceSchema"
+ORDER BY rows_5m DESC;
 ```
 
 ### First session/day

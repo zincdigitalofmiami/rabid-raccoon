@@ -139,6 +139,14 @@ The symbol registry is the single source of truth for all symbol definitions.
 - Cross-domain changes require understanding the impact on all three domains.
 - Shared infrastructure changes (Prisma schema, symbol registry, Inngest) affect everything — treat them with extra care.
 
+### 8. Freeze The MES Chart Frontend Contract
+
+- The MES chart UI/frontend contract is frozen. Do not change its look, feel, rendering, spacing, styling, interaction model, or visible behavior without explicit approval from Kirk.
+- Protected surface includes the chart component, its primitives, time-axis behavior, whitespace/gap handling, marker rendering, viewport behavior, and any UI/status treatment the user sees.
+- Acceptable changes are limited to data-feeding and backend wiring only: source tables, polling cadence, ingestion ownership, derivation path, and transport shape, so long as the visible chart contract remains unchanged.
+- If a task touches the chart path (`src/components/LiveMesChart.tsx`, `/api/live/mes15m`, or supporting chart primitives), default assumption is **data-source changes only** unless Kirk explicitly authorizes frontend changes.
+- If preserving the exact frontend contract is in tension with a backend/runtime fix, preserve the chart and change the backend/runtime plan instead.
+
 ## Symbol Registry
 
 **Location**: `src/lib/symbol-registry/`
