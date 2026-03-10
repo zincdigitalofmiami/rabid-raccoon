@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { aggregateMes1mRowsTo15m } from '@/lib/mes-15m-derivation'
+import {
+  aggregateMes1mRowsTo15m,
+  shouldUseDerivedMes15mRows,
+} from '@/lib/mes-15m-derivation'
 
 test('aggregateMes1mRowsTo15m aligns to 15m buckets and preserves OHLCV semantics', () => {
   const rows = [
@@ -84,4 +87,24 @@ test('aggregateMes1mRowsTo15m drops pathological 1m rows during sanitation', () 
   assert.equal(bars[0].low, 4998)
   assert.equal(bars[0].close, 5002)
   assert.equal(bars[0].volume, 19)
+})
+
+test('shouldUseDerivedMes15mRows requires near-full window for wide-context consumers', () => {
+  assert.equal(
+    shouldUseDerivedMes15mRows({
+      derivedCount: 150,
+      requestedLimit: 200,
+      minimumDerivedBars: 195,
+    }),
+    false,
+  )
+
+  assert.equal(
+    shouldUseDerivedMes15mRows({
+      derivedCount: 195,
+      requestedLimit: 200,
+      minimumDerivedBars: 195,
+    }),
+    true,
+  )
 })

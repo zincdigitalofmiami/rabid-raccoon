@@ -116,7 +116,7 @@ function rowToCandle(row: {
 // ─────────────────────────────────────────────
 
 async function deterministicFallback(): Promise<UpcomingTradesResponse> {
-  const rows = await readLatestMes15mRowsPrefer1m(200, 10);
+  const rows = await readLatestMes15mRowsPrefer1m(200, 195);
 
   if (rows.length < 10) {
     return {

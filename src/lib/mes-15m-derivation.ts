@@ -8,6 +8,7 @@ import {
 const FIFTEEN_MIN_SECONDS = 15 * 60;
 const MIN_1M_LOOKBACK = 2400;
 const LOOKBACK_PADDING_MINUTES = 240;
+const DEFAULT_DERIVED_TOLERANCE_BARS = 5;
 
 function sanitize1mRows(rows: MesPriceRow[]): MesPriceRow[] {
   if (rows.length === 0) return [];
@@ -94,17 +95,46 @@ function defaultOneMinuteLookback(limit: number): number {
   return Math.max(limit * 15 + LOOKBACK_PADDING_MINUTES, MIN_1M_LOOKBACK);
 }
 
+function resolveMinimumDerivedBars(
+  limit: number,
+  minimumDerivedBars?: number,
+): number {
+  const safeLimit = Math.max(1, Math.trunc(limit));
+  if (minimumDerivedBars == null) {
+    return Math.max(1, safeLimit - DEFAULT_DERIVED_TOLERANCE_BARS);
+  }
+
+  return Math.min(safeLimit, Math.max(1, Math.trunc(minimumDerivedBars)));
+}
+
+export function shouldUseDerivedMes15mRows(params: {
+  derivedCount: number;
+  requestedLimit: number;
+  minimumDerivedBars?: number;
+}): boolean {
+  const required = resolveMinimumDerivedBars(
+    params.requestedLimit,
+    params.minimumDerivedBars,
+  );
+  return Math.max(0, Math.trunc(params.derivedCount)) >= required;
+}
+
 export async function readLatestMes15mRowsPrefer1m(
   limit: number,
-  minimumBars = 10,
+  minimumDerivedBars?: number,
 ): Promise<MesPriceRow[]> {
   const safeLimit = Math.max(1, Math.trunc(limit));
-  const minBars = Math.max(1, Math.trunc(minimumBars));
   const oneMinuteRows = await readLatestMes1mRows(defaultOneMinuteLookback(safeLimit));
   const derivedAsc = aggregateMes1mRowsTo15m(oneMinuteRows);
   const derivedDesc = derivedAsc.slice(-safeLimit).reverse();
 
-  if (derivedDesc.length >= minBars) {
+  if (
+    shouldUseDerivedMes15mRows({
+      derivedCount: derivedDesc.length,
+      requestedLimit: safeLimit,
+      minimumDerivedBars,
+    })
+  ) {
     return derivedDesc;
   }
 
