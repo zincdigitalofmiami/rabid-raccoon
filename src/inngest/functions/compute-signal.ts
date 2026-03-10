@@ -7,7 +7,7 @@
  *      high-impact release is imminent or just dropped
  *
  * Runs the FULL pipeline once:
- *   1. Refresh MES 1m from Databento
+ *   1. Read MES 1m from DB (freshness owned by ingest-mkt-mes-1m)
  *   2. Run Python volume features script → volume JSON
  *   3. Trigger candidate engine (currently backed by legacy BHG logic)
  *   4. Event context from econ_calendar
@@ -27,7 +27,6 @@ import { detectSwings } from '@/lib/swing-detection'
 import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
 import { computeRisk, MES_DEFAULTS } from '@/lib/risk-engine'
-import { refreshMes1mFromDatabento } from '@/lib/mes15m-refresh'
 import { readLatestMes1mRows } from '@/lib/mes-live-queries'
 import {
   getEventContext,
@@ -386,13 +385,8 @@ export const computeSignal = inngest.createFunction(
     { event: 'econ/event.approaching' },
   ],
   async ({ step }) => {
-    // Step 1: Refresh MES 1m data from Databento. This signal path derives its
-    // 15m working candles locally and should not rewrite the shared 15m table.
-    const refreshResult = await step.run('refresh-mes-1m', async () =>
-      refreshMes1mFromDatabento({ force: true, lookbackMinutes: 120 }),
-    )
-
-    // Step 2: Load 1m candles from DB and derive the local 15m working set.
+    // Step 1: Load 1m candles from DB and derive the local 15m working set.
+    // Authoritative 1m ingestion/freshness is owned by ingest-mkt-mes-1m.
     const candles = await step.run('load-1m-and-derive-15m-candles', async () => {
       const rows = await readLatestMes1mRows(SIGNAL_1M_LOOKBACK)
       const candles1m = [...rows].reverse().map((row) => ({
@@ -426,13 +420,13 @@ export const computeSignal = inngest.createFunction(
         source: 'inngest-compute-signal',
       }
       signalCache.set('upcoming-trades', payload)
-      return { status: 'no-data', refreshResult }
+      return { status: 'no-data' }
     }
 
     const candleData = candles.candles
     const currentPrice = candleData[candleData.length - 1].close
 
-    // Step 3: Run volume features, event context, market context in parallel
+    // Step 2: Run volume features, event context, market context in parallel
     const parallelResult = await step.run('parallel-compute', async () => {
       const [vol, events, mktCtx] = await Promise.all([
         computeVolumeFeatures(),
@@ -483,7 +477,7 @@ export const computeSignal = inngest.createFunction(
             : 'neutral',
     }
 
-    // Step 4: Trigger candidate pipeline (currently backed by legacy BHG logic)
+    // Step 3: Trigger candidate pipeline (currently backed by legacy BHG logic)
     const signal = await step.run('score-setups', async () => {
       const swings = detectSwings(candleData, 5, 5, 20)
       const fibResult = calculateFibonacciMultiPeriod(candleData)

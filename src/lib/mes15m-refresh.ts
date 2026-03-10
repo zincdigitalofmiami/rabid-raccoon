@@ -6,6 +6,7 @@ import type { CandleData } from "./types";
 const MES_DATASET = "GLBX.MDP3";
 const MES_SYMBOL = "MES.c.0";
 const SOURCE_SCHEMA = "ohlcv-1m";
+const DERIVED_15M_SOURCE_SCHEMA = 'mkt_futures_mes_1m->15m';
 const FIFTEEN_MIN_SECONDS = 15 * 60;
 const DEFAULT_LOOKBACK_MINUTES = 18 * 60;
 const DEFAULT_MIN_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -33,6 +34,13 @@ interface RefreshResult {
   rowsUpserted: number;
   latestEventTime: Date | null;
   reason?: string;
+}
+
+function asNumber(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") return Number(value);
+  if (typeof value === "bigint") return Number(value);
+  return 0;
 }
 
 function asUtcDateFromUnixSeconds(seconds: number): Date {
@@ -139,7 +147,7 @@ async function tryAcquireRefreshLock(lockKey: number): Promise<{
   }
 }
 
-async function refreshMesFromDatabento(
+async function refreshMes(
   timeframe: "1m" | "15m",
   options?: {
   force?: boolean;
@@ -175,7 +183,7 @@ async function refreshMesFromDatabento(
       };
     }
 
-    if (!process.env.DATABENTO_API_KEY) {
+    if (timeframe === "1m" && !process.env.DATABENTO_API_KEY) {
       return {
         attempted: false,
         refreshed: false,
@@ -203,74 +211,112 @@ async function refreshMesFromDatabento(
         120,
         options?.lookbackMinutes ?? DEFAULT_LOOKBACK_MINUTES,
       );
-      const end = new Date();
-      const start = new Date(end.getTime() - lookbackMinutes * 60 * 1000);
+      const now = Date.now();
+      const windowStart = new Date(now - lookbackMinutes * 60 * 1000);
+      let sorted1m: CandleData[] = [];
 
-      const records = await fetchOhlcv({
-        dataset: MES_DATASET,
-        symbol: MES_SYMBOL,
-        stypeIn: "continuous",
-        start: start.toISOString(),
-        end: end.toISOString(),
-        schema: SOURCE_SCHEMA,
-        timeoutMs: 20_000,
-        maxAttempts: 2,
-      });
+      if (timeframe === "1m") {
+        const end = new Date(now);
+        const records = await fetchOhlcv({
+          dataset: MES_DATASET,
+          symbol: MES_SYMBOL,
+          stypeIn: "continuous",
+          start: windowStart.toISOString(),
+          end: end.toISOString(),
+          schema: SOURCE_SCHEMA,
+          timeoutMs: 20_000,
+          maxAttempts: 2,
+        });
+        sorted1m = dedupeAndSort(toCandles(records));
+      } else {
+        const pool = getDirectPool();
+        const rows = await pool.query<{
+          eventTime: Date | string;
+          open: number | string;
+          high: number | string;
+          low: number | string;
+          close: number | string;
+          volume: number | string | bigint | null;
+        }>(
+          `
+            SELECT
+              "eventTime",
+              "open"::double precision AS "open",
+              "high"::double precision AS "high",
+              "low"::double precision AS "low",
+              "close"::double precision AS "close",
+              COALESCE("volume", 0)::double precision AS "volume"
+            FROM "mkt_futures_mes_1m"
+            WHERE "eventTime" >= $1
+            ORDER BY "eventTime" ASC
+          `,
+          [windowStart],
+        );
 
-      const sorted1m = dedupeAndSort(toCandles(records));
-
-      const candles1m = sorted1m.slice(-MAX_1M_CANDLES_TO_UPSERT);
-      let rowsUpserted1m = 0;
-      if (candles1m.length > 0) {
-        const UPSERT_1M_SQL = `
-          INSERT INTO "mkt_futures_mes_1m" (
-            "eventTime", "open", "high", "low", "close", "volume",
-            "source", "sourceDataset", "sourceSchema", "rowHash",
-            "ingestedAt", "knowledgeTime"
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, 'DATABENTO'::"DataSource", $7, $8, $9, NOW(), NOW())
-          ON CONFLICT ("eventTime") DO UPDATE SET
-            "open" = EXCLUDED."open",
-            "high" = EXCLUDED."high",
-            "low" = EXCLUDED."low",
-            "close" = EXCLUDED."close",
-            "volume" = EXCLUDED."volume",
-            "rowHash" = EXCLUDED."rowHash",
-            "ingestedAt" = NOW(),
-            "knowledgeTime" = NOW()
-        `;
-        const pool1m = getDirectPool();
-        const client1m = await pool1m.connect();
-        try {
-          for (let i = 0; i < candles1m.length; i += BATCH_SIZE) {
-            const batch = candles1m.slice(i, i + BATCH_SIZE);
-            await client1m.query("BEGIN");
-            for (const candle of batch) {
-              const eventTime = asUtcDateFromUnixSeconds(candle.time);
-              await client1m.query(UPSERT_1M_SQL, [
-                eventTime,
-                candle.open,
-                candle.high,
-                candle.low,
-                candle.close,
-                Math.max(0, Math.trunc(candle.volume || 0)),
-                MES_DATASET,
-                SOURCE_SCHEMA,
-                hash1mRow(eventTime, candle.close),
-              ]);
-            }
-            await client1m.query("COMMIT");
-            rowsUpserted1m += batch.length;
-          }
-        } catch (err1m) {
-          await client1m.query("ROLLBACK").catch(() => {});
-          console.error("[mes-refresh] 1m upsert failed:", err1m);
-        } finally {
-          client1m.release();
-        }
+        sorted1m = dedupeAndSort(
+          rows.rows.map((row) => ({
+            time: Math.floor(new Date(String(row.eventTime)).getTime() / 1000),
+            open: asNumber(row.open),
+            high: asNumber(row.high),
+            low: asNumber(row.low),
+            close: asNumber(row.close),
+            volume: Math.max(0, Math.trunc(asNumber(row.volume))),
+          })),
+        );
       }
 
       if (timeframe === "1m") {
+        const candles1m = sorted1m.slice(-MAX_1M_CANDLES_TO_UPSERT);
+        let rowsUpserted1m = 0;
+        if (candles1m.length > 0) {
+          const UPSERT_1M_SQL = `
+            INSERT INTO "mkt_futures_mes_1m" (
+              "eventTime", "open", "high", "low", "close", "volume",
+              "source", "sourceDataset", "sourceSchema", "rowHash",
+              "ingestedAt", "knowledgeTime"
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, 'DATABENTO'::"DataSource", $7, $8, $9, NOW(), NOW())
+            ON CONFLICT ("eventTime") DO UPDATE SET
+              "open" = EXCLUDED."open",
+              "high" = EXCLUDED."high",
+              "low" = EXCLUDED."low",
+              "close" = EXCLUDED."close",
+              "volume" = EXCLUDED."volume",
+              "rowHash" = EXCLUDED."rowHash",
+              "ingestedAt" = NOW(),
+              "knowledgeTime" = NOW()
+          `;
+          const pool1m = getDirectPool();
+          const client1m = await pool1m.connect();
+          try {
+            for (let i = 0; i < candles1m.length; i += BATCH_SIZE) {
+              const batch = candles1m.slice(i, i + BATCH_SIZE);
+              await client1m.query("BEGIN");
+              for (const candle of batch) {
+                const eventTime = asUtcDateFromUnixSeconds(candle.time);
+                await client1m.query(UPSERT_1M_SQL, [
+                  eventTime,
+                  candle.open,
+                  candle.high,
+                  candle.low,
+                  candle.close,
+                  Math.max(0, Math.trunc(candle.volume || 0)),
+                  MES_DATASET,
+                  SOURCE_SCHEMA,
+                  hash1mRow(eventTime, candle.close),
+                ]);
+              }
+              await client1m.query("COMMIT");
+              rowsUpserted1m += batch.length;
+            }
+          } catch (err1m) {
+            await client1m.query("ROLLBACK").catch(() => {});
+            console.error("[mes-refresh] 1m upsert failed:", err1m);
+          } finally {
+            client1m.release();
+          }
+        }
+
         return {
           attempted: true,
           refreshed: candles1m.length > 0,
@@ -283,6 +329,7 @@ async function refreshMesFromDatabento(
         };
       }
 
+      // Compatibility writer for shared 15m table only; does not write 1m.
       const candles15m = aggregateTo15m(sorted1m).slice(
         -MAX_CANDLES_TO_UPSERT,
       );
@@ -333,7 +380,7 @@ async function refreshMesFromDatabento(
               candle.close,
               Math.max(0, Math.trunc(candle.volume || 0)),
               MES_DATASET,
-              `${SOURCE_SCHEMA}->15m`,
+              DERIVED_15M_SOURCE_SCHEMA,
               hashPriceRow(eventTime, candle.close),
             ]);
           }
@@ -379,13 +426,13 @@ export async function refreshMes1mFromDatabento(options?: {
   lookbackMinutes?: number;
   minRefreshIntervalMs?: number;
 }): Promise<RefreshResult> {
-  return refreshMesFromDatabento("1m", options);
+  return refreshMes("1m", options);
 }
 
-export async function refreshMes15mFromDatabento(options?: {
+export async function refreshMes15mFromDb1m(options?: {
   force?: boolean;
   lookbackMinutes?: number;
   minRefreshIntervalMs?: number;
 }): Promise<RefreshResult> {
-  return refreshMesFromDatabento("15m", options);
+  return refreshMes("15m", options);
 }
