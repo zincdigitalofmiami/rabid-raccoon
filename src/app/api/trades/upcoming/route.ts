@@ -14,7 +14,7 @@ import { detectSwings } from "@/lib/swing-detection";
 import { calculateFibonacciMultiPeriod } from "@/lib/fibonacci";
 import { detectMeasuredMoves } from "@/lib/measured-move";
 import { computeRisk, MES_DEFAULTS } from "@/lib/risk-engine";
-import { readLatestMes15mRows } from "@/lib/mes-live-queries";
+import { readLatestMes15mRowsPrefer1m } from "@/lib/mes-15m-derivation";
 import { getEventContext, loadTodayEvents } from "@/lib/event-awareness";
 import { getMlBaseline } from "@/lib/ml-baseline";
 import { computeCompositeScore } from "@/lib/composite-score";
@@ -116,7 +116,7 @@ function rowToCandle(row: {
 // ─────────────────────────────────────────────
 
 async function deterministicFallback(): Promise<UpcomingTradesResponse> {
-  const rows = await readLatestMes15mRows(200);
+  const rows = await readLatestMes15mRowsPrefer1m(200, 10);
 
   if (rows.length < 10) {
     return {

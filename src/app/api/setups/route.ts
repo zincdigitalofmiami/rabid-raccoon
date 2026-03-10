@@ -8,7 +8,7 @@ import { withCanonicalSetupIds } from '@/lib/setup-id'
 import type { CandleData } from '@/lib/types'
 import { getEventContext, loadTodayEvents } from '@/lib/event-awareness'
 import { intradayCache } from '@/lib/tiered-cache'
-import { readLatestMes15mRows } from '@/lib/mes-live-queries'
+import { readLatestMes15mRowsPrefer1m } from '@/lib/mes-15m-derivation'
 import {
   generateTriggerCandidates,
   type TriggerCandidate,
@@ -57,8 +57,8 @@ function rowToCandle(row: {
 }
 
 async function buildResponseBody(): Promise<SetupsResponseBody> {
-  // 1. Fetch MES 15m candles (last 200 bars for chart/card parity)
-  const rows = await readLatestMes15mRows(200)
+  // 1. Fetch MES 15m candles (derive from 1m first, fallback to shared 15m table)
+  const rows = await readLatestMes15mRowsPrefer1m(200, 10)
 
   if (rows.length < 10) {
     return {
