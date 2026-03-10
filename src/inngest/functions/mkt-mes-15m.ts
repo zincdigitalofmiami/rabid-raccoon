@@ -2,7 +2,12 @@ import { inngest } from '../client'
 import { refreshMes15mFromDatabento } from '../../lib/mes15m-refresh'
 
 /**
- * MES 15m candle backfill — fetches ohlcv-1m from Databento, aggregates to 15m.
+ * MES 15m shared-table refresh (compatibility path).
+ * Fetches ohlcv-1m from Databento, aggregates to 15m.
+ *
+ * Ownership note:
+ * - Authoritative minute-cadence MES ingestion is ingest-mkt-mes-1m (1m table only).
+ * - This function exists to keep the shared 15m table populated for remaining readers.
  * Target table: mkt_futures_mes_15m.
  * Runs every 15 minutes so live routes can stay read-only.
  */
