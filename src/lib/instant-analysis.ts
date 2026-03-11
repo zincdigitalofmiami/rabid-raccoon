@@ -35,7 +35,7 @@ interface AnalysisAiResponse {
 
 async function requestAnalysisOverlay(prompt: string): Promise<AnalysisAiResponse> {
   if (!isAIAvailable()) {
-    throw new Error('AI provider connection is not configured (CLI/OIDC).')
+    throw new Error('AI provider connection is not configured (OPENROUTER_API_KEY).')
   }
 
   const { text } = await generateAIText(prompt, { maxTokens: 3000 })

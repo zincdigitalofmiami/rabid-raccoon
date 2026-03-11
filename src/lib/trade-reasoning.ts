@@ -153,7 +153,7 @@ export async function getTradeReasoning(
   }
 
   if (!isAIAvailable()) {
-    throw new Error('AI reasoning unavailable: AI provider connection is not configured (CLI/OIDC).')
+    throw new Error('AI reasoning unavailable: AI provider connection is not configured (OPENROUTER_API_KEY).')
   }
 
   const prompt = buildPrompt(setup, score, features, eventContext, marketContext)

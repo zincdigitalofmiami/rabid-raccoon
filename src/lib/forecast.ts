@@ -235,7 +235,7 @@ Hard constraints:
 - Output valid JSON and nothing else.`
 
   if (!isAIAvailable()) {
-    throw new Error('AI forecast unavailable: AI provider connection is not configured (CLI/OIDC).')
+    throw new Error('AI forecast unavailable: AI provider connection is not configured (OPENROUTER_API_KEY).')
   }
 
   try {

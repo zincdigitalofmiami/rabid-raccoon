@@ -1,69 +1,73 @@
 /**
  * ai-provider.ts -- Unified AI provider for the entire application.
  *
- * ONE model. ONE config. ONE place to change anything.
+ * ONE provider layer. ONE config surface. ONE place to change anything.
  *
- * Provider: Anthropic Claude via Vercel AI Gateway
- * Model: Claude Sonnet 4.5 with Extended Thinking
+ * Provider: OpenRouter via the OpenAI-compatible Vercel AI SDK provider
+ * Text/Chat Model: arcee-ai/trinity-large-preview:free
+ * Vision Model: qwen/qwen3-vl-235b-a22b-thinking
  *
- * ── Auth paths ──────────────────────────────────────────────────────
+ * ── Auth ────────────────────────────────────────────────────────────
  *
- *   Production/Preview (Vercel):
- *     gateway() provider + OIDC (automatic, $0.00 with Max subscription)
- *
- *   Local dev:
- *     gateway() provider + Vercel CLI/OIDC context
+ *   All environments:
+ *     OPENROUTER_API_KEY
  *
  * ── Temperature ────────────────────────────────────────────────────
  *
  * Default: 0.15 (very low creativity — data-driven quant output).
- * When extended thinking is enabled, the server locks temperature at 1.0.
+ * thinkingBudget is retained in the public API for compatibility, but the
+ * OpenRouter chat path does not apply Anthropic-specific thinking options.
  */
 
-import type { AnthropicLanguageModelOptions } from '@ai-sdk/anthropic'
+import { createOpenAI } from '@ai-sdk/openai'
 import type { LanguageModel } from 'ai'
-import { generateText, gateway } from 'ai'
+import { generateText } from 'ai'
 
 export type AIAuthMethod =
-  | 'gateway_oidc'
+  | 'openrouter_api_key'
   | 'none'
 
 // ── Central config ─────────────────────────────────────────────────
-// Gateway model ID format: "provider/model-name"
-const GATEWAY_MODEL_ID =
-  process.env.CLAUDE_MODEL || 'anthropic/claude-sonnet-4-5'
+const OPENROUTER_BASE_URL =
+  process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1'
 
-// Extended thinking token budget (higher = deeper reasoning)
+const OPENROUTER_TEXT_MODEL_ID =
+  process.env.OPENROUTER_TEXT_MODEL || 'arcee-ai/trinity-large-preview:free'
+
+const OPENROUTER_VISION_MODEL_ID =
+  process.env.OPENROUTER_VISION_MODEL || 'qwen/qwen3-vl-235b-a22b-thinking'
+
 const DEFAULT_THINKING_BUDGET = Number(
-  process.env.CLAUDE_THINKING_BUDGET || '10000',
+  process.env.OPENROUTER_THINKING_BUDGET || '10000',
 )
 
 // Temperature: 0.15 = data-driven quant scientist, minimal hallucination.
 const DEFAULT_TEMPERATURE = 0.15
 
-// ── Provider routing ────────────────────────────────────────────────
-// OIDC-only path: Vercel AI Gateway via OIDC/CLI auth context.
+const openrouter = createOpenAI({
+  baseURL: OPENROUTER_BASE_URL,
+  apiKey: process.env.OPENROUTER_API_KEY,
+  name: 'openrouter',
+  headers: {
+    ...(process.env.OPENROUTER_HTTP_REFERER
+      ? { 'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER }
+      : {}),
+    ...(process.env.OPENROUTER_X_TITLE
+      ? { 'X-Title': process.env.OPENROUTER_X_TITLE }
+      : {}),
+  },
+})
 
-function hasGatewayOidcContext(): boolean {
-  return Boolean(process.env.VERCEL || process.env.VERCEL_OIDC_TOKEN)
+function hasOpenRouterApiKey(): boolean {
+  return Boolean(process.env.OPENROUTER_API_KEY)
 }
 
-/** Get the model instance for the current provider. */
-function getModel(): LanguageModel {
-  // Vercel AI Gateway via OIDC/CLI auth context only.
-  return gateway(GATEWAY_MODEL_ID)
+function getTextModel(): LanguageModel {
+  return openrouter.chat(OPENROUTER_TEXT_MODEL_ID)
 }
 
-// ── Anthropic-specific options (gateway mode) ───────────────────
-
-function thinkingOptions(
-  budget: number = DEFAULT_THINKING_BUDGET,
-): { anthropic: AnthropicLanguageModelOptions } {
-  return {
-    anthropic: {
-      thinking: { type: 'enabled', budgetTokens: budget },
-    } satisfies AnthropicLanguageModelOptions,
-  }
+function getVisionModel(): LanguageModel {
+  return openrouter.chat(OPENROUTER_VISION_MODEL_ID)
 }
 
 // ── Public API ─────────────────────────────────────────────────────
@@ -71,7 +75,7 @@ function thinkingOptions(
 export interface AITextOptions {
   /** Max output tokens (default: 2000) */
   maxTokens?: number
-  /** Thinking budget in tokens (default: 10000). Set 0 to disable thinking. */
+  /** Compatibility knob retained from the previous provider contract. */
   thinkingBudget?: number
   /** AbortSignal for timeout support */
   signal?: AbortSignal
@@ -85,7 +89,7 @@ export interface AIVisionOptions extends AITextOptions {
 }
 
 /**
- * Generate text with Claude + extended thinking.
+ * Generate text from the configured text model.
  * Single prompt in, text out. Used by forecast, synthesis, instant-analysis.
  */
 export async function generateAIText(
@@ -98,15 +102,13 @@ export async function generateAIText(
     signal,
   } = options
 
-  const useThinking = thinkingBudget > 0
-  const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
+  void thinkingBudget
 
   const result = await generateText({
-    model: getModel(),
+    model: getTextModel(),
     prompt,
     maxOutputTokens: maxTokens,
-    temperature: useThinking ? undefined : DEFAULT_TEMPERATURE,
-    ...(providerOpts && { providerOptions: providerOpts }),
+    temperature: DEFAULT_TEMPERATURE,
     ...(signal && { abortSignal: signal }),
   })
 
@@ -129,27 +131,24 @@ export async function generateAIVision(
     signal,
   } = options
 
-  const useThinking = thinkingBudget > 0
-  const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
+  void thinkingBudget
 
   const result = await generateText({
-    model: getModel(),
+    model: getVisionModel(),
     messages: [
       {
         role: 'user',
         content: [
           {
             type: 'image',
-            image: imageBase64,
-            mediaType: mimeType,
+            image: `data:${mimeType};base64,${imageBase64}`,
           },
           { type: 'text', text: textPrompt },
         ],
       },
     ],
     maxOutputTokens: maxTokens,
-    temperature: useThinking ? undefined : DEFAULT_TEMPERATURE,
-    ...(providerOpts && { providerOptions: providerOpts }),
+    temperature: DEFAULT_TEMPERATURE,
     ...(signal && { abortSignal: signal }),
   })
 
@@ -170,15 +169,13 @@ export async function generateAIChat(
     signal,
   } = options
 
-  const useThinking = thinkingBudget > 0
-  const providerOpts = useThinking ? thinkingOptions(thinkingBudget) : undefined
+  void thinkingBudget
 
   const result = await generateText({
-    model: getModel(),
+    model: getTextModel(),
     messages,
     maxOutputTokens: maxTokens,
-    temperature: useThinking ? undefined : DEFAULT_TEMPERATURE,
-    ...(providerOpts && { providerOptions: providerOpts }),
+    temperature: DEFAULT_TEMPERATURE,
     ...(signal && { abortSignal: signal }),
   })
 
@@ -187,17 +184,17 @@ export async function generateAIChat(
 
 /**
  * Check if AI is available.
- * OIDC-only mode is available when OIDC/CLI auth context is present.
+ * OpenRouter mode is available when the API key is configured.
  */
 export function isAIAvailable(): boolean {
-  return hasGatewayOidcContext()
+  return hasOpenRouterApiKey()
 }
 
 /**
- * Get the current model ID (for logging/debugging).
+ * Get the current text model ID (for logging/debugging).
  */
 export function getModelId(): string {
-  return GATEWAY_MODEL_ID
+  return OPENROUTER_TEXT_MODEL_ID
 }
 
 /**
@@ -205,7 +202,7 @@ export function getModelId(): string {
  */
 export function getAuthMethod():
   AIAuthMethod {
-  if (hasGatewayOidcContext()) return 'gateway_oidc'
+  if (hasOpenRouterApiKey()) return 'openrouter_api_key'
   return 'none'
 }
 
@@ -254,7 +251,7 @@ export function classifyAIError(error: unknown): AIErrorClassification {
   ) {
     return {
       category: 'service_unavailable',
-      publicMessage: 'AI gateway is currently unavailable (billing or quota issue).',
+      publicMessage: 'AI service is currently unavailable (billing or quota issue).',
       rawMessage,
     }
   }
@@ -282,13 +279,13 @@ export function classifyAIError(error: unknown): AIErrorClassification {
   ) {
     return {
       category: 'availability',
-      publicMessage: 'AI provider connection is not configured (CLI/OIDC).',
+      publicMessage: 'AI provider connection is not configured (OPENROUTER_API_KEY).',
       rawMessage,
     }
   }
 
   if (
-    /gateway|service unavailable|bad gateway|upstream|internal server error|502|503|504|connection reset|socket hang up/.test(
+    /service unavailable|bad gateway|upstream|internal server error|502|503|504|connection reset|socket hang up/.test(
       msg,
     )
   ) {

@@ -66,7 +66,7 @@ function formatCandles(candles: CandleData[], limit: number): string {
 export async function POST(request: Request): Promise<Response> {
   if (!isAIAvailable()) {
     return NextResponse.json(
-      { error: 'AI provider connection is not configured (CLI/OIDC).' },
+      { error: 'AI provider connection is not configured (OPENROUTER_API_KEY).' },
       { status: 503 }
     )
   }

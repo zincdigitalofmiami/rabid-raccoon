@@ -37,7 +37,7 @@ Required content:
 
     if (!isAIAvailable()) {
       return NextResponse.json(
-        { error: "AI synthesis unavailable: AI provider connection is not configured (CLI/OIDC)." },
+        { error: "AI synthesis unavailable: AI provider connection is not configured (OPENROUTER_API_KEY)." },
         { status: 503 },
       );
     }
