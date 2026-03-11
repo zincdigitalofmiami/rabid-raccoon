@@ -278,10 +278,6 @@ export function computeSignals(candles: CandleData[]): SignalSummary {
       const sigVal = ema(macdArr, 9)
       if (sigVal != null) {
         const hist = macdLine - sigVal
-        const prevSigVal = ema(macdArr.slice(0, -1), 9)
-        const histPrev = macdArr.length >= 2
-          ? macdArr[macdArr.length - 2] - (prevSigVal ?? sigVal)
-          : hist
         // Signal 1: MACD line vs zero
         check(`CM-MACD line ${macdLine > 0 ? 'above' : 'below'} zero (${macdLine.toFixed(2)})`, macdLine > 0)
         // Signal 2: MACD line vs signal line (color: lime=above, red=below)
@@ -497,13 +493,6 @@ interface MesTimeframeSnapshot {
 
 type MesTimeframes = Record<TimeframeLabel, MesTimeframeSnapshot>
 
-interface MesLevels {
-  entry: number
-  stop: number
-  target: number
-  source: 'MEASURED_MOVE' | 'DETERMINISTIC_FALLBACK'
-}
-
 type VixRegime = 'LOW' | 'MODERATE' | 'HIGH'
 
 interface DirectionBias {
@@ -585,106 +574,6 @@ function applyVixBias(
   return { direction, confidence: baseConfidence, note: null }
 }
 
-function selectMesMeasuredMove(
-  measuredMoves: MeasuredMove[],
-  direction: 'BUY' | 'SELL'
-): MeasuredMove | null {
-  if (measuredMoves.length === 0) return null
-  const wantedDirection = direction === 'BUY' ? 'BULLISH' : 'BEARISH'
-  return (
-    measuredMoves.find((m) => m.status === 'ACTIVE' && m.direction === wantedDirection) ||
-    measuredMoves.find((m) => m.direction === wantedDirection) ||
-    measuredMoves.find((m) => m.status === 'ACTIVE') ||
-    measuredMoves[0] ||
-    null
-  )
-}
-
-function computeMesLevels(
-  timeframe: TimeframeLabel,
-  mesTimeframe: MesTimeframeSnapshot,
-  mesPrice: number,
-  direction: 'BUY' | 'SELL',
-  vixLevel: number | null
-): MesLevels {
-  const mesMove = selectMesMeasuredMove(mesTimeframe.measuredMoves, direction)
-  if (
-    mesMove &&
-    ((direction === 'BUY' && mesMove.direction === 'BULLISH') ||
-      (direction === 'SELL' && mesMove.direction === 'BEARISH'))
-  ) {
-    return {
-      entry: mesMove.entry,
-      stop: mesMove.stop,
-      target: mesMove.target,
-      source: 'MEASURED_MOVE',
-    }
-  }
-
-  const atrValue = atr(mesTimeframe.candles, 14)
-  const baseRisk =
-    atrValue != null && Number.isFinite(atrValue) && atrValue > 0
-      ? Math.max(atrValue * 0.85, mesPrice * 0.0008, 1.5)
-      : Math.max(mesPrice * 0.0012, 1.5)
-
-  const riskMultiplierByTf: Record<TimeframeLabel, number> = {
-    '15M': 1,
-    '1H': 1.5,
-    '4H': 2.2,
-  }
-  const rewardMultiplierByTf: Record<TimeframeLabel, number> = {
-    '15M': 1.8,
-    '1H': 2.0,
-    '4H': 2.2,
-  }
-  const vixRegime = classifyVixRegime(vixLevel)
-  const riskMultiplierByVix: Record<VixRegime, number> = {
-    LOW: 0.9,
-    MODERATE: 1.0,
-    HIGH: 1.25,
-  }
-  const rewardMultiplierByVix: Record<VixRegime, number> = {
-    LOW: 1.08,
-    MODERATE: 1.0,
-    HIGH: 0.92,
-  }
-  const entryOffsetByVix: Record<VixRegime, number> = {
-    LOW: 0.9,
-    MODERATE: 1.0,
-    HIGH: 1.3,
-  }
-
-  const risk = baseRisk * riskMultiplierByTf[timeframe] * riskMultiplierByVix[vixRegime]
-  const reward = risk * rewardMultiplierByTf[timeframe] * rewardMultiplierByVix[vixRegime]
-  const entryOffsetMultiplierByTf: Record<TimeframeLabel, number> = {
-    '15M': 0.2,
-    '1H': 0.28,
-    '4H': 0.38,
-  }
-  const entryOffset = Math.max(
-    risk * entryOffsetMultiplierByTf[timeframe] * entryOffsetByVix[vixRegime],
-    mesPrice * 0.00004,
-    0.25
-  )
-
-  if (direction === 'BUY') {
-    const entry = mesPrice - entryOffset
-    return {
-      entry,
-      stop: entry - risk,
-      target: entry + reward,
-      source: 'DETERMINISTIC_FALLBACK',
-    }
-  }
-  const entry = mesPrice + entryOffset
-  return {
-    entry,
-    stop: entry + risk,
-    target: entry - reward,
-    source: 'DETERMINISTIC_FALLBACK',
-  }
-}
-
 function calcRiskReward(entry: number, stop: number, target: number): number {
   const risk = Math.abs(entry - stop)
   if (risk <= 0) return 0
@@ -692,85 +581,28 @@ function calcRiskReward(entry: number, stop: number, target: number): number {
   return Number((reward / risk).toFixed(2))
 }
 
-function computeAtrSymbolLevels(
-  candles: CandleData[],
-  symbolPrice: number,
-  verdict: 'BUY' | 'SELL',
-  vixLevel: number | null
-): { entry: number; stop: number; target1: number; target2: number; riskReward: number } {
-  const atrValue = atr(candles, 14)
-  const vixRegime = classifyVixRegime(vixLevel)
-  const baseRisk =
-    atrValue != null && Number.isFinite(atrValue) && atrValue > 0
-      ? Math.max(atrValue * 0.85, symbolPrice * 0.0008, 0.2)
-      : Math.max(symbolPrice * 0.0012, 0.2)
-
-  const riskMultiplierByVix: Record<VixRegime, number> = {
-    LOW: 0.9,
-    MODERATE: 1.0,
-    HIGH: 1.2,
-  }
-  const rewardMultiplierByVix: Record<VixRegime, number> = {
-    LOW: 2.1,
-    MODERATE: 2.0,
-    HIGH: 1.85,
-  }
-  const entryOffsetByVix: Record<VixRegime, number> = {
-    LOW: 0.9,
-    MODERATE: 1.0,
-    HIGH: 1.25,
-  }
-
-  const risk = baseRisk * riskMultiplierByVix[vixRegime]
-  const reward1 = risk * rewardMultiplierByVix[vixRegime]
-  const entryOffset = Math.max(
-    risk * 0.22 * entryOffsetByVix[vixRegime],
-    symbolPrice * 0.00006,
-    0.2
-  )
-
-  if (verdict === 'BUY') {
-    const entry = symbolPrice - entryOffset
-    const stop = entry - risk
-    const target1 = entry + reward1
-    const target2 = target1 + reward1 * 0.45
-    return {
-      entry,
-      stop,
-      target1,
-      target2,
-      riskReward: calcRiskReward(entry, stop, target1),
-    }
-  }
-
-  const entry = symbolPrice + entryOffset
-  const stop = entry + risk
-  const target1 = entry - reward1
-  const target2 = target1 - reward1 * 0.45
-  return {
-    entry,
-    stop,
-    target1,
-    target2,
-    riskReward: calcRiskReward(entry, stop, target1),
-  }
-}
-
-function getMesReasonPrefix(
-  timeframe: TimeframeLabel,
-  source: MesLevels['source']
-): string {
-  return source === 'MEASURED_MOVE'
-    ? `Deterministic ${timeframe} MES measured move`
-    : `Deterministic ${timeframe} MES ATR levels`
-}
-
-function formatMesLevelsReason(timeframe: TimeframeLabel, levels: MesLevels): string {
-  return `${getMesReasonPrefix(timeframe, levels.source)}: entry ${levels.entry.toFixed(2)}, stop ${levels.stop.toFixed(2)}, target ${levels.target.toFixed(2)}.`
-}
-
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function requireFiniteNumber(value: unknown, label: string): number {
+  const parsed = toFiniteNumber(value)
+  if (parsed == null) {
+    throw new Error(`AI overlay unavailable: invalid ${label}.`)
+  }
+  return parsed
+}
+
+function requireString(value: unknown, label: string): string {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.trim()
+  }
+  throw new Error(`AI overlay unavailable: invalid ${label}.`)
+}
+
+function parseDirection(value: unknown, label: string): 'BUY' | 'SELL' {
+  if (value === 'BUY' || value === 'SELL') return value
+  throw new Error(`AI overlay unavailable: invalid ${label}.`)
 }
 
 function isDirectionalLevelOrder(
@@ -783,144 +615,129 @@ function isDirectionalLevelOrder(
   return target < entry && entry < stop
 }
 
+function assertDirectionalLevelOrder(
+  direction: 'BUY' | 'SELL',
+  entry: number,
+  stop: number,
+  target: number,
+  label: string,
+): void {
+  if (!isDirectionalLevelOrder(direction, entry, stop, target)) {
+    throw new Error(`AI overlay unavailable: invalid directional level order for ${label}.`)
+  }
+}
+
+function assertEntrySide(
+  direction: 'BUY' | 'SELL',
+  entry: number,
+  spotPrice: number,
+  label: string,
+): void {
+  const directionalBuffer = Math.max(spotPrice * 0.00008, 0.5)
+  const valid =
+    (direction === 'BUY' && entry < spotPrice - directionalBuffer) ||
+    (direction === 'SELL' && entry > spotPrice + directionalBuffer)
+  if (!valid) {
+    throw new Error(`AI overlay unavailable: invalid entry side for ${label}.`)
+  }
+}
+
 function normalizeAiGaugeLevels(
   raw: RawGaugeSnapshot,
   aiGauge: AnalysisAiResponse['timeframeGauges'][number] | undefined,
-  mesTimeframes: MesTimeframes,
   mesPrice: number,
-  vixLevel: number | null
 ): { entry: number; stop: number; target: number; reasoning: string } {
-  const fallback = computeMesLevels(
-    raw.timeframe,
-    mesTimeframes[raw.timeframe],
-    mesPrice,
+  if (!aiGauge) {
+    throw new Error(`AI overlay unavailable: missing timeframe gauge for ${raw.timeframe}.`)
+  }
+
+  const entry = requireFiniteNumber(aiGauge.entry, `${raw.timeframe} entry`)
+  const stop = requireFiniteNumber(aiGauge.stop, `${raw.timeframe} stop`)
+  const target = requireFiniteNumber(aiGauge.target, `${raw.timeframe} target`)
+  const reasoning = requireString(aiGauge.reasoning, `${raw.timeframe} reasoning`)
+
+  assertDirectionalLevelOrder(
     raw.direction,
-    vixLevel
+    entry,
+    stop,
+    target,
+    `${raw.timeframe} gauge`,
   )
-  const fallbackReason = formatMesLevelsReason(raw.timeframe, fallback)
-
-  const entry = toFiniteNumber(aiGauge?.entry)
-  const stop = toFiniteNumber(aiGauge?.stop)
-  const target = toFiniteNumber(aiGauge?.target)
-
-  if (entry == null || stop == null || target == null) {
-    return {
-      entry: fallback.entry,
-      stop: fallback.stop,
-      target: fallback.target,
-      reasoning: fallbackReason,
-    }
-  }
-
-  if (!isDirectionalLevelOrder(raw.direction, entry, stop, target)) {
-    return {
-      entry: fallback.entry,
-      stop: fallback.stop,
-      target: fallback.target,
-      reasoning: fallbackReason,
-    }
-  }
-
-  const directionalBuffer = Math.max(
-    Math.abs(fallback.entry - mesPrice) * 0.5,
-    mesPrice * 0.00008,
-    0.5
-  )
-  const violatesDirectionalSide =
-    (raw.direction === 'BUY' && entry >= mesPrice - directionalBuffer) ||
-    (raw.direction === 'SELL' && entry <= mesPrice + directionalBuffer)
-
-  if (violatesDirectionalSide) {
-    return {
-      entry: fallback.entry,
-      stop: fallback.stop,
-      target: fallback.target,
-      reasoning: fallbackReason,
-    }
-  }
+  assertEntrySide(raw.direction, entry, mesPrice, `${raw.timeframe} gauge`)
 
   return {
     entry,
     stop,
     target,
-    reasoning: aiGauge?.reasoning?.trim() || fallbackReason,
+    reasoning,
   }
-}
-
-function normalizeVerdict(value: unknown, fallback: 'BUY' | 'SELL'): 'BUY' | 'SELL' {
-  if (value === 'BUY' || value === 'SELL') return value
-  return fallback
 }
 
 function normalizeAiSymbol(
   aiSymbol: AnalysisAiResponse['symbols'][number] | undefined,
-  fallback: InstantSymbolResult,
-  symbolPrice: number,
+  signalSnapshot: SymbolSignalSnapshot,
   vixLevel: number | null
 ): InstantSymbolResult {
-  if (!aiSymbol) return fallback
-
-  const verdict = normalizeVerdict(aiSymbol.verdict, normalizeVerdict(fallback.verdict, 'BUY'))
-  const confidenceRaw = toFiniteNumber(aiSymbol.confidence)
-  const confidence = confidenceRaw == null
-    ? fallback.confidence
-    : Math.max(50, Math.min(95, Math.round(confidenceRaw)))
-
-  const entry = toFiniteNumber(aiSymbol.entry)
-  const stop = toFiniteNumber(aiSymbol.stop)
-  const target1 = toFiniteNumber(aiSymbol.target1)
-  const target2 = toFiniteNumber(aiSymbol.target2)
-
-  const hasDirectionalOrder =
-    entry != null &&
-    stop != null &&
-    target1 != null &&
-    isDirectionalLevelOrder(verdict, entry, stop, target1)
-
-  const directionalBuffer = Math.max(symbolPrice * 0.00008, 0.5)
-  const validDirectionalSide =
-    entry != null &&
-    ((verdict === 'BUY' && entry < symbolPrice - directionalBuffer) ||
-      (verdict === 'SELL' && entry > symbolPrice + directionalBuffer))
-
-  const mesVixHardShort =
-    fallback.symbol === 'MES' &&
-    vixLevel != null &&
-    vixLevel >= 20 &&
-    verdict === 'BUY'
-  if (mesVixHardShort) {
-    return {
-      ...fallback,
-      reasoning: `VIX ${vixLevel.toFixed(2)} >= 20.00 hard short filter applied. ${fallback.reasoning}`,
-    }
+  if (!aiSymbol) {
+    throw new Error(`AI overlay unavailable: missing symbol analysis for ${signalSnapshot.symbol}.`)
   }
 
-  if (!hasDirectionalOrder || !validDirectionalSide) {
-    return {
-      ...fallback,
-      reasoning: fallback.reasoning,
-    }
+  const verdict = parseDirection(aiSymbol.verdict, `${signalSnapshot.symbol} verdict`)
+  const confidence = Math.round(
+    requireFiniteNumber(aiSymbol.confidence, `${signalSnapshot.symbol} confidence`),
+  )
+  if (confidence < 50 || confidence > 95) {
+    throw new Error(`AI overlay unavailable: invalid confidence for ${signalSnapshot.symbol}.`)
   }
 
-  const normalizedTarget2 = target2 != null
-    ? (verdict === 'BUY' ? Math.max(target2, target1) : Math.min(target2, target1))
-    : target1
+  const entry = requireFiniteNumber(aiSymbol.entry, `${signalSnapshot.symbol} entry`)
+  const stop = requireFiniteNumber(aiSymbol.stop, `${signalSnapshot.symbol} stop`)
+  const target1 = requireFiniteNumber(aiSymbol.target1, `${signalSnapshot.symbol} target1`)
+  const target2 = requireFiniteNumber(aiSymbol.target2, `${signalSnapshot.symbol} target2`)
 
-  const risk = Math.abs(entry - stop)
-  const reward = Math.abs(target1 - entry)
-  const rr = risk > 0 ? reward / risk : 0
+  assertDirectionalLevelOrder(verdict, entry, stop, target1, `${signalSnapshot.symbol} symbol`)
+  assertEntrySide(verdict, entry, signalSnapshot.price, `${signalSnapshot.symbol} symbol`)
+
+  if (signalSnapshot.symbol === 'MES' && vixLevel != null && vixLevel >= 20 && verdict === 'BUY') {
+    throw new Error('AI overlay unavailable: MES verdict violates VIX hard short filter.')
+  }
+  if (verdict === 'BUY' && target2 < target1) {
+    throw new Error(`AI overlay unavailable: invalid target ladder for ${signalSnapshot.symbol}.`)
+  }
+  if (verdict === 'SELL' && target2 > target1) {
+    throw new Error(`AI overlay unavailable: invalid target ladder for ${signalSnapshot.symbol}.`)
+  }
+
+  const rr = calcRiskReward(entry, stop, target1)
+  if (!Number.isFinite(rr) || rr <= 0) {
+    throw new Error(`AI overlay unavailable: invalid risk/reward for ${signalSnapshot.symbol}.`)
+  }
+
+  const aiSymbolName = requireString(aiSymbol.symbol, `${signalSnapshot.symbol} symbol field`)
+  if (aiSymbolName !== signalSnapshot.symbol) {
+    throw new Error(
+      `AI overlay unavailable: symbol mismatch (expected ${signalSnapshot.symbol}, got ${aiSymbolName}).`,
+    )
+  }
+  const reasoning = requireString(aiSymbol.reasoning, `${signalSnapshot.symbol} reasoning`)
 
   return {
-    symbol: aiSymbol.symbol || fallback.symbol,
+    symbol: signalSnapshot.symbol,
     verdict,
     confidence,
     entry,
     stop,
     target1,
-    target2: normalizedTarget2,
-    riskReward: Number.isFinite(rr) ? Number(rr.toFixed(2)) : fallback.riskReward,
-    reasoning: aiSymbol.reasoning?.trim() || fallback.reasoning,
-    signalBreakdown: fallback.signalBreakdown,
+    target2,
+    riskReward: rr,
+    reasoning,
+    signalBreakdown: signalSnapshot.breakdown.map((b) => ({
+      tf: b.tf,
+      buy: b.signals.buy,
+      sell: b.signals.sell,
+      neutral: b.signals.neutral,
+      total: b.signals.total,
+    })),
   }
 }
 
@@ -1022,178 +839,13 @@ function buildAnalysisCore(
   }
 }
 
-function buildDeterministicTimeframeGauges(
-  rawGauges: RawGaugeSnapshot[],
-  mesTimeframes: MesTimeframes,
-  mesPrice: number,
-  vixLevel: number | null
-): TimeframeGauge[] {
-  return rawGauges.map(raw => {
-    const bias = applyVixBias(raw.direction, raw.confidence, vixLevel)
-    const adjustedRaw: RawGaugeSnapshot = {
-      ...raw,
-      direction: bias.direction,
-      confidence: bias.confidence,
-    }
-    const levels = computeMesLevels(
-      adjustedRaw.timeframe,
-      mesTimeframes[adjustedRaw.timeframe],
-      mesPrice,
-      adjustedRaw.direction,
-      vixLevel
-    )
-    return {
-      ...adjustedRaw,
-      entry: levels.entry,
-      stop: levels.stop,
-      target: levels.target,
-      reasoning: `${bias.note ? `${bias.note} ` : ''}${formatMesLevelsReason(adjustedRaw.timeframe, levels)}`,
-    }
-  })
-}
-
-function buildDeterministicSymbols(
-  signalData: SymbolSignalSnapshot[],
-  mesTimeframes: MesTimeframes,
-  vixLevel: number | null
-): InstantSymbolResult[] {
-  const mes = signalData.find((s) => s.symbol === 'MES')
-  const mesPrice = mes?.price || 0
-  return signalData.map((s) => {
-    const primary = s.breakdown.find((b) => b.tfLabel === '15M') || s.breakdown[0]
-    if (!primary) {
-      return {
-        symbol: s.symbol,
-        verdict: 'BUY',
-        confidence: 50,
-        entry: s.price,
-        stop: 0,
-        target1: 0,
-        target2: 0,
-        riskReward: 0,
-        reasoning: 'Insufficient candles for deterministic signal breakdown.',
-        signalBreakdown: [],
-      }
-    }
-
-    const voting = primary.signals.buy + primary.signals.sell
-    let verdict: 'BUY' | 'SELL' =
-      primary.signals.buy >= primary.signals.sell ? 'BUY' : 'SELL'
-    let confidence = voting > 0
-      ? Math.round((Math.max(primary.signals.buy, primary.signals.sell) / voting) * 100)
-      : 50
-    const mesBias = s.symbol === 'MES' ? applyVixBias(verdict, confidence, vixLevel) : null
-    if (mesBias) {
-      verdict = mesBias.direction
-      confidence = mesBias.confidence
-    }
-    const rationale = verdict === 'BUY'
-      ? (primary.signals.buySignals.slice(0, 2).join(' | ') || 'Buy votes exceeded sell votes.')
-      : (primary.signals.sellSignals.slice(0, 2).join(' | ') || 'Sell votes exceeded buy votes.')
-    const mesLevels = s.symbol === 'MES'
-      ? computeMesLevels('15M', mesTimeframes['15M'], mesPrice || s.price, verdict, vixLevel)
-      : null
-    const fallbackLevels = s.symbol === 'MES' && mesLevels
-      ? (() => {
-        const target2 =
-          verdict === 'BUY'
-            ? mesLevels.target + Math.abs(mesLevels.target - mesLevels.entry) * 0.45
-            : mesLevels.target - Math.abs(mesLevels.target - mesLevels.entry) * 0.45
-        return {
-          entry: mesLevels.entry,
-          stop: mesLevels.stop,
-          target1: mesLevels.target,
-          target2,
-          riskReward: calcRiskReward(mesLevels.entry, mesLevels.stop, mesLevels.target),
-        }
-      })()
-      : computeAtrSymbolLevels(s.candles15m, s.price, verdict, vixLevel)
-    const levelReason =
-      s.symbol === 'MES' && mesLevels
-        ? `MES ${mesLevels.source === 'MEASURED_MOVE' ? 'measured move' : 'fallback'} levels applied.`
-        : 'ATR-derived deterministic levels applied.'
-
-    return {
-      symbol: s.symbol,
-      verdict,
-      confidence,
-      entry: fallbackLevels.entry,
-      stop: fallbackLevels.stop,
-      target1: fallbackLevels.target1,
-      target2: fallbackLevels.target2,
-      riskReward: fallbackLevels.riskReward,
-      reasoning:
-        `${mesBias?.note ? `${mesBias.note} ` : ''}Deterministic ${primary.tfLabel} vote: ` +
-        `${primary.signals.buy}B/${primary.signals.sell}S/${primary.signals.neutral}N. ` +
-        `${levelReason} ${rationale}`,
-      signalBreakdown: s.breakdown.map((b) => ({
-        tf: b.tf,
-        buy: b.signals.buy,
-        sell: b.signals.sell,
-        neutral: b.signals.neutral,
-        total: b.signals.total,
-      })),
-    }
-  })
-}
-
-export function runDeterministicAnalysis(
-  allData: Map<string, { candles15m: CandleData[]; candles1h: CandleData[]; candles4h: CandleData[]; price: number }>,
-  symbolNames: Map<string, string>,
-  marketContext: MarketContext,
-): InstantAnalysisResult {
-  const core = buildAnalysisCore(allData, symbolNames)
-  const vixLevel = vixLevelFromSignalData(core.signalData)
-  const mesPrice = core.signalData.find((s) => s.symbol === 'MES')?.price || 0
-  const timeframeGauges = buildDeterministicTimeframeGauges(
-    core.rawGauges,
-    core.mesTimeframes,
-    mesPrice,
-    vixLevel
-  )
-  const symbols = buildDeterministicSymbols(core.signalData, core.mesTimeframes, vixLevel)
-  const leadGauge = timeframeGauges.find((g) => g.timeframe === '15M') || timeframeGauges[0]
-
-  const overallVerdict = leadGauge?.direction || 'BUY'
-  const overallConfidence = leadGauge?.confidence ?? 50
-  const narrative =
-    `Deterministic signal-only mode. MES ${leadGauge?.timeframe || 'N/A'} vote is ` +
-    `${leadGauge?.direction || 'NEUTRAL'} at ${overallConfidence}% confidence. ` +
-    `${formatVixSnapshot(vixLevel)}. ` +
-    `Regime: ${marketContext.regime}. ${marketContext.regimeFactors.slice(0, 2).join(' ')}`
-
-  return {
-    timestamp: new Date().toISOString(),
-    overallVerdict,
-    overallConfidence,
-    narrative,
-    timeframeGauges,
-    symbols,
-    totalSignalsAnalysed: core.grandTotal,
-    chartData: core.chartData,
-    marketContext: {
-      regime: marketContext.regime,
-      regimeFactors: marketContext.regimeFactors,
-      correlations: marketContext.correlations,
-      headlines: marketContext.headlines,
-      goldContext: marketContext.goldContext,
-      oilContext: marketContext.oilContext,
-      yieldContext: marketContext.yieldContext,
-      techLeaders: marketContext.techLeaders,
-      themeScores: marketContext.themeScores,
-      shockReactions: marketContext.shockReactions,
-      breakout7000: marketContext.breakout7000,
-    },
-  }
-}
-
 export async function runInstantAnalysis(
   allData: Map<string, { candles15m: CandleData[]; candles1h: CandleData[]; candles4h: CandleData[]; price: number }>,
   symbolNames: Map<string, string>,
   marketContext: MarketContext,
 ): Promise<InstantAnalysisResult> {
   const core = buildAnalysisCore(allData, symbolNames)
-  const { signalData, rawGauges, grandTotal, chartData, mesTimeframes } = core
+  const { signalData, rawGauges, grandTotal, chartData } = core
   const vixLevel = vixLevelFromSignalData(signalData)
   const vixSnapshot = formatVixSnapshot(vixLevel)
 
@@ -1361,8 +1013,12 @@ CRITICAL:
     throw new Error('AI overlay unavailable: model returned empty response.')
   }
 
-  // Step 4: Merge raw signal data with AI levels
+  // Step 4: Validate and merge AI response with raw signal metadata
   const mesPrice = signalData.find((s) => s.symbol === 'MES')?.price || 0
+  if (mesPrice <= 0) {
+    throw new Error('AI overlay unavailable: MES spot price is missing.')
+  }
+
   const timeframeGauges: TimeframeGauge[] = rawGauges.map(raw => {
     const bias = applyVixBias(raw.direction, raw.confidence, vixLevel)
     const adjustedRaw: RawGaugeSnapshot = {
@@ -1374,9 +1030,7 @@ CRITICAL:
     const normalized = normalizeAiGaugeLevels(
       adjustedRaw,
       aiGauge,
-      mesTimeframes,
       mesPrice,
-      vixLevel
     )
     return {
       ...adjustedRaw,
@@ -1387,24 +1041,28 @@ CRITICAL:
     }
   })
 
-  const fallbackSymbols = buildDeterministicSymbols(signalData, mesTimeframes, vixLevel)
-  const signalBySymbol = new Map(signalData.map((s) => [s.symbol, s]))
   const parsedSymbols = Array.isArray(parsed.symbols) ? parsed.symbols : []
   const parsedBySymbol = new Map(parsedSymbols.map((s) => [s.symbol, s]))
-  const mergedSymbols = fallbackSymbols.map((fallback) => {
-    const signalSnapshot = signalBySymbol.get(fallback.symbol)
-    const symbolPrice = signalSnapshot?.price || fallback.entry || 0
-    return normalizeAiSymbol(parsedBySymbol.get(fallback.symbol), fallback, symbolPrice, vixLevel)
+  const mergedSymbols = signalData.map((signalSnapshot) => {
+    return normalizeAiSymbol(parsedBySymbol.get(signalSnapshot.symbol), signalSnapshot, vixLevel)
   })
 
+  const overallConfidenceRaw = Math.round(
+    requireFiniteNumber(parsed.overallConfidence, 'overallConfidence'),
+  )
+  if (overallConfidenceRaw < 50 || overallConfidenceRaw > 95) {
+    throw new Error('AI overlay unavailable: overallConfidence must be between 50 and 95.')
+  }
+
   const overallBias = applyVixBias(
-    normalizeVerdict(parsed.overallVerdict, 'BUY'),
-    toFiniteNumber(parsed.overallConfidence) ?? 50,
+    parseDirection(parsed.overallVerdict, 'overallVerdict'),
+    overallConfidenceRaw,
     vixLevel
   )
   const overallVerdict = overallBias.direction
   const overallConfidence = overallBias.confidence
-  const narrative = `${overallBias.note ? `${overallBias.note} ` : ''}${parsed.narrative}`
+  const narrativeRaw = requireString(parsed.narrative, 'narrative')
+  const narrative = `${overallBias.note ? `${overallBias.note} ` : ''}${narrativeRaw}`
 
   return {
     timestamp: new Date().toISOString(),

@@ -237,7 +237,7 @@ export interface AIErrorClassification {
 }
 
 /**
- * Classify provider/runtime failures into deterministic fallback buckets.
+ * Classify provider/runtime failures into stable public error categories.
  * This keeps dashboard messaging truthful without leaking provider-specific jargon.
  */
 export function classifyAIError(error: unknown): AIErrorClassification {

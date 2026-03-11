@@ -7,7 +7,7 @@ interface Props {
 }
 
 export function ForecastMomentumWidget({ forecast, setupsData }: Props) {
-  // If we have a mes setup, we can show its targets. Otherwise fallback to forecast levels.
+  // Prefer MES setup targets when present; otherwise use forecast levels.
   const leadSetup = setupsData?.setups?.[0];
   const currentPrice = setupsData?.currentPrice ?? 0;
 
@@ -50,15 +50,7 @@ export function ForecastMomentumWidget({ forecast, setupsData }: Props) {
         </div>
       </div>
 
-      {/* Bottom Half: Momentum (Placeholder for Lightweight Charts Histogram) */}
-      <div className="flex-1 min-h-[160px] relative mt-4 border-t border-[var(--zf-border-soft)] pt-6">
-        <div className="absolute top-6 left-0 text-[var(--zf-text-muted)] text-xs font-bold uppercase z-10 pointer-events-none">
-          sqzMomentum <span className="opacity-50">| 15M (Real-time)</span>
-        </div>
-        <div className="w-full h-full bg-[var(--zf-surface)] rounded flex items-center justify-center text-[var(--zf-text-muted)] font-mono text-sm border border-[var(--zf-border-soft)]">
-          [ Mount Lightweight Charts Histogram Here ]
-        </div>
-      </div>
+      <div className="flex-1 min-h-[80px] relative mt-4 border-t border-[var(--zf-border-soft)] pt-6" />
     </div>
   );
 }

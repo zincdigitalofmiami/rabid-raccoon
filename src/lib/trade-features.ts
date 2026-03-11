@@ -739,22 +739,6 @@ export interface VolumeFeatures {
   paceAcceleration: number;
 }
 
-/** Default volume features when none are available (pre-market, no data). */
-export const DEFAULT_VOLUME_FEATURES: VolumeFeatures = {
-  rvol: 1.0,
-  rvolSession: 1.0,
-  volumeState: "BALANCED",
-  vwap: 0,
-  priceVsVwap: 0,
-  vwapBand: 0,
-  poc: 0,
-  priceVsPoc: 0,
-  inValueArea: true,
-  volumeConfirmation: false,
-  pocSlope: 0,
-  paceAcceleration: 0,
-};
-
 /**
  * Count news signals in the last 24 hours. Cached per minute.
  */
@@ -980,8 +964,8 @@ export async function computeTradeFeatures(
   marketContext: MarketContext,
   alignment: CorrelationAlignment,
   measuredMoves: MeasuredMove[],
-  prefetchedMacro?: WarbirdMacroFeatures,
-  prefetchedVolume?: VolumeFeatures,
+  prefetchedMacro: WarbirdMacroFeatures,
+  prefetchedVolume: VolumeFeatures,
   fibPrices?: number[],
 ): Promise<TradeFeatureVector> {
   // Technical indicators (pure, computed from candle window)
@@ -998,11 +982,11 @@ export async function computeTradeFeatures(
   // Price-action acceptance / failure (pure)
   const acceptance = computeAcceptanceContext(setup, candles, fibPrices);
 
-  // Macro features — use pre-fetched if available (avoids 7 duplicate queries per setup)
-  const macro = prefetchedMacro ?? await getWarbirdMacroFeatures(candles);
+  // Macro features — required prefetch from compute-signal
+  const macro = prefetchedMacro;
 
-  // Volume features — use pre-fetched from Python compute script
-  const vol = prefetchedVolume ?? DEFAULT_VOLUME_FEATURES;
+  // Volume features — required from Python compute script
+  const vol = prefetchedVolume;
 
   // News volume (async, cached)
   const newsVol = await getNewsVolume24h();

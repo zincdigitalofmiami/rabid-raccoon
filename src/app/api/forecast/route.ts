@@ -127,12 +127,11 @@ export async function GET(request: NextRequest) {
         macroCandlesMap.set(res.value.symbol, res.value.candles)
       }
     }
-    // Fallback to intraday candles for any symbols missing daily data.
-    for (const data of processedSymbols) {
-      if (macroCandlesMap.has(data.symbol)) continue
-      if (data.candles.length > 0) {
-        macroCandlesMap.set(data.symbol, data.candles)
-      }
+    if (macroCandlesMap.size === 0) {
+      return NextResponse.json(
+        { error: 'No daily market data available for forecast context' },
+        { status: 503 }
+      )
     }
     const priceChanges = new Map<string, number>()
     for (const [symbol, candles] of macroCandlesMap.entries()) {

@@ -57,7 +57,7 @@ function rowToCandle(row: {
 }
 
 async function buildResponseBody(): Promise<SetupsResponseBody> {
-  // 1. Fetch MES 15m candles (derive from 1m first, fallback to shared 15m table)
+  // 1. Fetch MES 15m candles derived from the 1m source of truth
   const rows = await readLatestMes15mRowsPrefer1m(200, 195)
 
   if (rows.length < 10) {

@@ -35,6 +35,49 @@ interface ChartAnalysisResponse {
   overallSummary: string
 }
 
+function parseChartAnalysisResponse(rawText: string): ChartAnalysisResponse {
+  const trimmed = rawText.trim()
+  if (!trimmed) {
+    throw new Error('Model returned empty chart analysis.')
+  }
+
+  const candidates: string[] = []
+  candidates.push(trimmed)
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  if (fenced?.[1]) {
+    candidates.push(fenced[1].trim())
+  }
+
+  const firstBrace = trimmed.indexOf('{')
+  const lastBrace = trimmed.lastIndexOf('}')
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1))
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as ChartAnalysisResponse
+      const hasTimeframes = Array.isArray(parsed.timeframes)
+      const hasBias =
+        parsed.overallBias === 'bullish' ||
+        parsed.overallBias === 'bearish' ||
+        parsed.overallBias === 'neutral'
+      const hasSummary =
+        typeof parsed.overallSummary === 'string' &&
+        parsed.overallSummary.trim().length > 0
+      if (!hasTimeframes || !hasBias || !hasSummary) {
+        continue
+      }
+      return parsed
+    } catch {
+      continue
+    }
+  }
+
+  throw new Error('Model returned invalid chart analysis JSON.')
+}
+
 function prismaRowToCandle(row: {
   eventTime: Date
   open: Decimal | number
@@ -154,18 +197,19 @@ Respond with ONLY valid JSON matching this schema (no markdown, no code fences):
       maxTokens: 4096,
     })
 
-    let jsonText = result.text.trim()
-    // Strip code fences if model wraps output
-    if (jsonText.startsWith('```')) {
-      jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-    }
-
-    const analysis: ChartAnalysisResponse = JSON.parse(jsonText)
+    const analysis = parseChartAnalysisResponse(result.text)
     return NextResponse.json(analysis)
   } catch (error) {
     const classified = classifyAIError(error)
     const msg = error instanceof Error ? error.message : String(error)
-    console.error('[analyse/chart]', msg)
+    console.error('[analyse/chart]', error)
+
+    if (/invalid chart analysis json|empty chart analysis/i.test(msg)) {
+      return NextResponse.json(
+        { error: 'Chart analysis unavailable: model returned invalid JSON.' },
+        { status: 502 }
+      )
+    }
 
     if (
       classified.category === 'availability' ||

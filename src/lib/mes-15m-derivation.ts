@@ -1,7 +1,6 @@
 import { toNum } from "./decimal";
 import {
   readLatestMes1mRows,
-  readLatestMes15mRows,
   type MesPriceRow,
 } from "./mes-live-queries";
 
@@ -128,15 +127,17 @@ export async function readLatestMes15mRowsPrefer1m(
   const derivedAsc = aggregateMes1mRowsTo15m(oneMinuteRows);
   const derivedDesc = derivedAsc.slice(-safeLimit).reverse();
 
-  if (
-    shouldUseDerivedMes15mRows({
-      derivedCount: derivedDesc.length,
-      requestedLimit: safeLimit,
-      minimumDerivedBars,
-    })
-  ) {
-    return derivedDesc;
+  const hasRequiredDerivedBars = shouldUseDerivedMes15mRows({
+    derivedCount: derivedDesc.length,
+    requestedLimit: safeLimit,
+    minimumDerivedBars,
+  });
+
+  if (!hasRequiredDerivedBars && minimumDerivedBars != null) {
+    throw new Error(
+      `Insufficient derived MES 15m bars from 1m source (${derivedDesc.length} < ${Math.trunc(minimumDerivedBars)}).`,
+    );
   }
 
-  return readLatestMes15mRows(safeLimit);
+  return derivedDesc;
 }

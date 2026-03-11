@@ -205,11 +205,8 @@ export async function loadAnalysisInputs(
     }
   }
 
-  // Fallback to available intraday/4h data only if daily pull failed.
-  for (const [symbol, data] of allData.entries()) {
-    if (macroCandlesMap.has(symbol)) continue
-    const fallback = data.candles4h.length > 0 ? data.candles4h : data.candles15m
-    if (fallback.length > 0) macroCandlesMap.set(symbol, fallback)
+  if (macroCandlesMap.size === 0) {
+    throw new Error('No daily market data available')
   }
 
   const priceChanges = new Map<string, number>()

@@ -2,50 +2,24 @@
 
 import { useState, useEffect } from "react";
 
-function buildLocalFallback(payload: any): string {
-  const forecast = payload?.forecast;
-  const correlation = payload?.correlation;
-  const eventContext = payload?.eventContext;
-  const risk = payload?.risk;
-
-  const direction =
-    forecast?.direction === "BULLISH"
-      ? "LONG"
-      : forecast?.direction === "BEARISH"
-        ? "SHORT"
-        : "NEUTRAL";
-
-  const confidence =
-    typeof forecast?.confidence === "number"
-      ? `${Math.round(forecast.confidence)}% confidence`
-      : "confidence pending";
-
-  const eventPhase = eventContext?.phase ?? "CLEAR";
-  const eventLabel =
-    eventContext?.label ?? "no active scheduled macro catalysts";
-
-  const alignment =
-    direction === "LONG"
-      ? correlation?.bullish
-      : direction === "SHORT"
-        ? correlation?.bearish
-        : correlation?.bullish;
-
-  const alignmentText = alignment
-    ? alignment.isAligned
-      ? "cross-asset alignment is supportive"
-      : "cross-asset alignment is mixed/divergent"
-    : "cross-asset alignment data is limited";
-
-  const riskText =
-    risk && typeof risk?.rr === "number"
-      ? `risk profile is ${risk.grade ?? "N/A"} with ${risk.rr.toFixed(1)}x R:R`
-      : "risk profile is still calibrating";
-
-  return `MES bias is ${direction} (${confidence}). ${alignmentText}; event phase is ${eventPhase} (${eventLabel}), and ${riskText}.`;
+interface AiSynthesisPayload {
+  forecast?: {
+    generatedAt?: string;
+    direction?: string;
+  } | null;
+  correlation?: {
+    timestamp?: string;
+  } | null;
+  eventContext?: {
+    phase?: string;
+    label?: string;
+  } | null;
+  risk?: {
+    grade?: string;
+  } | null;
 }
 
-export function useAiSynthesis(payload: any) {
+export function useAiSynthesis(payload: AiSynthesisPayload) {
   const [narrative, setNarrative] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,11 +45,14 @@ export function useAiSynthesis(payload: any) {
           throw new Error(err.error || "AI API failed");
         }
         const data = await res.json();
-        setNarrative(data.narrative || buildLocalFallback(payload));
+        if (!data?.narrative || typeof data.narrative !== "string") {
+          throw new Error("AI API returned empty narrative");
+        }
+        setNarrative(data.narrative);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unknown");
-        setNarrative(buildLocalFallback(payload));
+        setNarrative(null);
       } finally {
         setLoading(false);
       }

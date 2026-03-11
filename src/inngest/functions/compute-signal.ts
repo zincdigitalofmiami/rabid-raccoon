@@ -22,7 +22,6 @@
  */
 
 import { inngest } from '../client'
-import { prisma } from '@/lib/prisma'
 import { detectSwings } from '@/lib/swing-detection'
 import { calculateFibonacciMultiPeriod } from '@/lib/fibonacci'
 import { detectMeasuredMoves } from '@/lib/measured-move'
@@ -38,11 +37,10 @@ import {
   getWarbirdMacroFeatures,
   type VolumeFeatures,
   type VolumeState,
-  DEFAULT_VOLUME_FEATURES,
 } from '@/lib/trade-features'
 import { getMlBaseline } from '@/lib/ml-baseline'
 import { computeCompositeScore } from '@/lib/composite-score'
-import { buildDeterministicTradeReasoning, getTradeReasoning } from '@/lib/trade-reasoning'
+import { getTradeReasoning } from '@/lib/trade-reasoning'
 import { fetchDailyCandlesForSymbol } from '@/lib/fetch-candles'
 import { getSymbolsByRole } from '@/lib/symbol-registry'
 import { buildMarketContext } from '@/lib/market-context'
@@ -150,59 +148,6 @@ async function loadDailySymbolBarsByRole(roleKey: string): Promise<Map<string, C
   return symbolBars
 }
 
-function fallbackMarketContext(reason: string): MarketContext {
-  return {
-    regime: 'MIXED' as const,
-    regimeFactors: [reason],
-    correlations: [],
-    headlines: [],
-    goldContext: null,
-    oilContext: null,
-    yieldContext: null,
-    techLeaders: [],
-    themeScores: {
-      tariffs: 0,
-      rates: 0,
-      trump: 0,
-      analysts: 0,
-      aiTech: 0,
-      eventRisk: 0,
-    },
-    shockReactions: {
-      vixSpikeSample: 0,
-      vixSpikeAvgNextDayMesPct: null,
-      vixSpikeMedianNextDayMesPct: null,
-      yieldSpikeSample: 0,
-      yieldSpikeAvgNextDayMesPct: null,
-      yieldSpikeMedianNextDayMesPct: null,
-    },
-    breakout7000: null,
-    intermarketNarrative: reason,
-  }
-}
-
-function fallbackAlignment(
-  direction: TriggerDirection,
-  reason: string,
-): CorrelationAlignment {
-  return {
-    vix: 0,
-    dxy: 0,
-    nq: 0,
-    rty: 0,
-    zn: 0,
-    cl: 0,
-    euro: 0,
-    composite: 0,
-    isAligned: true,
-    details: `${direction} neutral fallback: ${reason}`,
-    activeSymbols: [],
-    alignedSymbols: [],
-    divergingSymbols: [],
-    ignoredSymbols: [],
-  }
-}
-
 const EMPTY_EVENT_CONTEXT: EventContext = {
   phase: 'CLEAR',
   event: null,
@@ -221,16 +166,16 @@ const EMPTY_EVENT_CONTEXT: EventContext = {
 
 // ── Volume features from Python ─────────────────────────────────────
 
-function toFiniteNumber(value: unknown, fallback: number): number {
+function toFiniteNumber(value: unknown, label: string): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && value.trim().length > 0) {
     const parsed = Number(value)
     if (Number.isFinite(parsed)) return parsed
   }
-  return fallback
+  throw new Error(`Invalid volume feature: ${label}`)
 }
 
-function toBoolean(value: unknown, fallback: boolean): boolean {
+function toBoolean(value: unknown, label: string): boolean {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value !== 0
   if (typeof value === 'string') {
@@ -238,11 +183,13 @@ function toBoolean(value: unknown, fallback: boolean): boolean {
     if (normalized === 'true') return true
     if (normalized === 'false') return false
   }
-  return fallback
+  throw new Error(`Invalid volume feature: ${label}`)
 }
 
-function toVolumeState(value: unknown, fallback: VolumeState): VolumeState {
-  if (typeof value !== 'string') return fallback
+function toVolumeState(value: unknown, label: string): VolumeState {
+  if (typeof value !== 'string') {
+    throw new Error(`Invalid volume feature: ${label}`)
+  }
   const normalized = value.trim().toUpperCase()
   switch (normalized) {
     case 'THIN':
@@ -252,14 +199,11 @@ function toVolumeState(value: unknown, fallback: VolumeState): VolumeState {
     case 'ABSORPTION':
       return normalized
     default:
-      return fallback
+      throw new Error(`Invalid volume feature: ${label}`)
   }
 }
 
-function parseVolumeScriptPayload(payload: unknown): {
-  features: VolumeFeatures
-  scriptError: string | null
-} {
+function parseVolumeScriptPayload(payload: unknown): VolumeFeatures {
   const root = payload && typeof payload === 'object'
     ? (payload as Record<string, unknown>)
     : {}
@@ -267,40 +211,23 @@ function parseVolumeScriptPayload(payload: unknown): {
     ? (root.features as Record<string, unknown>)
     : root
 
-  const scriptError =
-    typeof root.error === 'string' && root.error.trim().length > 0
-      ? root.error.trim()
-      : null
-
-  if (scriptError) {
-    return {
-      features: { ...DEFAULT_VOLUME_FEATURES },
-      scriptError,
-    }
+  if (typeof root.error === 'string' && root.error.trim().length > 0) {
+    throw new Error(`Volume script error: ${root.error.trim()}`)
   }
 
   return {
-    features: {
-      rvol: toFiniteNumber(source.rvol, DEFAULT_VOLUME_FEATURES.rvol),
-      rvolSession: toFiniteNumber(source.rvol_session, DEFAULT_VOLUME_FEATURES.rvolSession),
-      volumeState: toVolumeState(source.volume_state, DEFAULT_VOLUME_FEATURES.volumeState),
-      vwap: toFiniteNumber(source.vwap, DEFAULT_VOLUME_FEATURES.vwap),
-      priceVsVwap: toFiniteNumber(source.price_vs_vwap, DEFAULT_VOLUME_FEATURES.priceVsVwap),
-      vwapBand: Math.trunc(toFiniteNumber(source.vwap_band, DEFAULT_VOLUME_FEATURES.vwapBand)),
-      poc: toFiniteNumber(source.poc, DEFAULT_VOLUME_FEATURES.poc),
-      priceVsPoc: toFiniteNumber(source.price_vs_poc, DEFAULT_VOLUME_FEATURES.priceVsPoc),
-      inValueArea: toBoolean(source.in_value_area, DEFAULT_VOLUME_FEATURES.inValueArea),
-      volumeConfirmation: toBoolean(
-        source.volume_confirmation,
-        DEFAULT_VOLUME_FEATURES.volumeConfirmation,
-      ),
-      pocSlope: toFiniteNumber(source.poc_slope, DEFAULT_VOLUME_FEATURES.pocSlope),
-      paceAcceleration: toFiniteNumber(
-        source.pace_acceleration,
-        DEFAULT_VOLUME_FEATURES.paceAcceleration,
-      ),
-    },
-    scriptError: null,
+    rvol: toFiniteNumber(source.rvol, 'rvol'),
+    rvolSession: toFiniteNumber(source.rvol_session, 'rvol_session'),
+    volumeState: toVolumeState(source.volume_state, 'volume_state'),
+    vwap: toFiniteNumber(source.vwap, 'vwap'),
+    priceVsVwap: toFiniteNumber(source.price_vs_vwap, 'price_vs_vwap'),
+    vwapBand: Math.trunc(toFiniteNumber(source.vwap_band, 'vwap_band')),
+    poc: toFiniteNumber(source.poc, 'poc'),
+    priceVsPoc: toFiniteNumber(source.price_vs_poc, 'price_vs_poc'),
+    inValueArea: toBoolean(source.in_value_area, 'in_value_area'),
+    volumeConfirmation: toBoolean(source.volume_confirmation, 'volume_confirmation'),
+    pocSlope: toFiniteNumber(source.poc_slope, 'poc_slope'),
+    paceAcceleration: toFiniteNumber(source.pace_acceleration, 'pace_acceleration'),
   }
 }
 
@@ -312,14 +239,10 @@ async function computeVolumeFeatures(): Promise<VolumeFeatures> {
       { timeout: 30_000, cwd: process.cwd() },
     )
 
-    const parsed = parseVolumeScriptPayload(JSON.parse(stdout.trim()))
-    if (parsed.scriptError) {
-      console.warn(`[compute-signal] Volume script reported error: ${parsed.scriptError}`)
-    }
-    return parsed.features
+    return parseVolumeScriptPayload(JSON.parse(stdout.trim()))
   } catch (err) {
-    console.warn('[compute-signal] Volume features failed:', err instanceof Error ? err.message : err)
-    return { ...DEFAULT_VOLUME_FEATURES }
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(`Volume features failed: ${message}`)
   }
 }
 
@@ -327,7 +250,7 @@ async function computeVolumeFeatures(): Promise<VolumeFeatures> {
 
 export interface ScoredTrade {
   setup: TriggerCandidate
-  risk: RiskResult | null
+  risk: RiskResult
   features: TradeFeatureVector
   mlBaseline: MlBaseline
   score: TradeScore
@@ -442,17 +365,13 @@ export const computeSignal = inngest.createFunction(
           })
         })(),
         (async (): Promise<MarketContext> => {
-          try {
-            const symbolBars = await loadDailySymbolBarsByRole(MARKET_CONTEXT_ROLE)
+          const symbolBars = await loadDailySymbolBarsByRole(MARKET_CONTEXT_ROLE)
 
-            if (symbolBars.size > 0) {
-              const priceChanges = buildPriceChanges(symbolBars)
-              return await buildMarketContext(symbolBars, priceChanges)
-            }
-            return fallbackMarketContext('No usable symbol bars')
-          } catch {
-            return fallbackMarketContext('Market context wiring failed')
+          if (symbolBars.size === 0) {
+            throw new Error('No usable symbol bars for market context')
           }
+          const priceChanges = buildPriceChanges(symbolBars)
+          return await buildMarketContext(symbolBars, priceChanges)
         })(),
       ])
 
@@ -500,13 +419,9 @@ export const computeSignal = inngest.createFunction(
 
       // Build symbol bars for alignment
       const symbolBars = new Map<string, CandleData[]>()
-      try {
-        const correlationBars = await loadDailySymbolBarsByRole(TRIGGER_CORRELATION_ROLE)
-        for (const [code, bars] of correlationBars.entries()) {
-          symbolBars.set(code, bars)
-        }
-      } catch {
-        // fallback alignment will handle
+      const correlationBars = await loadDailySymbolBarsByRole(TRIGGER_CORRELATION_ROLE)
+      for (const [code, bars] of correlationBars.entries()) {
+        symbolBars.set(code, bars)
       }
 
       const alignmentByDirection = new Map<TriggerDirection, CorrelationAlignment>()
@@ -515,25 +430,18 @@ export const computeSignal = inngest.createFunction(
         if (cached) return cached
         const mesSeries = symbolBars.get('MES')
         if (!mesSeries || mesSeries.length < 20) {
-          const fb = fallbackAlignment(direction, 'insufficient daily bars')
-          alignmentByDirection.set(direction, fb)
-          return fb
+          throw new Error(`Insufficient daily bars for correlation alignment (${direction}).`)
         }
-        try {
-          const computed = computeAlignmentScore(symbolBars, direction)
-          alignmentByDirection.set(direction, computed)
-          return computed
-        } catch {
-          const fb = fallbackAlignment(direction, 'computation failed')
-          alignmentByDirection.set(direction, fb)
-          return fb
-        }
+
+        const computed = computeAlignmentScore(symbolBars, direction)
+        alignmentByDirection.set(direction, computed)
+        return computed
       }
 
       // Score TRIGGERED setups
       const triggered = getTriggeredCandidates(setups)
 
-      const scoredTrades: ScoredTrade[] = await Promise.all(
+      const scoredTradeCandidates = await Promise.all(
         triggered.map(async (setup) => {
           const risk =
             setup.entry && setup.stopLoss && setup.tp1
@@ -541,92 +449,8 @@ export const computeSignal = inngest.createFunction(
               : null
 
           if (!risk) {
-            const emptyFeatures: TradeFeatureVector = {
-              fibRatio: setup.fibRatio,
-              goType: setup.goType ?? 'BREAK',
-              hookQuality: 0.5,
-              measuredMoveAligned: false,
-              measuredMoveQuality: null,
-              stopDistancePts: 0,
-              rrRatio: 0,
-              riskGrade: 'D',
-              eventPhase: evCtx.phase,
-              minutesToNextEvent: evCtx.minutesToEvent,
-              minutesSinceEvent: evCtx.minutesSinceEvent,
-              confidenceAdjustment: evCtx.confidenceAdjustment,
-              vixLevel: null,
-              vixPercentile: null,
-              vixIntradayRange: null,
-              gprLevel: null,
-              gprChange1d: null,
-              trumpEoCount7d: 0,
-              trumpTariffFlag: false,
-              trumpPolicyVelocity7d: 0,
-              federalRegisterVelocity7d: 0,
-              epuTrumpPremium: null,
-              regime: 'MIXED',
-              themeScores: {},
-              compositeAlignment: 0,
-              isAligned: true,
-              correlationDetails: 'No correlation data',
-              activeCorrelationSymbols: [],
-              alignedCorrelationSymbols: [],
-              divergingCorrelationSymbols: [],
-              ignoredCorrelationSymbols: [],
-              acceptanceState: 'UNRESOLVED',
-              acceptanceScore: 0.5,
-              sweepFlag: false,
-              bullTrapFlag: false,
-              bearTrapFlag: false,
-              whipsawFlag: false,
-              fakeoutFlag: false,
-              blockerDensity: 'MODERATE',
-              openSpaceRatio: null,
-              wickQuality: null,
-              bodyQuality: null,
-              sqzMom: null,
-              sqzState: null,
-              wvfValue: null,
-              wvfPercentile: null,
-              macdAboveZero: null,
-              macdAboveSignal: null,
-              macdHistAboveZero: null,
-              newsVolume24h: 0,
-              policyNewsVolume24h: 0,
-              newsVolume1h: 0,
-              newsVelocity: 0,
-              breakingNewsFlag: false,
-              rvol: 1,
-              rvolSession: 1,
-              volumeState: 'BALANCED',
-              vwap: 0,
-              priceVsVwap: 0,
-              vwapBand: 0,
-              poc: 0,
-              priceVsPoc: 0,
-              inValueArea: true,
-              volumeConfirmation: false,
-              pocSlope: 0,
-              paceAcceleration: 0,
-            }
-            const baseline = getMlBaseline(emptyFeatures)
-            const score = computeCompositeScore(emptyFeatures, baseline)
-            return {
-              setup,
-              risk: null,
-              features: emptyFeatures,
-              mlBaseline: baseline,
-              score,
-              reasoning: {
-                adjustedPTp1: 0,
-                adjustedPTp2: 0,
-                rationale: 'No risk data',
-                keyRisks: [],
-                tradeQuality: 'D' as const,
-                catalysts: [],
-                source: 'deterministic' as const,
-              },
-            }
+            console.warn('[compute-signal] Skipping setup without risk tuple:', setup.id)
+            return null
           }
 
           const alignment = getAlignment(setup.direction)
@@ -644,8 +468,16 @@ export const computeSignal = inngest.createFunction(
             fibResult.levels.map((level) => level.price),
           )
 
-          const mlBaseline = getMlBaseline(features)
-          const score = computeCompositeScore(features, mlBaseline)
+          let mlBaseline: MlBaseline
+          let score: TradeScore
+          try {
+            mlBaseline = getMlBaseline(features)
+            score = computeCompositeScore(features, mlBaseline)
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            console.warn('[compute-signal] Skipping setup due ML baseline failure:', message)
+            return null
+          }
 
           const reasoning = await getTradeReasoning(
             setup,
@@ -655,16 +487,17 @@ export const computeSignal = inngest.createFunction(
             marketContextResult,
           ).catch((err) => {
             const message = err instanceof Error ? err.message : String(err)
-            console.warn('[compute-signal] AI reasoning degraded:', message)
-            return buildDeterministicTradeReasoning(
-              score,
-              features,
-              `AI reasoning degraded: ${message}`,
-            )
+            console.warn('[compute-signal] Skipping setup due AI reasoning failure:', message)
+            return null
           })
 
+          if (!reasoning) return null
           return { setup, risk, features, mlBaseline, score, reasoning }
         }),
+      )
+
+      const scoredTrades: ScoredTrade[] = scoredTradeCandidates.filter(
+        (trade): trade is ScoredTrade => trade != null,
       )
 
       scoredTrades.sort((a, b) => b.score.composite - a.score.composite)

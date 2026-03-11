@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildDeterministicTradeReasoning } from "../src/lib/trade-reasoning";
+import { getTradeReasoning } from "../src/lib/trade-reasoning";
 import type { TradeFeatureVector } from "../src/lib/trade-features";
 import type { TradeScore } from "../src/lib/composite-score";
+import type { TriggerCandidate } from "../src/lib/trigger-candidates";
+import type { EventContext } from "../src/lib/event-awareness";
+import type { MarketContext } from "../src/lib/market-context";
 
 const baseFeatures: TradeFeatureVector = {
   fibRatio: 0.618,
@@ -90,17 +93,55 @@ const baseScore: TradeScore = {
   flags: [],
 };
 
-test("buildDeterministicTradeReasoning degrades cleanly for trigger runtime", () => {
-  const reasoning = buildDeterministicTradeReasoning(
-    baseScore,
-    baseFeatures,
-    "AI reasoning degraded: unavailable",
-  );
+const baseSetup = {
+  id: "test-setup",
+  direction: "BULLISH",
+  fibRatio: 0.618,
+  goType: "BREAK",
+  entry: 6800,
+  stopLoss: 6792,
+  tp1: 6810,
+  tp2: 6818,
+} as unknown as TriggerCandidate;
 
-  assert.equal(reasoning.source, "deterministic");
-  assert.equal(reasoning.adjustedPTp1, baseScore.pTp1);
-  assert.equal(reasoning.adjustedPTp2, baseScore.pTp2);
-  assert.ok(reasoning.rationale.includes("AI reasoning degraded"));
-  assert.ok(reasoning.keyRisks.includes("Event approaching — require stronger confirmation"));
-  assert.ok(reasoning.catalysts.includes("Measured move confirms direction"));
+const baseEventContext = {
+  phase: "CLEAR",
+  label: "No nearby events",
+} as unknown as EventContext;
+
+const baseMarketContext = {
+  regime: "MIXED",
+  themeScores: { tariffs: 0, rates: 0, trump: 0 },
+} as unknown as MarketContext;
+
+test("getTradeReasoning hard-fails during BLACKOUT", async () => {
+  await assert.rejects(
+    getTradeReasoning(
+      baseSetup,
+      baseScore,
+      { ...baseFeatures, eventPhase: "BLACKOUT" },
+      baseEventContext,
+      baseMarketContext,
+    ),
+    /BLACKOUT phase/i,
+  );
+});
+
+test("getTradeReasoning hard-fails below score threshold", async () => {
+  const lowScore: TradeScore = {
+    ...baseScore,
+    composite: 35,
+    grade: "D",
+  };
+
+  await assert.rejects(
+    getTradeReasoning(
+      baseSetup,
+      lowScore,
+      baseFeatures,
+      baseEventContext,
+      baseMarketContext,
+    ),
+    /score below threshold/i,
+  );
 });

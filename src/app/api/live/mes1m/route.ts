@@ -1,5 +1,5 @@
 import { toNum } from '@/lib/decimal'
-import { readLatestMes1mRows, readLatestMes15mRows } from '@/lib/mes-live-queries'
+import { readLatestMes1mRows } from '@/lib/mes-live-queries'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -97,42 +97,23 @@ export async function GET(request: Request): Promise<Response> {
         const initial = await readLatestMes1mRows(backfillCount)
 
         if (initial.length === 0) {
-          // Fall back to 15m data if 1m table is empty (first deploy)
-          const fallback = await readLatestMes15mRows(
-            Math.min(672, Math.ceil(backfillCount / 15))
+          pushErrorAndClose(
+            'No MES 1m data in DB yet. Start ingestion: npm run ingest:mes:live:stream',
           )
-
-          if (fallback.length === 0) {
-            pushErrorAndClose(
-              'No MES data in DB yet. Start ingestion: npm run ingest:mes:live:stream'
-            )
-            return
-          }
-
-          const sorted = [...fallback].reverse().filter((r) => !isWeekendBar(r.eventTime))
-          for (const row of sorted) {
-            knownRows.set(row.eventTime.getTime(), rowFingerprint(row))
-          }
-
-          controller.enqueue(
-            encodeSse('snapshot', {
-              points: sorted.map(asPoint),
-              resolution: '15m',
-            })
-          )
-        } else {
-          const sorted = [...initial].reverse().filter((r) => !isWeekendBar(r.eventTime))
-          for (const row of sorted) {
-            knownRows.set(row.eventTime.getTime(), rowFingerprint(row))
-          }
-
-          controller.enqueue(
-            encodeSse('snapshot', {
-              points: sorted.map(asPoint),
-              resolution: '1m',
-            })
-          )
+          return
         }
+
+        const sorted = [...initial].reverse().filter((r) => !isWeekendBar(r.eventTime))
+        for (const row of sorted) {
+          knownRows.set(row.eventTime.getTime(), rowFingerprint(row))
+        }
+
+        controller.enqueue(
+          encodeSse('snapshot', {
+            points: sorted.map(asPoint),
+            resolution: '1m',
+          }),
+        )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         pushErrorAndClose(`Failed to load MES 1m snapshot: ${message}`)

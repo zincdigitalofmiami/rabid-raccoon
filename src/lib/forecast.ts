@@ -41,11 +41,6 @@ function getMesMeasuredMoves(symbols: MarketSummary[]): MeasuredMove[] {
   return [mes.signal.measuredMove]
 }
 
-function userFacingFallbackNote(reason?: string): string {
-  if (!reason) return 'Deterministic mode active.'
-  return 'Deterministic mode active.'
-}
-
 function inferKeyLevels(symbols: MarketSummary[]): { support: number[]; resistance: number[] } {
   const mes = symbols.find((s) => s.symbol === 'MES') || symbols[0]
   if (!mes) return { support: [], resistance: [] }
@@ -70,44 +65,26 @@ function inferKeyLevels(symbols: MarketSummary[]): { support: number[]; resistan
   }
 }
 
-function deterministicForecast(input: ForecastInput, reason?: string): ForecastResponse {
-  const { symbols, compositeSignal, window, marketContext } = input
-  const mesMeasuredMoves = getMesMeasuredMoves(symbols)
-
-  const mes = symbols.find((s) => s.symbol === 'MES') || symbols[0]
-  const mesLine = mes
-    ? `MES ${mes.direction} ${mes.signal.confidence}% at ${mes.price.toFixed(2)} (${mes.changePercent >= 0 ? '+' : ''}${mes.changePercent.toFixed(2)}%).`
-    : 'MES data unavailable.'
-
-  const activeMoves = mesMeasuredMoves.filter((m) => m.status === 'ACTIVE').length
-  const fallbackNote = userFacingFallbackNote(reason)
-  const analysis =
-    `TL;DR: ${compositeSignal.direction} bias at ${compositeSignal.confidence}% confidence from deterministic signals only. ` +
-    `${mesLine} ` +
-    `MES active measured moves: ${activeMoves}. ` +
-    `Confluence: ${compositeSignal.confluenceSummary.slice(0, 4).join(' | ') || 'none'}. ` +
-    `${marketContext?.yieldContext ? `US10Y ${marketContext.yieldContext.tenYearYield.toFixed(2)}% (${marketContext.yieldContext.tenYearChangeBp >= 0 ? '+' : ''}${marketContext.yieldContext.tenYearChangeBp.toFixed(1)} bp). ` : ''}` +
-    `${marketContext?.breakout7000 ? `SPX 7,000: ${marketContext.breakout7000.status}. ` : ''}` +
-    `Window: ${window}. ` +
-    fallbackNote
-
+function buildForecastCore(input: ForecastInput): {
+  direction: ForecastResponse['direction']
+  confidence: number
+  symbolForecasts: SymbolForecast[]
+  keyLevels: { support: number[]; resistance: number[] }
+  intermarketNotes: string[]
+} {
+  const { symbols, compositeSignal } = input
   const keyLevels = inferKeyLevels(symbols)
   const symbolForecasts: SymbolForecast[] = compositeSignal.symbolSignals.map((s) => ({
     symbol: s.symbol,
     direction: s.direction,
     confidence: clamp(s.confidence, 50, 95),
   }))
-
   return {
-    window,
     direction: compositeSignal.direction,
     confidence: clamp(compositeSignal.confidence, 50, 95),
-    analysis,
     symbolForecasts,
     keyLevels,
-    measuredMoves: mesMeasuredMoves,
     intermarketNotes: compositeSignal.confluenceSummary.slice(0, 8),
-    generatedAt: new Date().toISOString(),
   }
 }
 
@@ -115,35 +92,37 @@ function sanitizeForecast(
   parsed: unknown,
   input: ForecastInput
 ): Omit<ForecastResponse, 'window' | 'measuredMoves' | 'generatedAt'> {
-  const fallback = deterministicForecast(input)
-  const p = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>
-
-  // Keep direction/confidence/symbol forecasts/levels deterministic from real signal math.
-  const direction = fallback.direction
-  const confidence = fallback.confidence
+  const p = (parsed && typeof parsed === 'object' ? parsed : null) as Record<string, unknown> | null
+  if (!p) {
+    throw new Error('AI forecast unavailable: model returned non-object JSON.')
+  }
 
   const analysis =
-    typeof p.analysis === 'string' && p.analysis.trim().length > 0
+    typeof p.analysis === 'string'
       ? p.analysis.trim()
-      : fallback.analysis
-
-  const symbolForecasts: SymbolForecast[] = fallback.symbolForecasts
-  const support = fallback.keyLevels.support
-  const resistance = fallback.keyLevels.resistance
+      : ''
+  if (!analysis) {
+    throw new Error('AI forecast unavailable: analysis text is missing.')
+  }
 
   const intermarketNotes = Array.isArray(p.intermarketNotes)
     ? p.intermarketNotes
       .filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
       .map((n) => n.trim())
       .slice(0, 10)
-    : fallback.intermarketNotes
+    : []
+  if (intermarketNotes.length === 0) {
+    throw new Error('AI forecast unavailable: intermarket notes are missing.')
+  }
+
+  const core = buildForecastCore(input)
 
   return {
-    direction,
-    confidence,
+    direction: core.direction,
+    confidence: core.confidence,
     analysis,
-    symbolForecasts,
-    keyLevels: { support, resistance },
+    symbolForecasts: core.symbolForecasts,
+    keyLevels: core.keyLevels,
     intermarketNotes,
   }
 }

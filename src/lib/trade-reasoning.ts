@@ -7,7 +7,7 @@
  * Guardrails:
  *   - AI p(TP1) must be within ±0.20 of ML baseline
  *   - VIX > 30 forces risk warning
- *   - BLACKOUT phase = no reasoning (deterministic fallback)
+ *   - BLACKOUT phase = no AI reasoning
  *   - 3 second timeout for AI call
  */
 
@@ -29,42 +29,7 @@ export interface TradeReasoning {
   keyRisks: string[]
   tradeQuality: 'A' | 'B' | 'C' | 'D'
   catalysts: string[]
-  source: 'ai' | 'deterministic'
-}
-
-// ─────────────────────────────────────────────
-// Deterministic fallback
-// ─────────────────────────────────────────────
-
-export function buildDeterministicTradeReasoning(
-  score: TradeScore,
-  features: TradeFeatureVector,
-  reason: string,
-): TradeReasoning {
-  const risks: string[] = []
-  if (features.eventPhase === 'BLACKOUT') risks.push('Economic event releasing — no trades')
-  if (features.eventPhase === 'SHOCK') risks.push('Post-release shock state')
-  if (features.eventPhase === 'APPROACHING') risks.push('Event approaching — require stronger confirmation')
-  if (features.eventPhase === 'IMMINENT') risks.push('Event imminent — reduced size')
-  if (!features.isAligned) risks.push('Cross-asset misalignment')
-  if (features.riskGrade === 'D') risks.push('Low risk-reward ratio')
-  if (features.wvfPercentile != null && features.wvfPercentile > 1.0) risks.push('Elevated fear')
-  if (risks.length === 0) risks.push('Standard risk')
-
-  const catalysts: string[] = []
-  if (features.measuredMoveAligned) catalysts.push('Measured move confirms direction')
-  if (features.sqzState === 4) catalysts.push('Squeeze fired — momentum breakout')
-  if (features.isAligned) catalysts.push('Cross-asset alignment')
-
-  return {
-    adjustedPTp1: score.pTp1,
-    adjustedPTp2: score.pTp2,
-    rationale: `Layer 1 score: ${score.composite}/100 (${score.grade}). ${reason}`,
-    keyRisks: risks,
-    tradeQuality: score.grade,
-    catalysts,
-    source: 'deterministic',
-  }
+  source: 'ai'
 }
 
 // ─────────────────────────────────────────────
@@ -142,14 +107,14 @@ export async function getTradeReasoning(
   eventContext: EventContext,
   marketContext: MarketContext,
 ): Promise<TradeReasoning> {
-  // Guardrail: BLACKOUT = no AI, deterministic only
+  // Guardrail: BLACKOUT = no AI reasoning.
   if (features.eventPhase === 'BLACKOUT') {
-    return buildDeterministicTradeReasoning(score, features, 'BLACKOUT — AI reasoning skipped.')
+    throw new Error('AI reasoning unavailable: BLACKOUT phase.')
   }
 
-  // Guardrail: low-quality setups don't warrant AI cost
+  // Guardrail: low-quality setups don't warrant AI reasoning.
   if (score.composite < 40) {
-    return buildDeterministicTradeReasoning(score, features, 'Score below threshold — AI reasoning skipped.')
+    throw new Error('AI reasoning unavailable: score below threshold.')
   }
 
   if (!isAIAvailable()) {

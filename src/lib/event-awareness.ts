@@ -5,8 +5,7 @@
  * for trade decisions. Given a timestamp, determines the current "event phase"
  * relative to the nearest high/medium-impact economic event.
  *
- * All time boundaries and confidence adjustments are PLACEHOLDERS marked
- * with BACKTEST-TBD comments. They will be replaced with backtested values.
+ * Time windows and confidence adjustments are currently configured constants.
  */
 
 import { Decimal } from '@prisma/client/runtime/client'
@@ -67,39 +66,39 @@ export interface EventContext {
   marketTemperature: 'risk-on' | 'risk-off' | 'neutral' | null
 }
 
-// ─── Constants (BACKTEST-TBD) ─────────────────────────────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────────────────
 
 /** Minutes before event: transition to APPROACHING phase */
-const APPROACH_WINDOW_MIN = 60 // BACKTEST-TBD
+const APPROACH_WINDOW_MIN = 60
 
 /** Minutes before event: transition to IMMINENT phase */
-const IMMINENT_WINDOW_MIN = 10 // BACKTEST-TBD
+const IMMINENT_WINDOW_MIN = 10
 
 /** Minutes before event: transition to BLACKOUT (no-trade zone) */
-const BLACKOUT_BEFORE_MIN = 3 // BACKTEST-TBD
+const BLACKOUT_BEFORE_MIN = 3
 
 /** Minutes after event: BLACKOUT zone ends */
-const BLACKOUT_AFTER_MIN = 5 // BACKTEST-TBD
+const BLACKOUT_AFTER_MIN = 5
 
 /** Minutes after event: DIGESTION phase ends, transitions to SETTLED */
-const DIGESTION_WINDOW_MIN = 45 // BACKTEST-TBD
+const DIGESTION_WINDOW_MIN = 45
 
 /** Minutes after event: SETTLED phase ends, transitions to CLEAR */
-const SETTLED_WINDOW_MIN = 90 // BACKTEST-TBD
+const SETTLED_WINDOW_MIN = 90
 
 /** Confidence multipliers per phase */
 const CONFIDENCE_ADJ: Record<EventPhase, number> = {
-  CLEAR: 1.0, // BACKTEST-TBD
-  APPROACHING: 0.85, // BACKTEST-TBD
-  IMMINENT: 0.5, // BACKTEST-TBD
-  BLACKOUT: 0.0, // BACKTEST-TBD
-  SHOCK: 0.0, // BACKTEST-TBD
-  DIGESTION: 0.6, // BACKTEST-TBD
-  SETTLED: 0.9, // BACKTEST-TBD
+  CLEAR: 1.0,
+  APPROACHING: 0.85,
+  IMMINENT: 0.5,
+  BLACKOUT: 0.0,
+  SHOCK: 0.0,
+  DIGESTION: 0.6,
+  SETTLED: 0.9,
 }
 
 /** Threshold for z-score to be considered "inline" (not a beat/miss) */
-const INLINE_ZSCORE_THRESHOLD = 0.3 // BACKTEST-TBD
+const INLINE_ZSCORE_THRESHOLD = 0.3
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -269,7 +268,7 @@ export function getEventContext(
     const msSince = now.getTime() - nearestPast.time.getTime()
     const minutesSince = msSince / 60_000
 
-    if (minutesSince <= BLACKOUT_AFTER_MIN) { // BACKTEST-TBD
+    if (minutesSince <= BLACKOUT_AFTER_MIN) {
       // Immediate post-release shock takes precedence over normal setup logic.
       const info = toEventInfo(nearestPast.row, nearestPast.time)
       return buildContext('SHOCK', info, null, minutesSince, nearestPast.row, {
@@ -278,7 +277,7 @@ export function getEventContext(
       })
     }
 
-    if (minutesSince <= DIGESTION_WINDOW_MIN) { // BACKTEST-TBD
+    if (minutesSince <= DIGESTION_WINDOW_MIN) {
       const info = toEventInfo(nearestPast.row, nearestPast.time)
       return buildContext('DIGESTION', info, null, minutesSince, nearestPast.row, {
         label: `Digesting ${info.name} (${Math.round(minutesSince)} min ago)`,
@@ -286,7 +285,7 @@ export function getEventContext(
       })
     }
 
-    if (minutesSince <= SETTLED_WINDOW_MIN) { // BACKTEST-TBD
+    if (minutesSince <= SETTLED_WINDOW_MIN) {
       const info = toEventInfo(nearestPast.row, nearestPast.time)
       return buildContext('SETTLED', info, null, minutesSince, nearestPast.row, {
         label: `${info.name} settling (${Math.round(minutesSince)} min ago)`,
@@ -301,21 +300,21 @@ export function getEventContext(
     const minutesUntil = msUntil / 60_000
     const info = toEventInfo(nearestUpcoming.row, nearestUpcoming.time)
 
-    if (minutesUntil <= BLACKOUT_BEFORE_MIN) { // BACKTEST-TBD
+    if (minutesUntil <= BLACKOUT_BEFORE_MIN) {
       return buildContext('BLACKOUT', info, minutesUntil, null, nearestUpcoming.row, {
         label: `${info.name} imminent — BLACKOUT (${Math.ceil(minutesUntil)} min)`,
         ...enrichment,
       })
     }
 
-    if (minutesUntil <= IMMINENT_WINDOW_MIN) { // BACKTEST-TBD
+    if (minutesUntil <= IMMINENT_WINDOW_MIN) {
       return buildContext('IMMINENT', info, minutesUntil, null, nearestUpcoming.row, {
         label: `${info.name} IMMINENT in ${Math.round(minutesUntil)} min`,
         ...enrichment,
       })
     }
 
-    if (minutesUntil <= APPROACH_WINDOW_MIN) { // BACKTEST-TBD
+    if (minutesUntil <= APPROACH_WINDOW_MIN) {
       return buildContext('APPROACHING', info, minutesUntil, null, nearestUpcoming.row, {
         label: `${info.name} in ${Math.round(minutesUntil)} min — expect compression`,
         ...enrichment,

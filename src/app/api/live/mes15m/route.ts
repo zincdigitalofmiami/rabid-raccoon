@@ -1,5 +1,5 @@
 import { toNum } from '@/lib/decimal'
-import { readLatestMes1mRows, readLatestMes15mRows } from '@/lib/mes-live-queries'
+import { readLatestMes1mRows } from '@/lib/mes-live-queries'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -184,10 +184,7 @@ async function loadSnapshotRows(backfillCount: number): Promise<MesRow[]> {
   const oneMinuteBackfill = Math.max(backfillCount * 15 + 240, 2400)
   const initial1m = await readLatestMes1mRows(oneMinuteBackfill)
 
-  const aggregated15m = aggregateTo15mFrom1m(initial1m).slice(-backfillCount)
-  const fallback15m =
-    aggregated15m.length === 0 ? await readLatestMes15mRows(backfillCount) : []
-  const initial = aggregated15m.length > 0 ? aggregated15m : fallback15m
+  const initial = aggregateTo15mFrom1m(initial1m).slice(-backfillCount)
 
   return [...initial]
     .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime())
@@ -201,10 +198,7 @@ async function loadPollRows(pollBars: number): Promise<MesRow[]> {
     safePollBars * 15 + 90
   )
   const latest1m = await readLatestMes1mRows(oneMinuteLookback)
-  const aggregated15m = aggregateTo15mFrom1m(latest1m).slice(-safePollBars)
-  const fallback15m =
-    aggregated15m.length === 0 ? await readLatestMes15mRows(safePollBars) : []
-  const rows = aggregated15m.length > 0 ? aggregated15m : fallback15m
+  const rows = aggregateTo15mFrom1m(latest1m).slice(-safePollBars)
 
   return [...rows]
     .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime())

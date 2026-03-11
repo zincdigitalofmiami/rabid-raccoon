@@ -8,7 +8,7 @@
  * The lookup table is built by scripts/build-regime-lookup.ts from
  * actual BHG setup outcomes in bhg_setups.csv.
  *
- * Fallback chain: exact bucket → grade fallback → global average.
+ * Baseline source: exact historical regime bucket only.
  */
 
 import regimeLookup from '@/data/regime-lookup.json'
@@ -23,7 +23,7 @@ export interface MlBaseline {
   pTp2: number            // 0-1 probability of TP2 hit (8h horizon)
   sampleCount: number     // how many historical setups in this bucket
   confidence: 'high' | 'medium' | 'low'
-  source: 'exact' | 'grade' | 'global' // which fallback level was used
+  source: 'exact'
 }
 
 interface BucketEntry {
@@ -39,15 +39,7 @@ interface BucketEntry {
   pTp2_8h: number
 }
 
-interface GradeFallback {
-  pTp1: number
-  pTp2: number
-  count: number
-}
-
 interface LookupData {
-  global: { pTp1: number; pTp2: number; count: number }
-  gradeFallback: Record<string, GradeFallback>
   buckets: BucketEntry[]
 }
 
@@ -128,10 +120,9 @@ function buildKey(
 /**
  * Get the ML baseline p(TP1)/p(TP2) for a trade feature vector.
  *
- * Fallback chain:
- *   1. Exact bucket match (all 5 features)
- *   2. Grade-only fallback
- *   3. Global average
+ * Exact-bucket only:
+ *   - Must find a matching 5-feature regime key
+ *   - Must have at least 5 historical samples
  *
  * Confidence is based on sample count:
  *   - high: ≥30 samples
@@ -148,35 +139,18 @@ export function getMlBaseline(features: TradeFeatureVector): MlBaseline {
   const key = buildKey(fibR, features.riskGrade, vixB, session, goType)
   const exact = bucketIndex.get(key)
 
-  if (exact && exact.count >= 5) {
-    return {
-      pTp1: exact.pTp1_4h,
-      pTp2: exact.pTp2_8h,
-      sampleCount: exact.count,
-      confidence: exact.count >= 30 ? 'high' : exact.count >= 10 ? 'medium' : 'low',
-      source: 'exact',
-    }
+  if (!exact || exact.count < 5) {
+    throw new Error(
+      `No exact ML baseline bucket for key=${key}; exact-match baseline is required.`,
+    )
   }
 
-  // Grade fallback
-  const gradeFB = lookup.gradeFallback[features.riskGrade]
-  if (gradeFB && gradeFB.count > 0) {
-    return {
-      pTp1: gradeFB.pTp1,
-      pTp2: gradeFB.pTp2,
-      sampleCount: gradeFB.count,
-      confidence: gradeFB.count >= 30 ? 'high' : gradeFB.count >= 10 ? 'medium' : 'low',
-      source: 'grade',
-    }
-  }
-
-  // Global fallback
   return {
-    pTp1: lookup.global.pTp1,
-    pTp2: lookup.global.pTp2,
-    sampleCount: lookup.global.count,
-    confidence: lookup.global.count >= 30 ? 'high' : 'medium',
-    source: 'global',
+    pTp1: exact.pTp1_4h,
+    pTp2: exact.pTp2_8h,
+    sampleCount: exact.count,
+    confidence: exact.count >= 30 ? 'high' : exact.count >= 10 ? 'medium' : 'low',
+    source: 'exact',
   }
 }
 
@@ -186,14 +160,7 @@ export function getMlBaseline(features: TradeFeatureVector): MlBaseline {
 export function getBaselineWithContext(features: TradeFeatureVector): MlBaseline & { context: string } {
   const baseline = getMlBaseline(features)
 
-  let context: string
-  if (baseline.source === 'exact') {
-    context = `Based on ${baseline.sampleCount} similar setups (${features.riskGrade}-grade, ${features.goType}, ${featureVixBucket(features.vixLevel)} VIX)`
-  } else if (baseline.source === 'grade') {
-    context = `Grade ${features.riskGrade} average (${baseline.sampleCount} setups) — no exact regime match`
-  } else {
-    context = `Global average (${baseline.sampleCount} setups) — insufficient data for regime match`
-  }
+  const context = `Based on ${baseline.sampleCount} exact regime matches (${features.riskGrade}-grade, ${features.goType}, ${featureVixBucket(features.vixLevel)} VIX)`
 
   return { ...baseline, context }
 }
