@@ -214,7 +214,6 @@ async function loadPollRows(pollBars: number): Promise<MesRow[]> {
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url)
   const backfill = Number(url.searchParams.get('backfill') || '96')
-  const snapshotOnly = url.searchParams.get('snapshot') === '1'
   const pollOnly = url.searchParams.get('poll') === '1'
   const pollBarsRaw = Number(url.searchParams.get('bars') || '12')
   const pollBars = Number.isFinite(pollBarsRaw)
@@ -258,35 +257,28 @@ export async function GET(request: Request): Promise<Response> {
     }
   }
 
-  if (snapshotOnly || !pollOnly) {
-    try {
-      const initial = await loadSnapshotRows(backfillCount)
+  try {
+    const initial = await loadSnapshotRows(backfillCount)
 
-      if (initial.length === 0) {
-        return Response.json(
-          {
-            error:
-              'No MES 15m data in DB yet. Start ingestion: npm run ingest:mes:live:stream',
-          },
-          { status: 503, headers: JSON_HEADERS }
-        )
-      }
-
-      return Response.json({
-        points: initial.map(asPoint),
-        live: false,
-      }, { headers: JSON_HEADERS })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+    if (initial.length === 0) {
       return Response.json(
-        { error: `Failed to load MES 15m snapshot: ${message}` },
-        { status: 500, headers: JSON_HEADERS }
+        {
+          error:
+            'No MES 15m data in DB yet. Start ingestion: npm run ingest:mes:live:stream',
+        },
+        { status: 503, headers: JSON_HEADERS }
       )
     }
-  }
 
-  return Response.json(
-    { error: 'Unsupported MES 15m live mode' },
-    { status: 400, headers: JSON_HEADERS }
-  )
+    return Response.json({
+      points: initial.map(asPoint),
+      live: false,
+    }, { headers: JSON_HEADERS })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return Response.json(
+      { error: `Failed to load MES 15m snapshot: ${message}` },
+      { status: 500, headers: JSON_HEADERS }
+    )
+  }
 }

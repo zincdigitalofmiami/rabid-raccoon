@@ -665,6 +665,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
                 fingerprint?: string;
               }
             | { error: string };
+          if (cancelled) {
+            return;
+          }
           if (!res.ok || !("points" in data)) {
             throw new Error(
               "error" in data ? data.error : "Failed to poll MES 15m updates",
@@ -704,6 +707,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
             pollFingerprintRef.current = localFingerprint;
           }
 
+          if (cancelled) {
+            return;
+          }
           applyUpdates(points);
         } finally {
           pollInFlight = false;
