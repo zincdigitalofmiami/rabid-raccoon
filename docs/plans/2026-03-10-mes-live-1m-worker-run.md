@@ -25,6 +25,7 @@ bash scripts/run-mes-live-1m-worker.sh
 
 - `DATABENTO_API_KEY`
 - `DIRECT_URL` (preferred) or `LOCAL_DATABASE_URL`
+- `MES_HIGHER_TF_OWNER` (`inngest` default; switch to `worker` for higher-TF ownership cutover)
 
 ## Host-Native Dependency Install
 

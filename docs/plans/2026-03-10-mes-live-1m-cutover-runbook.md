@@ -81,6 +81,7 @@ Render Background Worker commands (host-native, no Docker):
 - Required env vars present:
   - `DATABENTO_API_KEY`
   - `DIRECT_URL` (preferred) or `LOCAL_DATABASE_URL`
+  - `MES_HIGHER_TF_OWNER` (default `inngest`; set to `worker` at cutover)
 
 ### Quick readiness checks
 
@@ -146,29 +147,30 @@ Notes:
 1. Capture baseline DB state and current writer metadata (`ohlcv-1m` vs `LIVE_OHLCV_1M_CONTINUOUS`).
 2. Confirm dedicated worker host is ready but not yet started.
 3. Demote/pause `ingest-mkt-mes-1m` in Inngest control plane (do not code-edit cron for this step).
-4. Wait ~2 minutes and confirm no new `sourceSchema=ohlcv-1m` writes are arriving.
-5. Start the dedicated worker process with fixed contract + ingestion run logging:
+4. Set `MES_HIGHER_TF_OWNER=worker` in runtime env so legacy Inngest MES `15m` / `1h` jobs skip cleanly.
+5. Wait ~2 minutes and confirm no new `sourceSchema=ohlcv-1m` writes are arriving.
+6. Start the dedicated worker process with fixed contract + ingestion run logging:
    - `bash scripts/run-mes-live-1m-worker.sh`
    - Launcher defaults are the approved contract + `--log-ingestion-runs`.
    - Do not pass `--snapshot` or `--allow-contract-override` in cutover mode.
-6. Verify worker logs:
+7. Verify worker logs:
    - subscription request succeeded
    - periodic flush with advancing `latest_event`
-7. Verify DB writes now show live-owner truth:
+8. Verify DB writes now show live-owner truth:
    - `sourceSchema=LIVE_OHLCV_1M_CONTINUOUS`
    - `sourceDataset=GLBX.MDP3`
    - `eventTime` advancing at ~60s cadence
-8. Verify DB-derived tables advance from 1m after worker flushes:
+9. Verify DB-derived tables advance from 1m after worker flushes:
    - `mkt_futures_mes_15m` latest row advances with `sourceSchema=mkt_futures_mes_1m->15m`
    - `mkt_futures_mes_1h` latest row advances with `sourceSchema=mkt_futures_mes_1m->1h`
    - `mkt_futures_mes_4h` latest row advances with `sourceSchema=mkt_futures_mes_1m->4h`
    - `mkt_futures_mes_1d` latest row advances with `sourceSchema=mkt_futures_mes_1m->1d`
    - 1d path remains active so pivot readers stay current
-9. Verify chart contract support (without chart code changes):
+10. Verify chart contract support (without chart code changes):
    - `mkt_futures_mes_1m` latest `eventTime` remains near wall clock (minute-fresh)
    - `/api/live/mes15m` continues receiving fresh underlying 1m, so active 15m bar can update minute-to-minute
-10. Keep monitoring for at least 15 continuous minutes before declaring cutover stable.
-11. Stability declaration guard:
+11. Keep monitoring for at least 15 continuous minutes before declaring cutover stable.
+12. Stability declaration guard:
     - Cutover operator captures DB query outputs + worker log excerpts for the full 15-minute window.
     - Reviewer/gatekeeper confirms all stability criteria before declaring cutover complete.
 
@@ -188,10 +190,11 @@ Rollback if any of the following persists during market-open window:
 ### Rollback order
 
 1. Stop the dedicated Python worker.
-2. Re-enable `ingest-mkt-mes-1m` in Inngest control plane.
-3. Verify Inngest path resumes writes (`sourceSchema=ohlcv-1m` expected from current path).
-4. Verify `eventTime` advancement resumes in `mkt_futures_mes_1m`.
-5. Capture rollback evidence (timestamps, logs, DB snapshots) before closing incident.
+2. Set `MES_HIGHER_TF_OWNER=inngest`.
+3. Re-enable `ingest-mkt-mes-1m` in Inngest control plane.
+4. Verify Inngest path resumes writes (`sourceSchema=ohlcv-1m` expected from current path).
+5. Verify `eventTime` advancement resumes in `mkt_futures_mes_1m`.
+6. Capture rollback evidence (timestamps, logs, DB snapshots) before closing incident.
 
 ### Rollback confirmation checks
 
