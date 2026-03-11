@@ -7,7 +7,7 @@
  *
  * Pattern proven in production by trade-recorder.ts and outcome-tracker.ts.
  *
- * Why: mes15m-refresh.ts was the #1 Accelerate cost center — 40-op $transaction
+ * Why: mes-refresh.ts was the #1 Accelerate cost center — 40-op $transaction
  * batches called every 2s from SSE streams. Switching to DIRECT_URL eliminates
  * ~90% of daily Accelerate operations (~57K → ~2K ops/day).
  */

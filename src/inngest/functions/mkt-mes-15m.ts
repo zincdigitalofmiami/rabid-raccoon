@@ -1,5 +1,5 @@
 import { inngest } from '../client'
-import { refreshMes15mFromDb1m } from '../../lib/mes15m-refresh'
+import { refreshMes15mFromDb1m } from '../../lib/mes-refresh'
 import { isMesMarketOpen } from './mes-market-hours'
 import { getMesHigherTfOwner, shouldSkipMesHigherTfInngest } from './mes-owner'
 

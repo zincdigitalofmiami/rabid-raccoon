@@ -3,8 +3,6 @@ import { inngest } from "@/inngest/client";
 import {
   // Market Data (Databento) — 7 functions
   ingestMktMes1m,
-  ingestMktMes15m,
-  ingestMktMes1h,
   ingestMktEquityIndices,
   ingestMktTreasuries,
   ingestMktCommodities,
@@ -55,8 +53,6 @@ const handlers = serve({
   functions: [
     // Market Data (Databento)
     ingestMktMes1m, // authoritative 1m writer, every minute when market is open
-    ingestMktMes15m, // every hour at :05
-    ingestMktMes1h, // daily at 00:00 UTC
     ingestMktEquityIndices,
     ingestMktTreasuries,
     ingestMktCommodities,
