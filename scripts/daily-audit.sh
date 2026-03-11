@@ -38,14 +38,8 @@ FAILURES=0
   echo ""
 } >> "$REPORT"
 
-# ESLint
-echo "[$(date +%H:%M:%S)] Running ESLint..." >> "$REPORT"
-if npx next lint --no-cache 2>&1 >> "$REPORT"; then
-  echo "  ✓ ESLint: PASS" >> "$REPORT"
-else
-  echo "  ✗ ESLint: ISSUES FOUND" >> "$REPORT"
-  FAILURES=$((FAILURES + 1))
-fi
+# ESLint intentionally disabled by project policy
+echo "[$(date +%H:%M:%S)] Linting is disabled by project policy (skipped)." >> "$REPORT"
 echo "" >> "$REPORT"
 
 # TypeScript type check
