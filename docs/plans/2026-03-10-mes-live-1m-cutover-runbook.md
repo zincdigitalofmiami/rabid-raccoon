@@ -117,6 +117,20 @@ SELECT
 FROM "mkt_futures_mes_1m";
 ```
 
+### Optional pre-cutover DB-only repair
+
+If higher timeframes need reconciliation before ownership switch, run:
+
+```bash
+.venv-finance/bin/python scripts/repair-mes-derived-from-1m.py --start 2026-01-01 --end 2026-03-11 --timeframes 15m,1h,4h,1d
+```
+
+Notes:
+
+- Reads only `mkt_futures_mes_1m`.
+- Writes/upserts only derived MES tables.
+- Does not call Databento.
+
 ### Single-writer guard
 
 - Confirm operator and exact timestamp for ownership switch.

@@ -137,6 +137,20 @@ Daily low-cost cadence recommendation (example cron):
 15 2 * * * cd /Volumes/Satechi\ Hub/rabid-raccoon && bash scripts/run-mes-cloud-to-local-sync.sh
 ```
 
+DB-only repair/backfill utility (from stored MES 1m):
+
+```bash
+.venv-finance/bin/python scripts/repair-mes-derived-from-1m.py --start 2026-01-01 --end 2026-03-11 --timeframes 15m,1h,4h,1d
+```
+
+Dry-run preview:
+
+```bash
+.venv-finance/bin/python scripts/repair-mes-derived-from-1m.py --start 2026-01-01 --end 2026-03-11 --timeframes 15m,4h --dry-run
+```
+
+This repair path is DB-only and does not call Databento.
+
 ## Cutover Launch Truth
 
 For real ownership cutover launch (not ad-hoc local probe), start with:
