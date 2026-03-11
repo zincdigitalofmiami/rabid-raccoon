@@ -82,6 +82,7 @@ Render Background Worker commands (host-native, no Docker):
   - `DATABENTO_API_KEY`
   - `DIRECT_URL` (preferred) or `LOCAL_DATABASE_URL`
   - `MES_HIGHER_TF_OWNER` (default `inngest`; set to `worker` at cutover)
+  - `MES_1M_OWNER` (optional explicit override; defaults to `MES_HIGHER_TF_OWNER` when unset)
 
 ### Quick readiness checks
 
@@ -148,6 +149,7 @@ Notes:
 2. Confirm dedicated worker host is ready but not yet started.
 3. Demote/pause `ingest-mkt-mes-1m` in Inngest control plane (do not code-edit cron for this step).
 4. Set `MES_HIGHER_TF_OWNER=worker` in runtime env so legacy Inngest MES `15m` / `1h` jobs skip cleanly.
+   - `ingest-mkt-mes-1m` also honors owner gate via `MES_1M_OWNER` (or `MES_HIGHER_TF_OWNER` fallback) and must show `skipped: owner-worker`.
 5. Wait ~2 minutes and confirm no new `sourceSchema=ohlcv-1m` writes are arriving.
 6. Start the dedicated worker process with fixed contract + ingestion run logging:
    - `bash scripts/run-mes-live-1m-worker.sh`
@@ -190,7 +192,7 @@ Rollback if any of the following persists during market-open window:
 ### Rollback order
 
 1. Stop the dedicated Python worker.
-2. Set `MES_HIGHER_TF_OWNER=inngest`.
+2. Set `MES_HIGHER_TF_OWNER=inngest` (and `MES_1M_OWNER=inngest` if explicitly set).
 3. Re-enable `ingest-mkt-mes-1m` in Inngest control plane.
 4. Verify Inngest path resumes writes (`sourceSchema=ohlcv-1m` expected from current path).
 5. Verify `eventTime` advancement resumes in `mkt_futures_mes_1m`.

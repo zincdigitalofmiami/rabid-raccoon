@@ -1,6 +1,7 @@
 import { inngest } from '../client'
 import { refreshMes1mFromDatabento } from '../../lib/mes15m-refresh'
 import { isMesMarketOpen } from './mes-market-hours'
+import { getMes1mOwner, shouldSkipMes1mInngest } from './mes-owner'
 
 /**
  * Authoritative MES 1m writer for live chart + trigger consumers.
@@ -15,11 +16,24 @@ export const ingestMktMes1m = inngest.createFunction(
   { cron: '* * * * 0-5' },
   async ({ step }) => {
     const now = new Date()
+    const owner = getMes1mOwner()
+    if (shouldSkipMes1mInngest()) {
+      return {
+        ranAt: now.toISOString(),
+        skipped: true,
+        reason: 'owner-worker',
+        owner,
+        authoritative: false,
+        timeframe: '1m',
+      }
+    }
+
     if (!isMesMarketOpen(now)) {
       return {
         ranAt: now.toISOString(),
         skipped: true,
         reason: 'market-closed',
+        owner,
         authoritative: true,
         timeframe: '1m',
       }
@@ -42,6 +56,7 @@ export const ingestMktMes1m = inngest.createFunction(
     return {
       ranAt: now.toISOString(),
       result,
+      owner,
       authoritative: true,
       timeframe: '1m',
     }
