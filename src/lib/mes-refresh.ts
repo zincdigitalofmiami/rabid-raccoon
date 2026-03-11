@@ -58,8 +58,8 @@ const BATCH_SIZE = 40
 
 const MES_1M_END_LAG_MINUTES = parseBoundedIntFromEnv(
   'MES_1M_END_LAG_MINUTES',
-  15,
-  5,
+  2,
+  1,
   90,
 )
 const MES_1M_CATCHUP_OVERLAP_MINUTES = parseBoundedIntFromEnv(
