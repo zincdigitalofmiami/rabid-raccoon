@@ -42,7 +42,6 @@ export const ingestMktMes1m = inngest.createFunction(
     const result = await step.run('refresh-mes-1m-authoritative', async () =>
       refreshMes1mFromDatabento({
         force: true,
-        lookbackMinutes: 180,
         minRefreshIntervalMs: 55_000,
       }),
     )

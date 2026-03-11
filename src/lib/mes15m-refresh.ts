@@ -22,11 +22,27 @@ const BUCKET_SECONDS = {
 } as const
 
 const DEFAULT_LOOKBACK_MINUTES = {
-  '1m': 18 * 60,
+  '1m': 60,
   '15m': 24 * 60,
   '1h': 72 * 60,
   '4h': 14 * 24 * 60,
   '1d': 45 * 24 * 60,
+} as const
+
+const MIN_LOOKBACK_MINUTES = {
+  '1m': 30,
+  '15m': 120,
+  '1h': 120,
+  '4h': 120,
+  '1d': 120,
+} as const
+
+const MAX_LOOKBACK_MINUTES = {
+  '1m': 72 * 60,
+  '15m': 14 * 24 * 60,
+  '1h': 30 * 24 * 60,
+  '4h': 60 * 24 * 60,
+  '1d': 120 * 24 * 60,
 } as const
 
 const DEFAULT_MIN_REFRESH_INTERVAL_MS = 5 * 60 * 1000
@@ -39,6 +55,37 @@ const MAX_DERIVED_CANDLES_TO_UPSERT = {
 } as const
 
 const BATCH_SIZE = 40
+
+const MES_1M_END_LAG_MINUTES = parseBoundedIntFromEnv(
+  'MES_1M_END_LAG_MINUTES',
+  15,
+  5,
+  90,
+)
+const MES_1M_CATCHUP_OVERLAP_MINUTES = parseBoundedIntFromEnv(
+  'MES_1M_CATCHUP_OVERLAP_MINUTES',
+  20,
+  5,
+  180,
+)
+const MES_1M_MAX_FORWARD_MINUTES = parseBoundedIntFromEnv(
+  'MES_1M_MAX_FORWARD_MINUTES',
+  120,
+  15,
+  6 * 60,
+)
+const MES_1M_FETCH_TIMEOUT_MS = parseBoundedIntFromEnv(
+  'MES_1M_FETCH_TIMEOUT_MS',
+  60_000,
+  10_000,
+  240_000,
+)
+const MES_1M_FETCH_MAX_ATTEMPTS = parseBoundedIntFromEnv(
+  'MES_1M_FETCH_MAX_ATTEMPTS',
+  3,
+  1,
+  6,
+)
 
 type MesRefreshTimeframe = '1m' | '15m' | '1h' | '4h' | '1d'
 type MesDerivedTimeframe = Exclude<MesRefreshTimeframe, '1m'>
@@ -73,6 +120,29 @@ export interface RefreshResult {
   rowsUpserted: number
   latestEventTime: Date | null
   reason?: string
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  return Math.max(min, Math.min(max, Math.trunc(value)))
+}
+
+function parseBoundedIntFromEnv(
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = (process.env[name] || '').trim()
+  if (!raw) return fallback
+  const parsed = Number(raw)
+  return clampInt(parsed, min, max)
+}
+
+function isDatabentoTimeoutError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  return message.includes('api error 408') || message.includes('timed out')
 }
 
 function asNumber(value: unknown): number {
@@ -460,24 +530,87 @@ async function refreshMes(
 
     try {
       lastRefreshAttemptAtMs[timeframe] = Date.now()
-      const lookbackMinutes = Math.max(
-        120,
-        options?.lookbackMinutes ?? DEFAULT_LOOKBACK_MINUTES[timeframe],
-      )
       const now = Date.now()
-      const windowStart = new Date(now - lookbackMinutes * 60 * 1000)
 
       if (timeframe === '1m') {
-        const records = await fetchOhlcv({
-          dataset: MES_DATASET,
-          symbol: MES_SYMBOL,
-          stypeIn: 'continuous',
-          start: windowStart.toISOString(),
-          end: new Date(now).toISOString(),
-          schema: SOURCE_SCHEMA_1M,
-          timeoutMs: 20_000,
-          maxAttempts: 2,
-        })
+        const minLookbackMinutes = MIN_LOOKBACK_MINUTES['1m']
+        const maxLookbackMinutes = MAX_LOOKBACK_MINUTES['1m']
+        const defaultLookbackMinutes = DEFAULT_LOOKBACK_MINUTES['1m']
+        const latestKnown1m = await currentLatestEventTime('1m')
+        const safeEndMs = now - MES_1M_END_LAG_MINUTES * 60 * 1000
+        const baselineRequestedLookback = clampInt(
+          options?.lookbackMinutes ?? defaultLookbackMinutes,
+          minLookbackMinutes,
+          maxLookbackMinutes,
+        )
+
+        let targetEndMs = safeEndMs
+        if (latestKnown1m) {
+          const latestMs = latestKnown1m.getTime()
+          const cappedEndMs = latestMs + MES_1M_MAX_FORWARD_MINUTES * 60 * 1000
+          targetEndMs = Math.min(safeEndMs, cappedEndMs)
+        }
+
+        let adaptiveLookbackMinutes = baselineRequestedLookback
+        if (latestKnown1m && targetEndMs > latestKnown1m.getTime()) {
+          const catchupSpanMinutes = Math.ceil(
+            (targetEndMs - latestKnown1m.getTime()) / 60_000,
+          )
+          adaptiveLookbackMinutes = Math.max(
+            adaptiveLookbackMinutes,
+            catchupSpanMinutes + MES_1M_CATCHUP_OVERLAP_MINUTES,
+          )
+        }
+
+        const boundedLookbackMinutes = clampInt(
+          adaptiveLookbackMinutes,
+          minLookbackMinutes,
+          maxLookbackMinutes,
+        )
+        const fallbackLookbackMinutes = clampInt(
+          Math.ceil(boundedLookbackMinutes / 2),
+          minLookbackMinutes,
+          maxLookbackMinutes,
+        )
+        const fetchLookbackCandidates = [
+          boundedLookbackMinutes,
+          fallbackLookbackMinutes,
+          minLookbackMinutes,
+        ].filter((value, index, list) => list.indexOf(value) === index)
+
+        const targetEndIso = new Date(targetEndMs).toISOString()
+        let records: Awaited<ReturnType<typeof fetchOhlcv>> | null = null
+        let lastFetchError: unknown = null
+        for (const lookbackMinutes of fetchLookbackCandidates) {
+          const windowStartIso = new Date(
+            targetEndMs - lookbackMinutes * 60 * 1000,
+          ).toISOString()
+          try {
+            records = await fetchOhlcv({
+              dataset: MES_DATASET,
+              symbol: MES_SYMBOL,
+              stypeIn: 'continuous',
+              start: windowStartIso,
+              end: targetEndIso,
+              schema: SOURCE_SCHEMA_1M,
+              timeoutMs: MES_1M_FETCH_TIMEOUT_MS,
+              maxAttempts: MES_1M_FETCH_MAX_ATTEMPTS,
+            })
+            lastFetchError = null
+            break
+          } catch (error) {
+            lastFetchError = error
+            if (!isDatabentoTimeoutError(error)) {
+              throw error
+            }
+          }
+        }
+
+        if (!records) {
+          throw lastFetchError instanceof Error
+            ? lastFetchError
+            : new Error('MES 1m Databento fetch failed after timeout fallbacks')
+        }
 
         const candles1m = dedupeAndSort(toCandles(records)).slice(-MAX_1M_CANDLES_TO_UPSERT)
         const rowsUpserted = await upsertMes1m(candles1m)
@@ -493,6 +626,15 @@ async function refreshMes(
           ...(candles1m.length === 0 ? { reason: 'no-candles-returned' } : {}),
         }
       }
+
+      const minLookbackMinutes = MIN_LOOKBACK_MINUTES[timeframe]
+      const maxLookbackMinutes = MAX_LOOKBACK_MINUTES[timeframe]
+      const lookbackMinutes = clampInt(
+        options?.lookbackMinutes ?? DEFAULT_LOOKBACK_MINUTES[timeframe],
+        minLookbackMinutes,
+        maxLookbackMinutes,
+      )
+      const windowStart = new Date(now - lookbackMinutes * 60 * 1000)
 
       const sorted1m = await readMes1mFromDb(windowStart)
       const bucketSeconds = BUCKET_SECONDS[timeframe]
