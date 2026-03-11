@@ -1,5 +1,7 @@
 import { inngest } from '../client'
 import { refreshMes15mFromDb1m } from '../../lib/mes15m-refresh'
+import { isMesMarketOpen } from './mes-market-hours'
+import { getMesHigherTfOwner, shouldSkipMesHigherTfInngest } from './mes-owner'
 
 /**
  * MES 15m shared-table refresh (compatibility path).
@@ -15,6 +17,28 @@ export const ingestMktMes15m = inngest.createFunction(
   { id: 'ingest-mkt-mes-15m', retries: 2 },
   { cron: '5,20,35,50 * * * 1-5' },
   async ({ step }) => {
+    const now = new Date()
+    const owner = getMesHigherTfOwner()
+    if (shouldSkipMesHigherTfInngest()) {
+      return {
+        ranAt: now.toISOString(),
+        skipped: true,
+        reason: 'owner-worker',
+        owner,
+        timeframe: '15m',
+      }
+    }
+
+    if (!isMesMarketOpen(now)) {
+      return {
+        ranAt: now.toISOString(),
+        skipped: true,
+        reason: 'market-closed',
+        owner,
+        timeframe: '15m',
+      }
+    }
+
     const result = await step.run('derive-mes-15m-from-db-1m', async () =>
       refreshMes15mFromDb1m({
         force: true,
@@ -26,6 +50,12 @@ export const ingestMktMes15m = inngest.createFunction(
       console.warn(`[WARN] MES 15m refresh returned 0 rows (reason: ${result.reason ?? 'unknown'}, attempted: ${result.attempted})`)
     }
 
-    return { ranAt: new Date().toISOString(), result, zeroRows: result.rowsUpserted === 0 }
+    return {
+      ranAt: now.toISOString(),
+      result,
+      owner,
+      timeframe: '15m',
+      zeroRows: result.rowsUpserted === 0,
+    }
   }
 )

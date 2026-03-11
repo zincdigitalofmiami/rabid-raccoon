@@ -14,8 +14,8 @@ bash scripts/run-mes-live-1m-worker.sh
 
 ## Guardrails
 
-- This worker writes only `mkt_futures_mes_1m`.
-- It does not write `mkt_futures_mes_15m`.
+- This worker is the only MES upstream pull owner (`1m` only).
+- It writes `mkt_futures_mes_1m` and derives `mkt_futures_mes_15m`, `mkt_futures_mes_1h`, `mkt_futures_mes_4h`, and `mkt_futures_mes_1d` from stored 1m.
 - It does not own chart rendering or trigger logic.
 - Do not run two active authoritative MES 1m writers at the same time.
 - Run this as exactly one external worker instance (no autoscaling, no standby duplicate).
@@ -58,12 +58,27 @@ Rows written by bounded catch-up:
 - `sourceDataset=GLBX.MDP3`
 - `sourceSchema=HIST_OHLCV_1M_CONTINUOUS_CATCHUP`
 
+Rows written by DB-derived higher timeframes:
+
+- `mkt_futures_mes_15m`: `sourceSchema=mkt_futures_mes_1m->15m`
+- `mkt_futures_mes_1h`: `sourceSchema=mkt_futures_mes_1m->1h`
+- `mkt_futures_mes_4h`: `sourceSchema=mkt_futures_mes_1m->4h`
+- `mkt_futures_mes_1d`: `sourceSchema=mkt_futures_mes_1m->1d`
+
 ## Operational Behavior
 
 - idempotent upsert into `mkt_futures_mes_1m` by `eventTime`
 - duplicate `eventTime` entries inside one flush are deduped before write
 - transient DB flush failure preserves pending buffer for retry (no silent drop)
 - bounded catch-up runs at startup and reconnect (`--catchup-max-minutes`, default `30`)
+- on a throttled cadence, worker runs bounded DB-only derivation/upsert for `15m`, `1h`, `4h`, `1d` (default lookback `2880` minutes / 48h)
+  - default minimum intervals by timeframe:
+    - `15m`: `900s`
+    - `1h`: `3600s`
+    - `4h`: `3600s`
+    - `1d`: `3600s`
+- derivation can be disabled only for controlled debugging with `--disable-derived-upserts`
+- write-path duplicate guard: derivation batches are deduped by `eventTime`/`eventDate` before upsert
 
 ## Historical Lag Fail-Open Behavior
 
@@ -102,6 +117,24 @@ Compile check:
 
 ```bash
 .venv-finance/bin/python -m py_compile scripts/ingest-mes-live-1m.py
+```
+
+Cloud to local MES sync (training/research copy):
+
+```bash
+bash scripts/run-mes-cloud-to-local-sync.sh
+```
+
+Default sync direction is cloud -> local only.
+Required env vars for sync:
+
+- `MES_SYNC_CLOUD_DATABASE_URL` (cloud source, read)
+- `LOCAL_DATABASE_URL` (local target, write)
+
+Daily low-cost cadence recommendation (example cron):
+
+```bash
+15 2 * * * cd /Volumes/Satechi\ Hub/rabid-raccoon && bash scripts/run-mes-cloud-to-local-sync.sh
 ```
 
 ## Cutover Launch Truth

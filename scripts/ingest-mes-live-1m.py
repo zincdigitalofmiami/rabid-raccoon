@@ -3,10 +3,10 @@
 Dedicated MES live 1m writer (external worker path).
 
 Owns:
-  - Writes only mkt_futures_mes_1m
+  - Writes authoritative mkt_futures_mes_1m
+  - Derives/upserts mkt_futures_mes_15m, mkt_futures_mes_1h, mkt_futures_mes_4h, mkt_futures_mes_1d from stored 1m
 
 Does not own:
-  - mkt_futures_mes_15m or any higher timeframe table
   - trigger computation
   - chart rendering
 
@@ -35,7 +35,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -85,6 +85,106 @@ UPSERT_TEMPLATE = (
     "%(source)s::\"DataSource\", %(sourceDataset)s, %(sourceSchema)s, %(rowHash)s, NOW(), NOW())"
 )
 
+DERIVED_LOOKBACK_MINUTES_DEFAULT = 48 * 60
+DERIVED_MIN_INTERVAL_SECONDS_DEFAULT = 15 * 60
+DERIVED_TIMEFRAMES = ("15m", "1h", "4h", "1d")
+
+DERIVED_UPSERT_INTRADAY_SQL = {
+    "15m": """
+        INSERT INTO "mkt_futures_mes_15m" (
+            "eventTime", "open", "high", "low", "close", "volume",
+            "source", "sourceDataset", "sourceSchema", "rowHash",
+            "ingestedAt", "knowledgeTime"
+        )
+        VALUES %s
+        ON CONFLICT ("eventTime") DO UPDATE SET
+            "open" = EXCLUDED."open",
+            "high" = EXCLUDED."high",
+            "low" = EXCLUDED."low",
+            "close" = EXCLUDED."close",
+            "volume" = EXCLUDED."volume",
+            "source" = EXCLUDED."source",
+            "sourceDataset" = EXCLUDED."sourceDataset",
+            "sourceSchema" = EXCLUDED."sourceSchema",
+            "rowHash" = EXCLUDED."rowHash",
+            "ingestedAt" = EXCLUDED."ingestedAt",
+            "knowledgeTime" = EXCLUDED."knowledgeTime"
+    """,
+    "1h": """
+        INSERT INTO "mkt_futures_mes_1h" (
+            "eventTime", "open", "high", "low", "close", "volume",
+            "source", "sourceDataset", "sourceSchema", "rowHash",
+            "ingestedAt", "knowledgeTime"
+        )
+        VALUES %s
+        ON CONFLICT ("eventTime") DO UPDATE SET
+            "open" = EXCLUDED."open",
+            "high" = EXCLUDED."high",
+            "low" = EXCLUDED."low",
+            "close" = EXCLUDED."close",
+            "volume" = EXCLUDED."volume",
+            "source" = EXCLUDED."source",
+            "sourceDataset" = EXCLUDED."sourceDataset",
+            "sourceSchema" = EXCLUDED."sourceSchema",
+            "rowHash" = EXCLUDED."rowHash",
+            "ingestedAt" = EXCLUDED."ingestedAt",
+            "knowledgeTime" = EXCLUDED."knowledgeTime"
+    """,
+    "4h": """
+        INSERT INTO "mkt_futures_mes_4h" (
+            "eventTime", "open", "high", "low", "close", "volume",
+            "source", "sourceDataset", "sourceSchema", "rowHash",
+            "ingestedAt", "knowledgeTime"
+        )
+        VALUES %s
+        ON CONFLICT ("eventTime") DO UPDATE SET
+            "open" = EXCLUDED."open",
+            "high" = EXCLUDED."high",
+            "low" = EXCLUDED."low",
+            "close" = EXCLUDED."close",
+            "volume" = EXCLUDED."volume",
+            "source" = EXCLUDED."source",
+            "sourceDataset" = EXCLUDED."sourceDataset",
+            "sourceSchema" = EXCLUDED."sourceSchema",
+            "rowHash" = EXCLUDED."rowHash",
+            "ingestedAt" = EXCLUDED."ingestedAt",
+            "knowledgeTime" = EXCLUDED."knowledgeTime"
+    """,
+}
+
+DERIVED_UPSERT_INTRADAY_TEMPLATE = (
+    "(%(eventTime)s, %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, "
+    "%(source)s::\"DataSource\", %(sourceDataset)s, %(sourceSchema)s, %(rowHash)s, "
+    "%(ingestedAt)s, %(knowledgeTime)s)"
+)
+
+DERIVED_UPSERT_DAILY_SQL = """
+    INSERT INTO "mkt_futures_mes_1d" (
+        "eventDate", "open", "high", "low", "close", "volume",
+        "source", "sourceDataset", "sourceSchema", "rowHash",
+        "ingestedAt", "knowledgeTime"
+    )
+    VALUES %s
+    ON CONFLICT ("eventDate") DO UPDATE SET
+        "open" = EXCLUDED."open",
+        "high" = EXCLUDED."high",
+        "low" = EXCLUDED."low",
+        "close" = EXCLUDED."close",
+        "volume" = EXCLUDED."volume",
+        "source" = EXCLUDED."source",
+        "sourceDataset" = EXCLUDED."sourceDataset",
+        "sourceSchema" = EXCLUDED."sourceSchema",
+        "rowHash" = EXCLUDED."rowHash",
+        "ingestedAt" = EXCLUDED."ingestedAt",
+        "knowledgeTime" = EXCLUDED."knowledgeTime"
+"""
+
+DERIVED_UPSERT_DAILY_TEMPLATE = (
+    "(%(eventDate)s, %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, "
+    "%(source)s::\"DataSource\", %(sourceDataset)s, %(sourceSchema)s, %(rowHash)s, "
+    "%(ingestedAt)s, %(knowledgeTime)s)"
+)
+
 
 def load_env_files() -> None:
     """Best-effort dotenv loading for local/dev parity."""
@@ -122,6 +222,15 @@ def row_hash(event_time: datetime, close_price: Decimal) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def derived_row_hash(prefix: str, key: datetime | date, close_price: Decimal) -> str:
+    if isinstance(key, datetime):
+        key_raw = key.isoformat()
+    else:
+        key_raw = key.isoformat()
+    raw = f"{prefix}|{key_raw}|{close_price}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def ensure_utc_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         dt = value
@@ -144,6 +253,13 @@ def dedupe_rows_by_event_time(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     return [deduped[key] for key in sorted(deduped.keys())]
 
 
+def dedupe_rows_by_event_date(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[date, dict[str, Any]] = {}
+    for row in rows:
+        deduped[row["eventDate"]] = row
+    return [deduped[key] for key in sorted(deduped.keys())]
+
+
 def upsert_rows(
     conn: psycopg2.extensions.connection,
     rows: list[dict[str, Any]],
@@ -162,6 +278,247 @@ def upsert_rows(
         )
     conn.commit()
     return len(deduped_rows)
+
+
+def aggregate_intraday_from_1m(
+    conn: psycopg2.extensions.connection,
+    *,
+    bucket_seconds: int,
+    window_start: datetime,
+    source_schema: str,
+    hash_prefix: str,
+) -> list[dict[str, Any]]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                to_timestamp(
+                    floor(extract(epoch from "eventTime") / %s) * %s
+                ) AS bucket_time,
+                (array_agg("open" ORDER BY "eventTime" ASC))[1] AS open,
+                max("high") AS high,
+                min("low") AS low,
+                (array_agg("close" ORDER BY "eventTime" DESC))[1] AS close,
+                COALESCE(sum(COALESCE("volume", 0)), 0)::bigint AS volume
+            FROM "mkt_futures_mes_1m"
+            WHERE "eventTime" >= %s
+            GROUP BY 1
+            ORDER BY 1 ASC
+            """,
+            (bucket_seconds, bucket_seconds, window_start),
+        )
+        records = cur.fetchall()
+
+    now_utc = datetime.now(timezone.utc)
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        event_time = ensure_utc_datetime(record[0])
+        open_px = quantize_price(record[1])
+        high_px = quantize_price(record[2])
+        low_px = quantize_price(record[3])
+        close_px = quantize_price(record[4])
+        volume = max(0, int(record[5] or 0))
+        rows.append(
+            {
+                "eventTime": event_time,
+                "open": open_px,
+                "high": high_px,
+                "low": low_px,
+                "close": close_px,
+                "volume": volume,
+                "source": SOURCE,
+                "sourceDataset": APPROVED_DATASET,
+                "sourceSchema": source_schema,
+                "rowHash": derived_row_hash(hash_prefix, event_time, close_px),
+                "ingestedAt": now_utc,
+                "knowledgeTime": now_utc,
+            }
+        )
+    return rows
+
+
+def aggregate_daily_from_1m(
+    conn: psycopg2.extensions.connection,
+    *,
+    window_start: datetime,
+    source_schema: str,
+) -> list[dict[str, Any]]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                date_trunc('day', "eventTime" AT TIME ZONE 'UTC')::date AS event_date,
+                (array_agg("open" ORDER BY "eventTime" ASC))[1] AS open,
+                max("high") AS high,
+                min("low") AS low,
+                (array_agg("close" ORDER BY "eventTime" DESC))[1] AS close,
+                COALESCE(sum(COALESCE("volume", 0)), 0)::bigint AS volume
+            FROM "mkt_futures_mes_1m"
+            WHERE "eventTime" >= %s
+            GROUP BY 1
+            ORDER BY 1 ASC
+            """,
+            (window_start,),
+        )
+        records = cur.fetchall()
+
+    now_utc = datetime.now(timezone.utc)
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        event_date: date = record[0]
+        open_px = quantize_price(record[1])
+        high_px = quantize_price(record[2])
+        low_px = quantize_price(record[3])
+        close_px = quantize_price(record[4])
+        volume = max(0, int(record[5] or 0))
+        rows.append(
+            {
+                "eventDate": event_date,
+                "open": open_px,
+                "high": high_px,
+                "low": low_px,
+                "close": close_px,
+                "volume": volume,
+                "source": SOURCE,
+                "sourceDataset": APPROVED_DATASET,
+                "sourceSchema": source_schema,
+                "rowHash": derived_row_hash("MES-1D", event_date, close_px),
+                "ingestedAt": now_utc,
+                "knowledgeTime": now_utc,
+            }
+        )
+    return rows
+
+
+def upsert_derived_intraday_rows(
+    conn: psycopg2.extensions.connection,
+    *,
+    timeframe: str,
+    rows: list[dict[str, Any]],
+    batch_size: int,
+) -> int:
+    if not rows:
+        return 0
+    deduped_rows = dedupe_rows_by_event_time(rows)
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            DERIVED_UPSERT_INTRADAY_SQL[timeframe],
+            deduped_rows,
+            template=DERIVED_UPSERT_INTRADAY_TEMPLATE,
+            page_size=max(1, batch_size),
+        )
+    conn.commit()
+    return len(deduped_rows)
+
+
+def upsert_derived_daily_rows(
+    conn: psycopg2.extensions.connection,
+    rows: list[dict[str, Any]],
+    batch_size: int,
+) -> int:
+    if not rows:
+        return 0
+    deduped_rows = dedupe_rows_by_event_date(rows)
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            DERIVED_UPSERT_DAILY_SQL,
+            deduped_rows,
+            template=DERIVED_UPSERT_DAILY_TEMPLATE,
+            page_size=max(1, batch_size),
+        )
+    conn.commit()
+    return len(deduped_rows)
+
+
+def derive_higher_timeframes_from_db_1m(
+    conn: psycopg2.extensions.connection,
+    *,
+    timeframes: tuple[str, ...],
+    lookback_minutes: int,
+    batch_size: int,
+    logger: logging.Logger,
+) -> dict[str, Any]:
+    selected = tuple(tf for tf in DERIVED_TIMEFRAMES if tf in set(timeframes))
+    if not selected:
+        return {
+            "attempted": False,
+            "reason": "no-timeframes-selected",
+            "rowsUpserted": {"15m": 0, "1h": 0, "4h": 0, "1d": 0},
+            "timeframes": [],
+        }
+
+    if lookback_minutes <= 0:
+        return {
+            "attempted": False,
+            "reason": "derive-disabled",
+            "rowsUpserted": {"15m": 0, "1h": 0, "4h": 0, "1d": 0},
+            "timeframes": list(selected),
+        }
+
+    window_start = datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)
+    rows_upserted = {"15m": 0, "1h": 0, "4h": 0, "1d": 0}
+    errors: dict[str, str] = {}
+
+    intraday_configs = (
+        ("15m", 15 * 60, "mkt_futures_mes_1m->15m", "MES-15M"),
+        ("1h", 60 * 60, "mkt_futures_mes_1m->1h", "MES-1H"),
+        ("4h", 4 * 60 * 60, "mkt_futures_mes_1m->4h", "MES-4H"),
+    )
+
+    for timeframe, bucket_seconds, source_schema, hash_prefix in intraday_configs:
+        if timeframe not in selected:
+            continue
+        try:
+            derived_rows = aggregate_intraday_from_1m(
+                conn,
+                bucket_seconds=bucket_seconds,
+                window_start=window_start,
+                source_schema=source_schema,
+                hash_prefix=hash_prefix,
+            )
+            rows_upserted[timeframe] = upsert_derived_intraday_rows(
+                conn,
+                timeframe=timeframe,
+                rows=derived_rows,
+                batch_size=batch_size,
+            )
+        except Exception as exc:
+            conn.rollback()
+            errors[timeframe] = str(exc)
+            logger.exception("[derive:%s] failed", timeframe)
+
+    if "1d" in selected:
+        try:
+            daily_rows = aggregate_daily_from_1m(
+                conn,
+                window_start=window_start,
+                source_schema="mkt_futures_mes_1m->1d",
+            )
+            rows_upserted["1d"] = upsert_derived_daily_rows(
+                conn,
+                rows=daily_rows,
+                batch_size=batch_size,
+            )
+        except Exception as exc:
+            conn.rollback()
+            errors["1d"] = str(exc)
+            logger.exception("[derive:1d] failed")
+
+    total = sum(rows_upserted.values())
+    result: dict[str, Any] = {
+        "attempted": True,
+        "reason": "ok" if not errors else "partial-error",
+        "lookbackMinutes": lookback_minutes,
+        "windowStart": window_start.isoformat(),
+        "timeframes": list(selected),
+        "rowsUpserted": rows_upserted,
+        "totalRowsUpserted": total,
+    }
+    if errors:
+        result["errors"] = errors
+    return result
 
 
 def enforce_subscription_contract(args: argparse.Namespace) -> None:
@@ -246,6 +603,11 @@ class WorkerStats:
     dropped_rows: int = 0
     last_event_time: datetime | None = None
     last_flush_at: datetime | None = None
+    derived_runs: int = 0
+    derived_rows_upserted: int = 0
+    derived_errors: int = 0
+    last_derived_at: datetime | None = None
+    last_derived_result: dict[str, Any] | None = None
 
 
 class IngestionRunTracker:
@@ -279,8 +641,13 @@ class IngestionRunTracker:
                 "receivedRows": stats.received_rows,
                 "upsertedRows": stats.upserted_rows,
                 "flushCount": stats.flush_count,
+                "derivedRuns": stats.derived_runs,
+                "derivedRowsUpserted": stats.derived_rows_upserted,
+                "derivedErrors": stats.derived_errors,
                 "lastEventTime": stats.last_event_time.isoformat() if stats.last_event_time else None,
                 "lastFlushAt": stats.last_flush_at.isoformat() if stats.last_flush_at else None,
+                "lastDerivedAt": stats.last_derived_at.isoformat() if stats.last_derived_at else None,
+                "lastDerivedResult": stats.last_derived_result,
             }
         )
         with self.conn.cursor() as cur:
@@ -314,8 +681,13 @@ class IngestionRunTracker:
                 "flushCount": stats.flush_count,
                 "flushErrors": stats.flush_errors,
                 "droppedRows": stats.dropped_rows,
+                "derivedRuns": stats.derived_runs,
+                "derivedRowsUpserted": stats.derived_rows_upserted,
+                "derivedErrors": stats.derived_errors,
                 "lastEventTime": stats.last_event_time.isoformat() if stats.last_event_time else None,
                 "lastFlushAt": stats.last_flush_at.isoformat() if stats.last_flush_at else None,
+                "lastDerivedAt": stats.last_derived_at.isoformat() if stats.last_derived_at else None,
+                "lastDerivedResult": stats.last_derived_result,
                 "error": error,
             }
         )
@@ -587,6 +959,9 @@ class MesLive1mSink:
         flush_interval_s: float,
         source_dataset: str,
         source_schema: str,
+        derive_higher_timeframes: bool,
+        derive_lookback_minutes: int,
+        derive_min_interval_seconds_by_timeframe: dict[str, int],
         tracker: IngestionRunTracker,
         logger: logging.Logger,
     ) -> None:
@@ -595,12 +970,22 @@ class MesLive1mSink:
         self.flush_interval_s = max(0.1, flush_interval_s)
         self.source_dataset = source_dataset
         self.source_schema = source_schema
+        self.derive_higher_timeframes = derive_higher_timeframes
+        self.derive_lookback_minutes = max(0, derive_lookback_minutes)
+        self.derive_min_interval_seconds_by_timeframe = {
+            tf: max(1, int(derive_min_interval_seconds_by_timeframe.get(tf, DERIVED_MIN_INTERVAL_SECONDS_DEFAULT)))
+            for tf in DERIVED_TIMEFRAMES
+        }
         self.tracker = tracker
         self.logger = logger
         self.stats = WorkerStats()
         self._pending_by_event_time: dict[datetime, dict[str, Any]] = {}
         self._last_flush_monotonic = time.monotonic()
         self._lock = threading.Lock()
+        self._derive_in_flight = False
+        self._last_derive_monotonic_by_timeframe: dict[str, float] = {
+            tf: 0.0 for tf in DERIVED_TIMEFRAMES
+        }
 
     def append_ohlcv(self, rec: dbn.OHLCVMsg) -> None:
         event_time = ns_to_utc(int(rec.ts_event))
@@ -662,6 +1047,8 @@ class MesLive1mSink:
                 self.stats.upserted_rows,
                 latest,
             )
+            if self.derive_higher_timeframes:
+                self._derive_higher_timeframes_locked()
             self.tracker.heartbeat(self.stats)
         except Exception:
             self.conn.rollback()
@@ -673,6 +1060,51 @@ class MesLive1mSink:
             self.tracker.heartbeat(self.stats)
         finally:
             self._last_flush_monotonic = time.monotonic()
+
+    def _derive_higher_timeframes_locked(self) -> None:
+        if self._derive_in_flight:
+            self.logger.warning("[derive] skipped due to in-flight guard")
+            return
+
+        now_monotonic = time.monotonic()
+        due_timeframes: list[str] = []
+        throttled: list[str] = []
+        for timeframe in DERIVED_TIMEFRAMES:
+            min_interval = self.derive_min_interval_seconds_by_timeframe[timeframe]
+            last_run = self._last_derive_monotonic_by_timeframe[timeframe]
+            if last_run > 0 and (now_monotonic - last_run) < min_interval:
+                throttled.append(timeframe)
+                continue
+            due_timeframes.append(timeframe)
+
+        if not due_timeframes:
+            self.logger.info("[derive] skipped (throttled) all=%s", ",".join(throttled))
+            return
+
+        self._derive_in_flight = True
+        try:
+            result = derive_higher_timeframes_from_db_1m(
+                self.conn,
+                timeframes=tuple(due_timeframes),
+                lookback_minutes=self.derive_lookback_minutes,
+                batch_size=self.batch_size,
+                logger=self.logger,
+            )
+            self.stats.derived_runs += 1
+            self.stats.derived_rows_upserted += int(result.get("totalRowsUpserted", 0))
+            if result.get("reason") != "ok":
+                self.stats.derived_errors += 1
+            self.stats.last_derived_at = datetime.now(timezone.utc)
+            self.stats.last_derived_result = result
+            self.logger.info("[derive] result=%s", result)
+            for timeframe in due_timeframes:
+                self._last_derive_monotonic_by_timeframe[timeframe] = now_monotonic
+        except Exception:
+            self.conn.rollback()
+            self.stats.derived_errors += 1
+            self.logger.exception("[derive] fatal error")
+        finally:
+            self._derive_in_flight = False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -698,6 +1130,23 @@ def build_parser() -> argparse.ArgumentParser:
         default=30,
         help="Bounded startup/reconnect historical catch-up window",
     )
+    parser.add_argument(
+        "--derive-lookback-minutes",
+        type=int,
+        default=DERIVED_LOOKBACK_MINUTES_DEFAULT,
+        help="Bounded 1m lookback window used for DB-derived 15m/1h/4h/1d upserts",
+    )
+    parser.add_argument(
+        "--derive-min-interval-seconds",
+        type=int,
+        default=DERIVED_MIN_INTERVAL_SECONDS_DEFAULT,
+        help="Base minimum time between derived refresh runs (15m uses this directly; 1h/4h/1d enforce >=3600s)",
+    )
+    parser.add_argument(
+        "--disable-derived-upserts",
+        action="store_true",
+        help="Disable DB-derived 15m/1h/4h/1d upserts (debug only)",
+    )
     parser.add_argument("--max-runtime-seconds", type=int, default=0)
     parser.add_argument("--log-ingestion-runs", action="store_true")
     parser.add_argument("--check-config", action="store_true")
@@ -719,6 +1168,13 @@ def main() -> int:
     db_url = resolve_db_url(args.db_url)
     source_schema_live = f"LIVE_{args.schema.upper()}_{args.stype_in.upper()}"
     source_schema_catchup = f"HIST_{args.schema.upper()}_{args.stype_in.upper()}_CATCHUP"
+    base_interval = max(1, args.derive_min_interval_seconds)
+    derive_min_interval_seconds_by_timeframe = {
+        "15m": base_interval,
+        "4h": max(base_interval, 60 * 60),
+        "1h": max(base_interval, 60 * 60),
+        "1d": max(base_interval, 60 * 60),
+    }
 
     config_summary = {
         "dataset": args.dataset,
@@ -729,6 +1185,9 @@ def main() -> int:
         "sourceSchemaLive": source_schema_live,
         "sourceSchemaCatchup": source_schema_catchup,
         "catchupMaxMinutes": args.catchup_max_minutes,
+        "deriveHigherTimeframes": not args.disable_derived_upserts,
+        "deriveLookbackMinutes": max(0, args.derive_lookback_minutes),
+        "deriveMinIntervalSecondsByTimeframe": derive_min_interval_seconds_by_timeframe,
         "allowContractOverride": args.allow_contract_override,
         "logIngestionRuns": args.log_ingestion_runs,
     }
@@ -797,6 +1256,9 @@ def main() -> int:
             flush_interval_s=args.flush_interval_seconds,
             source_dataset=args.dataset,
             source_schema=source_schema_live,
+            derive_higher_timeframes=not args.disable_derived_upserts,
+            derive_lookback_minutes=args.derive_lookback_minutes,
+            derive_min_interval_seconds_by_timeframe=derive_min_interval_seconds_by_timeframe,
             tracker=tracker,
             logger=logger,
         )

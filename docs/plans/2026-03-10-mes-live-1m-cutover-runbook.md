@@ -19,7 +19,8 @@
 - Runtime manifest: [requirements-mes-live-1m-worker.txt](../../requirements-mes-live-1m-worker.txt)
 - Canonical launcher: [scripts/run-mes-live-1m-worker.sh](../../scripts/run-mes-live-1m-worker.sh)
 - Dedicated live `databento.Live` worker
-- Writes only `mkt_futures_mes_1m`
+- Pulls only MES `1m` from Databento and writes `mkt_futures_mes_1m`
+- Derives/upserts `mkt_futures_mes_15m`, `mkt_futures_mes_1h`, `mkt_futures_mes_4h`, `mkt_futures_mes_1d` from stored cloud `1m`
 - Fixed contract: `GLBX.MDP3 / OHLCV_1M / MES.c.0 / continuous / snapshot=false`
 
 ### What is already proven
@@ -35,6 +36,7 @@
 - Multi-hour/session stability on target host
 - Reconnect behavior under real network interruptions over longer runtime
 - Full production cutover observation while Inngest owner is demoted
+- Ongoing higher-TF derivation freshness (`15m/1h/4h/1d`) under sustained runtime
 
 ---
 
@@ -142,11 +144,17 @@ FROM "mkt_futures_mes_1m";
    - `sourceSchema=LIVE_OHLCV_1M_CONTINUOUS`
    - `sourceDataset=GLBX.MDP3`
    - `eventTime` advancing at ~60s cadence
-8. Verify chart contract support (without chart code changes):
+8. Verify DB-derived tables advance from 1m after worker flushes:
+   - `mkt_futures_mes_15m` latest row advances with `sourceSchema=mkt_futures_mes_1m->15m`
+   - `mkt_futures_mes_1h` latest row advances with `sourceSchema=mkt_futures_mes_1m->1h`
+   - `mkt_futures_mes_4h` latest row advances with `sourceSchema=mkt_futures_mes_1m->4h`
+   - `mkt_futures_mes_1d` latest row advances with `sourceSchema=mkt_futures_mes_1m->1d`
+   - 1d path remains active so pivot readers stay current
+9. Verify chart contract support (without chart code changes):
    - `mkt_futures_mes_1m` latest `eventTime` remains near wall clock (minute-fresh)
    - `/api/live/mes15m` continues receiving fresh underlying 1m, so active 15m bar can update minute-to-minute
-9. Keep monitoring for at least 15 continuous minutes before declaring cutover stable.
-10. Stability declaration guard:
+10. Keep monitoring for at least 15 continuous minutes before declaring cutover stable.
+11. Stability declaration guard:
     - Cutover operator captures DB query outputs + worker log excerpts for the full 15-minute window.
     - Reviewer/gatekeeper confirms all stability criteria before declaring cutover complete.
 
@@ -247,3 +255,4 @@ ORDER BY rows_5m DESC;
 
 - Inngest owner demotion/re-enable is performed operationally in Inngest control plane, not by code changes in this runbook.
 - `sourceSchema=ohlcv-1m` remains the marker for current Inngest 1m path (as implemented in `src/lib/mes15m-refresh.ts` at time of writing).
+- Cloud is authoritative for MES runtime ingestion; local MES copies for training/research are synchronized one-way (cloud -> local) on a low-cost schedule (daily default).

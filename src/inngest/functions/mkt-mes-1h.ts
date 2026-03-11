@@ -1,18 +1,62 @@
 import { inngest } from '../client'
-import { runIngestMarketPricesDaily } from '../../../scripts/ingest-market-prices-daily'
+import { refreshMes1hFromDb1m } from '../../lib/mes15m-refresh'
+import { isMesMarketOpen } from './mes-market-hours'
+import { getMesHigherTfOwner, shouldSkipMesHigherTfInngest } from './mes-owner'
 
 /**
- * MES 1h candle ingestion — fetches ohlcv-1h from Databento.
- * Target table: mkt_futures_mes_1h (single table, isolated job).
- * Runs daily at 00:00 UTC (7 PM EST).
+ * MES 1h shared-table refresh (compatibility path).
+ * Reads mkt_futures_mes_1m from DB, aggregates to 1h.
+ *
+ * Ownership note:
+ * - Authoritative minute-cadence MES ingestion is ingest-mkt-mes-1m (1m table only).
+ * - This function writes only mkt_futures_mes_1h for compatibility readers.
+ * Target table: mkt_futures_mes_1h.
+ * Runs hourly while market is open.
  */
 export const ingestMktMes1h = inngest.createFunction(
   { id: 'ingest-mkt-mes-1h', retries: 2 },
-  { cron: '0 0 * * *' },
+  { cron: '10 * * * 0-5' },
   async ({ step }) => {
-    const result = await step.run('fetch-mes-1h', async () =>
-      runIngestMarketPricesDaily({ lookbackHours: 48, dryRun: false, symbols: ['MES'] })
+    const now = new Date()
+    const owner = getMesHigherTfOwner()
+    if (shouldSkipMesHigherTfInngest()) {
+      return {
+        ranAt: now.toISOString(),
+        skipped: true,
+        reason: 'owner-worker',
+        owner,
+        timeframe: '1h',
+      }
+    }
+
+    if (!isMesMarketOpen(now)) {
+      return {
+        ranAt: now.toISOString(),
+        skipped: true,
+        reason: 'market-closed',
+        owner,
+        timeframe: '1h',
+      }
+    }
+
+    const result = await step.run('derive-mes-1h-from-db-1m', async () =>
+      refreshMes1hFromDb1m({
+        force: true,
+      }),
     )
-    return { ranAt: new Date().toISOString(), result }
+
+    if (result.rowsUpserted === 0) {
+      console.warn(
+        `[WARN] MES 1h refresh returned 0 rows (reason: ${result.reason ?? 'unknown'}, attempted: ${result.attempted})`,
+      )
+    }
+
+    return {
+      ranAt: now.toISOString(),
+      result,
+      owner,
+      timeframe: '1h',
+      zeroRows: result.rowsUpserted === 0,
+    }
   }
 )

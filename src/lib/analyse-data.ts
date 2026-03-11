@@ -1,4 +1,5 @@
 import { fetchOhlcv, toCandles, getCurrentSessionTimes } from './databento'
+import { getDirectPool } from './direct-pool'
 import {
   fetchVixCandles,
   fetchDollarCandles,
@@ -28,6 +29,49 @@ export interface MultiTimeframeData {
   candles1h: CandleData[]
   candles4h: CandleData[]
   price: number
+}
+
+function asNumber(value: unknown): number {
+  if (typeof value === 'number') return value
+  if (typeof value === 'string') return Number(value)
+  if (typeof value === 'bigint') return Number(value)
+  return 0
+}
+
+async function readMes1mCandlesFromDb(start: Date, end: Date): Promise<CandleData[]> {
+  const pool = getDirectPool()
+  const result = await pool.query<{
+    eventTime: Date | string
+    open: number | string
+    high: number | string
+    low: number | string
+    close: number | string
+    volume: number | string | bigint | null
+  }>(
+    `
+      SELECT
+        "eventTime",
+        "open"::double precision AS "open",
+        "high"::double precision AS "high",
+        "low"::double precision AS "low",
+        "close"::double precision AS "close",
+        COALESCE("volume", 0)::double precision AS "volume"
+      FROM "mkt_futures_mes_1m"
+      WHERE "eventTime" >= $1
+        AND "eventTime" <= $2
+      ORDER BY "eventTime" ASC
+    `,
+    [start, end],
+  )
+
+  return result.rows.map((row) => ({
+    time: Math.floor(new Date(String(row.eventTime)).getTime() / 1000),
+    open: asNumber(row.open),
+    high: asNumber(row.high),
+    low: asNumber(row.low),
+    close: asNumber(row.close),
+    volume: Math.max(0, Math.trunc(asNumber(row.volume))),
+  }))
 }
 
 export function aggregateCandles(candles: CandleData[], periodMinutes: number): CandleData[] {
@@ -77,6 +121,21 @@ export async function fetchMultiTimeframe(symbol: string): Promise<MultiTimefram
     }
     const price = candles.length > 0 ? candles[candles.length - 1].close : 0
     return { candles15m: [], candles1h: [], candles4h: candles, price }
+  }
+
+  if (symbol === 'MES') {
+    const session = getCurrentSessionTimes()
+    const candles1m = await readMes1mCandlesFromDb(
+      new Date(session.start),
+      new Date(session.end),
+    )
+    const price = candles1m.length > 0 ? candles1m[candles1m.length - 1].close : 0
+    return {
+      candles15m: aggregateCandles(candles1m, 15),
+      candles1h: aggregateCandles(candles1m, 60),
+      candles4h: aggregateCandles(candles1m, 240),
+      price,
+    }
   }
 
   const session = getCurrentSessionTimes()
