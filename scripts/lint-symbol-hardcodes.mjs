@@ -17,6 +17,7 @@ const RG_BASE = [
   '--hidden',
   '--glob', '!node_modules',
   '--glob', '!.next',
+  '--glob', '!scripts/lint-baselines/**',
   '--glob', '!prisma/migrations/**',
   '--glob', '!src/lib/symbol-registry/**',
   '--glob', '!**/*.test.ts',
@@ -43,8 +44,14 @@ function runRg(pattern) {
   }
 }
 
+function normalizeFinding(line) {
+  const m = line.match(/^([^:]+):\d+:(.*)$/)
+  if (!m) return line.trim()
+  return `${m[1]}::${m[2].trim()}`
+}
+
 const findings = [...runRg(SYMBOL_CONST_PATTERN), ...runRg(SYMBOL_LITERAL_PATTERN)]
-const normalized = [...new Set(findings)].sort()
+const normalized = [...new Set(findings.map(normalizeFinding))].sort()
 
 const writeBaseline = process.argv.includes('--write-baseline')
 if (writeBaseline) {
@@ -62,7 +69,7 @@ if (!existsSync(BASELINE)) {
 
 const baseline = readFileSync(BASELINE, 'utf8')
   .split('\n')
-  .map((line) => line.trim())
+  .map((line) => normalizeFinding(line))
   .filter(Boolean)
 
 const baselineSet = new Set(baseline)
