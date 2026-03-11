@@ -3,7 +3,7 @@ import { readLatestMes1mRows, readLatestMes15mRows } from '@/lib/mes-live-querie
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 300
+export const maxDuration = 60
 
 interface MesPricePoint {
   time: number
@@ -32,9 +32,8 @@ interface Mes1mRow {
   volume: number | null
 }
 
-function encodeSse(event: string, payload: unknown): Uint8Array {
-  const body = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
-  return new TextEncoder().encode(body)
+const JSON_HEADERS = {
+  'Cache-Control': 'no-store, max-age=0',
 }
 
 function asPoint(row: MesRow): MesPricePoint {
@@ -249,17 +248,17 @@ export async function GET(request: Request): Promise<Response> {
         live: true,
         changed,
         fingerprint,
-      })
+      }, { headers: JSON_HEADERS })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return Response.json(
         { error: `Failed to load MES 15m poll snapshot: ${message}` },
-        { status: 500 }
+        { status: 500, headers: JSON_HEADERS }
       )
     }
   }
 
-  if (snapshotOnly) {
+  if (snapshotOnly || !pollOnly) {
     try {
       const initial = await loadSnapshotRows(backfillCount)
 
@@ -269,131 +268,25 @@ export async function GET(request: Request): Promise<Response> {
             error:
               'No MES 15m data in DB yet. Start ingestion: npm run ingest:mes:live:stream',
           },
-          { status: 503 }
+          { status: 503, headers: JSON_HEADERS }
         )
       }
 
       return Response.json({
         points: initial.map(asPoint),
         live: false,
-      })
+      }, { headers: JSON_HEADERS })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return Response.json(
         { error: `Failed to load MES 15m snapshot: ${message}` },
-        { status: 500 }
+        { status: 500, headers: JSON_HEADERS }
       )
     }
   }
 
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      let closed = false
-      const knownRows = new Map<number, string>()
-
-      const pushErrorAndClose = (message: string) => {
-        if (closed) return
-        controller.enqueue(encodeSse('error', { error: message }))
-        controller.close()
-        closed = true
-      }
-
-      try {
-        const initial = await loadSnapshotRows(backfillCount)
-
-        if (initial.length === 0) {
-          pushErrorAndClose(
-            'No MES 15m data in DB yet. Start ingestion: npm run ingest:mes:live:stream'
-          )
-          return
-        }
-
-        for (const row of initial) {
-          knownRows.set(row.eventTime.getTime(), rowFingerprint(row))
-        }
-
-        controller.enqueue(
-          encodeSse('snapshot', {
-            points: initial.map(asPoint),
-          })
-        )
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        pushErrorAndClose(`Failed to load MES 15m snapshot: ${message}`)
-        return
-      }
-
-      // Poll every 60 seconds and detect changed rows from Inngest-managed ingestion.
-      const interval = setInterval(async () => {
-        if (closed) return
-        try {
-          const oneMinuteLookback = Math.max(
-            4000,
-            Math.max(40, Math.min(250, backfillCount)) * 15 + 240
-          )
-          const latest1m = await readLatestMes1mRows(oneMinuteLookback)
-          const latest = aggregateTo15mFrom1m(latest1m).slice(
-            -Math.max(40, Math.min(250, backfillCount))
-          )
-
-          if (latest.length === 0) {
-            controller.enqueue(encodeSse('ping', { ts: Date.now() }))
-            return
-          }
-
-          const sorted = [...latest]
-            .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime())
-            .filter((r) => !isWeekendBar(r.eventTime))
-          const changed = sorted.filter((row) => {
-            const key = row.eventTime.getTime()
-            const next = rowFingerprint(row)
-            const prev = knownRows.get(key)
-            if (prev === next) return false
-            knownRows.set(key, next)
-            return true
-          })
-
-          // Keep map bounded to recent rows only.
-          const keep = new Set(sorted.map((r) => r.eventTime.getTime()))
-          if (knownRows.size > 400) {
-            for (const key of knownRows.keys()) {
-              if (!keep.has(key)) knownRows.delete(key)
-            }
-          }
-
-          if (changed.length === 0) {
-            controller.enqueue(encodeSse('ping', { ts: Date.now() }))
-            return
-          }
-
-          controller.enqueue(
-            encodeSse('update', {
-              points: changed.map(asPoint),
-            })
-          )
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          pushErrorAndClose(`Live stream query failed: ${message}`)
-        }
-      }, 60_000)
-
-      const abortListener = () => {
-        if (closed) return
-        clearInterval(interval)
-        controller.close()
-        closed = true
-      }
-
-      request.signal.addEventListener('abort', abortListener)
-    },
-  })
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  })
+  return Response.json(
+    { error: 'Unsupported MES 15m live mode' },
+    { status: 400, headers: JSON_HEADERS }
+  )
 }
