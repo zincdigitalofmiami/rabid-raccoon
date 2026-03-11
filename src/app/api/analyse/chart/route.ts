@@ -7,7 +7,7 @@ import type { Decimal } from '@prisma/client/runtime/client'
 import type { CandleData } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 interface ChartRequestBody {
   image: string // base64 PNG from chart.takeScreenshot()
