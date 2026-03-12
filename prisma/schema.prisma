@@ -62,7 +62,7 @@ enum SignalStatus {
   STOPPED_OUT
 }
 
-enum BhgPhase {
+enum WarbirdPhase {
   TOUCHED
   HOOKED
   GO_FIRED
@@ -71,6 +71,9 @@ enum BhgPhase {
   TP1_HIT
   TP2_HIT
 }
+
+// Legacy alias — keep until all migration SQL references are updated
+// enum BhgPhase renamed to WarbirdPhase
 
 enum IngestionStatus {
   RUNNING
@@ -167,26 +170,6 @@ model MktFuturesMes1h {
 
   @@unique([eventTime], map: "mkt_futures_mes_1h_event_time_key")
   @@map("mkt_futures_mes_1h")
-}
-
-model MktFuturesMes4h {
-  id            BigInt     @id @default(autoincrement())
-  eventTime     DateTime   @db.Timestamptz(6)
-  open          Decimal    @db.Decimal(18, 6)
-  high          Decimal    @db.Decimal(18, 6)
-  low           Decimal    @db.Decimal(18, 6)
-  close         Decimal    @db.Decimal(18, 6)
-  volume        BigInt?
-  source        DataSource @default(DATABENTO)
-  sourceDataset String?    @db.VarChar(64)
-  sourceSchema  String?    @db.VarChar(32)
-  ingestedAt    DateTime   @default(now()) @db.Timestamptz(6)
-  knowledgeTime DateTime   @default(now()) @db.Timestamptz(6)
-  rowHash       String?    @db.VarChar(64)
-  metadata      Json?
-
-  @@unique([eventTime], map: "mkt_futures_mes_4h_event_time_key")
-  @@map("mkt_futures_mes_4h")
 }
 
 model MktFuturesMes1m {
@@ -676,14 +659,14 @@ model IngestionRun {
   @@map("ingestion_runs")
 }
 
-// ─── BHG (Break-Hook-Go) Setups ───────────────────────────────────────────
+// ─── Warbird Setups (formerly BHG / Break-Hook-Go) ───────────────────────
 
-model BhgSetup {
+model WarbirdSetup {
   id        BigInt          @id @default(autoincrement())
   setupId   String          @unique @db.VarChar(128)
   direction SignalDirection
   timeframe Timeframe
-  phase     BhgPhase
+  phase     WarbirdPhase
   fibLevel  Decimal         @db.Decimal(18, 6)
   fibRatio  Decimal         @db.Decimal(8, 6)
 
@@ -722,10 +705,10 @@ model BhgSetup {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
-  @@index([direction, phase], map: "bhg_setups_direction_phase_idx")
-  @@index([goTime], map: "bhg_setups_go_time_idx")
-  @@index([timeframe, goTime], map: "bhg_setups_tf_go_time_idx")
-  @@map("bhg_setups")
+  @@index([direction, phase], map: "warbird_setups_direction_phase_idx")
+  @@index([goTime], map: "warbird_setups_go_time_idx")
+  @@index([timeframe, goTime], map: "warbird_setups_tf_go_time_idx")
+  @@map("warbird_setups")
 }
 
 // ─── Scored Trades (Intelligence Engine output + outcome tracking) ────────
