@@ -26,7 +26,7 @@ import type { TriggerCandidate } from '../trigger-candidates'
 
 // ─── Marker Data ─────────────────────────────────────────────────────────────
 
-export interface BhgMarkerData {
+export interface WarbirdMarkerData {
   setups: TriggerCandidate[]
   /** Unix seconds — last candle time, used as start for level projections */
   lastTime: number
@@ -72,13 +72,13 @@ const MARKER_STYLES = {
 
 // ─── Renderer ────────────────────────────────────────────────────────────────
 
-class BhgMarkersRenderer implements IPrimitivePaneRenderer {
-  private _data: BhgMarkerData | null = null
+class WarbirdMarkersRenderer implements IPrimitivePaneRenderer {
+  private _data: WarbirdMarkerData | null = null
   private _priceToY: ((price: number) => Coordinate | null) | null = null
   private _timeToX: ((time: Time) => Coordinate | null) | null = null
 
   update(
-    data: BhgMarkerData | null,
+    data: WarbirdMarkerData | null,
     priceToY: (price: number) => Coordinate | null,
     timeToX: (time: Time) => Coordinate | null
   ) {
@@ -245,11 +245,11 @@ class BhgMarkersRenderer implements IPrimitivePaneRenderer {
 
 // ─── Pane View ───────────────────────────────────────────────────────────────
 
-class BhgMarkersPaneView implements IPrimitivePaneView {
-  private _renderer = new BhgMarkersRenderer()
+class WarbirdMarkersPaneView implements IPrimitivePaneView {
+  private _renderer = new WarbirdMarkersRenderer()
 
   update(
-    data: BhgMarkerData | null,
+    data: WarbirdMarkerData | null,
     priceToY: (price: number) => Coordinate | null,
     timeToX: (time: Time) => Coordinate | null
   ) {
@@ -267,7 +267,7 @@ class BhgMarkersPaneView implements IPrimitivePaneView {
 
 // ─── Price Axis Views ────────────────────────────────────────────────────────
 
-class BhgLevelAxisView implements ISeriesPrimitiveAxisView {
+class WarbirdLevelAxisView implements ISeriesPrimitiveAxisView {
   private _price: number
   private _label: string
   private _color: string
@@ -308,12 +308,12 @@ class BhgLevelAxisView implements ISeriesPrimitiveAxisView {
 // ─── Main Primitive ──────────────────────────────────────────────────────────
 
 export class TriggerMarkersPrimitive implements ISeriesPrimitive<Time> {
-  private _data: BhgMarkerData | null = null
-  private _paneView = new BhgMarkersPaneView()
-  private _axisViews: BhgLevelAxisView[] = []
+  private _data: WarbirdMarkerData | null = null
+  private _paneView = new WarbirdMarkersPaneView()
+  private _axisViews: WarbirdLevelAxisView[] = []
   private _attachedParams: SeriesAttachedParameter<Time, SeriesType> | null = null
 
-  setMarkers(data: BhgMarkerData | null) {
+  setMarkers(data: WarbirdMarkerData | null) {
     this._data = data
     if (this._attachedParams) {
       this._attachedParams.requestUpdate()
@@ -369,7 +369,7 @@ export class TriggerMarkersPrimitive implements ISeriesPrimitive<Time> {
 
       this._axisViews = [...deduped.values()]
         .sort((a, b) => b.price - a.price)
-        .map((v) => new BhgLevelAxisView(v.price, v.label, v.color, v.coord))
+        .map((v) => new WarbirdLevelAxisView(v.price, v.label, v.color, v.coord))
     }
   }
 

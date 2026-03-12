@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computeTargets, detectTouch, type BhgSetup } from '../src/lib/bhg-engine'
+import { computeTargets, detectTouch, type WarbirdSetup } from '../src/lib/warbird-engine'
 import type { FibResult, MeasuredMove } from '../src/lib/types'
 
 function makeFibResult(isBullish: boolean): FibResult {
@@ -25,7 +25,7 @@ function makeFibResult(isBullish: boolean): FibResult {
   }
 }
 
-function baseGoSetup(direction: 'BULLISH' | 'BEARISH'): BhgSetup {
+function baseGoSetup(direction: 'BULLISH' | 'BEARISH'): WarbirdSetup {
   return {
     id: `${direction}-0.5-1`,
     direction,

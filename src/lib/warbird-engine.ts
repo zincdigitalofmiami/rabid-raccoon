@@ -1,5 +1,5 @@
 /**
- * Break-Hook-Go (BHG) State Machine Engine
+ * Warbird State Machine Engine (formerly BHG / Break-Hook-Go)
  *
  * Encodes the Touch → Hook → Go pattern as pure functions.
  * No DB, no API calls — takes candles + fib + measured moves, returns setups.
@@ -18,7 +18,7 @@ export type GoType = 'BREAK' | 'CLOSE'
 export type SetupPhase = 'AWAITING_CONTACT' | 'CONTACT' | 'CONFIRMED' | 'TRIGGERED' | 'EXPIRED' | 'INVALIDATED'
 export type SetupDirection = 'BULLISH' | 'BEARISH'
 
-export interface BhgSetup {
+export interface WarbirdSetup {
   id: string
   direction: SetupDirection
   phase: SetupPhase
@@ -97,7 +97,7 @@ export function detectTouch(
   fibLevel: number,
   fibRatio: number,
   isBullish: boolean
-): BhgSetup | null {
+): WarbirdSetup | null {
   const isTagged = candle.low <= fibLevel && candle.high >= fibLevel
   if (!isTagged) return null
 
@@ -128,8 +128,8 @@ export function detectTouch(
 export function detectHook(
   candle: CandleData,
   barIndex: number,
-  setup: BhgSetup
-): BhgSetup | null {
+  setup: WarbirdSetup
+): WarbirdSetup | null {
   if (setup.phase !== 'CONTACT') return null
 
   const body = Math.abs(candle.close - candle.open)
@@ -189,8 +189,8 @@ export function detectHook(
 export function detectGo(
   candle: CandleData,
   barIndex: number,
-  setup: BhgSetup
-): BhgSetup | null {
+  setup: WarbirdSetup
+): WarbirdSetup | null {
   if (setup.phase !== 'CONFIRMED') return null
 
   // Check expiry first
@@ -260,10 +260,10 @@ export function detectGo(
  * If an aligned measured move exists, prefer its target for TP1.
  */
 export function computeTargets(
-  setup: BhgSetup,
+  setup: WarbirdSetup,
   fibResult: FibResult,
   measuredMoves: MeasuredMove[]
-): BhgSetup {
+): WarbirdSetup {
   if (setup.phase !== 'TRIGGERED') return setup
 
   const range = fibResult.anchorHigh - fibResult.anchorLow
@@ -348,23 +348,23 @@ export function computeTargets(
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 /**
- * Run the BHG state machine over a candle array.
+ * Run the Warbird state machine over a candle array.
  *
  * Stateless: takes the full candle history and recomputes from scratch.
  * Returns all setups (active + terminal) for display.
  */
-export function advanceBhgSetups(
+export function advanceWarbirdSetups(
   candles: CandleData[],
   fibResult: FibResult,
   measuredMoves: MeasuredMove[]
-): BhgSetup[] {
+): WarbirdSetup[] {
   if (candles.length < 10 || !fibResult) return []
 
   const touchLevels = findTouchableFibLevels(fibResult)
   if (touchLevels.length === 0) return []
 
-  const activeSetups: Map<string, BhgSetup> = new Map()
-  const completedSetups: BhgSetup[] = []
+  const activeSetups: Map<string, WarbirdSetup> = new Map()
+  const completedSetups: WarbirdSetup[] = []
 
   // Track which fib levels have already fired a GO to avoid duplicates
   const firedGoKeys = new Set<string>()
@@ -407,7 +407,7 @@ export function advanceBhgSetups(
 
     // 2. Advance active setups
     for (const [id, setup] of activeSetups) {
-      let updated: BhgSetup | null = null
+      let updated: WarbirdSetup | null = null
 
       if (setup.phase === 'CONTACT') {
         // Try hook detection on this candle (can happen same bar as touch)

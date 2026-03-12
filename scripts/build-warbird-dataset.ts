@@ -1,5 +1,5 @@
 /**
- * build-bhg-dataset.ts
+ * build-warbird-dataset.ts
  *
  * Builds the Fib Setup Scorer training dataset.
  * One row per GO event, NOT per candle.
@@ -19,9 +19,9 @@
  *   tp2_before_sl_8h  — TP2 (1.618) hit before SL within 8h (32 bars)
  *
  * Usage:
- *   npx tsx scripts/build-bhg-dataset.ts
- *   npx tsx scripts/build-bhg-dataset.ts --days-back=180
- *   npx tsx scripts/build-bhg-dataset.ts --out=datasets/custom_bhg.csv
+ *   npx tsx scripts/build-warbird-dataset.ts
+ *   npx tsx scripts/build-warbird-dataset.ts --days-back=180
+ *   npx tsx scripts/build-warbird-dataset.ts --out=datasets/custom_warbird.csv
  */
 
 import { prisma } from '../src/lib/prisma'
@@ -29,7 +29,7 @@ import { loadDotEnvFiles, neutralizeFormula, parseArg, safeOutputPath } from './
 import { detectSwings } from '../src/lib/swing-detection'
 import { calculateFibonacciMultiPeriod } from '../src/lib/fibonacci'
 import { detectMeasuredMoves } from '../src/lib/measured-move'
-import { advanceBhgSetups, BhgSetup } from '../src/lib/bhg-engine'
+import { advanceWarbirdSetups, WarbirdSetup } from '../src/lib/warbird-engine'
 import { computeRisk, MES_DEFAULTS } from '../src/lib/risk-engine'
 import type { CandleData, FibResult, MeasuredMove } from '../src/lib/types'
 import { toNum } from '../src/lib/decimal'
@@ -41,7 +41,7 @@ import path from 'node:path'
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 const MES_TICK_SIZE = 0.25
-const WINDOW_BARS = 96  // 24h lookback for BHG engine
+const WINDOW_BARS = 96  // 24h lookback for Warbird engine
 const STEP_BARS = 16    // Advance 4h per window step (overlap is intentional)
 
 // Label horizons (in 15m bars)
@@ -376,7 +376,7 @@ interface GoEventFeatures {
 }
 
 function computeGoFeatures(
-  setup: BhgSetup,
+  setup: WarbirdSetup,
   candles: CandleData[],
   allCandles: CandleData[],  // Full history for look-forward
   fibResult: FibResult,
@@ -650,7 +650,7 @@ function computeGoFeatures(
 function lookForwardLabel(
   allCandles: CandleData[],
   goBarIndex: number,
-  setup: BhgSetup,
+  setup: WarbirdSetup,
   targetType: 'tp1' | 'tp2',
   horizonBars: number
 ): number | null {
@@ -789,10 +789,10 @@ async function main() {
   loadDotEnvFiles()
 
   const daysBack = parseInt(parseArg('days-back', '730'), 10)
-  const outPath = safeOutputPath(parseArg('out', 'datasets/autogluon/bhg_setups.csv'), path.resolve(__dirname, '..'))
+  const outPath = safeOutputPath(parseArg('out', 'datasets/autogluon/warbird_setups.csv'), path.resolve(__dirname, '..'))
   const shouldPersist = parseArg('persist', 'true').toLowerCase() !== 'false'
 
-  console.log(`Building BHG setup dataset (last ${daysBack} days)`)
+  console.log(`Building Warbird setup dataset (last ${daysBack} days)`)
   console.log(`  Output: ${outPath}`)
 
   // 1. Fetch all 15m candles
@@ -826,11 +826,11 @@ async function main() {
   })
   console.log(`  News signals (headlines): ${newsSignals.length} rows`)
 
-  // 3. Slide window over candles, run BHG engine, collect GO events
+  // 3. Slide window over candles, run Warbird engine, collect GO events
   const goEvents: GoEventFeatures[] = []
   const seenGoKeys = new Set<string>()
 
-  console.log('  Running BHG engine over sliding windows...')
+  console.log('  Running Warbird engine over sliding windows...')
 
   for (let start = 0; start <= allCandles.length - WINDOW_BARS; start += STEP_BARS) {
     const windowEnd = start + WINDOW_BARS
@@ -848,7 +848,7 @@ async function main() {
     if (!fibResult) continue
 
     const measuredMoves = detectMeasuredMoves(swings.highs, swings.lows, window[window.length - 1].close)
-    const setups = advanceBhgSetups(window, fibResult, measuredMoves)
+    const setups = advanceWarbirdSetups(window, fibResult, measuredMoves)
 
     // Extract TRIGGERED setups
     for (const setup of setups) {
@@ -944,14 +944,14 @@ async function main() {
   fs.writeFileSync(outPath, csvLines.join('\n') + '\n')
   console.log(`\n  Written to ${outPath} (${goEvents.length} rows x ${header.length} columns)`)
 
-  // 6. Also persist to bhg_setups table
+  // 6. Also persist to warbird_setups table
   if (shouldPersist) {
-    console.log('  Persisting GO events to bhg_setups table...')
+    console.log('  Persisting GO events to warbird_setups table...')
 
-    const bhgTablePresent = await tableExists('bhg_setups')
-    if (!bhgTablePresent) {
+    const warbirdTablePresent = await tableExists('warbird_setups')
+    if (!warbirdTablePresent) {
       throw new Error(
-        'Persistence target table public.bhg_setups is missing. Run Prisma migration before using --persist=true.'
+        'Persistence target table public.warbird_setups is missing. Run Prisma migration before using --persist=true.'
       )
     }
 
@@ -964,7 +964,7 @@ async function main() {
       const sign = event.direction === 'BULLISH' ? 1 : -1
 
       try {
-        await prisma.bhgSetup.upsert({
+        await prisma.warbirdSetup.upsert({
           where: { setupId },
           create: {
             setupId,
@@ -1006,7 +1006,7 @@ async function main() {
       for (const msg of sampleErrors) {
         console.error(`   - ${msg}`)
       }
-      throw new Error(`Failed to persist ${failed}/${goEvents.length} GO events to bhg_setups.`)
+      throw new Error(`Failed to persist ${failed}/${goEvents.length} GO events to warbird_setups.`)
     }
   } else {
     console.log('  Skipping DB persistence (--persist=false).')

@@ -1,4 +1,4 @@
-import type { BhgSetup } from "@/lib/bhg-engine";
+import type { WarbirdSetup } from "@/lib/warbird-engine";
 import { prisma } from "@/lib/prisma";
 import { canonicalSetupId } from "@/lib/setup-id";
 
@@ -19,7 +19,7 @@ function toDate(epochSeconds?: number): Date | null {
  * are durably recorded even when scoring is unavailable.
  */
 export async function recordTriggeredSetups(
-  setups: BhgSetup[],
+  setups: WarbirdSetup[],
   scoringBySetupId?: Map<string, SetupScoringContext>,
 ): Promise<number> {
   const triggered = setups.filter(
@@ -39,7 +39,7 @@ export async function recordTriggeredSetups(
     const setupId = canonicalSetupId(setup);
     const scoring = scoringBySetupId?.get(setupId);
 
-    await prisma.bhgSetup.upsert({
+    await prisma.warbirdSetup.upsert({
       where: { setupId },
       create: {
         setupId,
