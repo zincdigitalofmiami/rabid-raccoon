@@ -22,12 +22,12 @@ import type {
   Coordinate,
 } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
-import type { TriggerCandidate } from '../trigger-candidates'
+import type { WarbirdSetup } from '../warbird-engine'
 
 // ─── Marker Data ─────────────────────────────────────────────────────────────
 
 export interface WarbirdMarkerData {
-  setups: TriggerCandidate[]
+  setups: WarbirdSetup[]
   /** Unix seconds — last candle time, used as start for level projections */
   lastTime: number
   /** How many bars into the future to project entry/SL/TP lines */
@@ -115,7 +115,7 @@ class WarbirdMarkersRenderer implements IPrimitivePaneRenderer {
     })
   }
 
-  private _drawTouch(ctx: CanvasRenderingContext2D, setup: TriggerCandidate) {
+  private _drawTouch(ctx: CanvasRenderingContext2D, setup: WarbirdSetup) {
     const x = this._timeToX!(setup.touchTime! as unknown as Time)
     const y = this._priceToY!(setup.touchPrice!)
     if (x == null || y == null) return
@@ -129,7 +129,7 @@ class WarbirdMarkersRenderer implements IPrimitivePaneRenderer {
     ctx.stroke()
   }
 
-  private _drawHook(ctx: CanvasRenderingContext2D, setup: TriggerCandidate) {
+  private _drawHook(ctx: CanvasRenderingContext2D, setup: WarbirdSetup) {
     const x = this._timeToX!(setup.hookTime! as unknown as Time)
     const hookPrice = setup.hookClose!
     const y = this._priceToY!(hookPrice)
@@ -160,7 +160,7 @@ class WarbirdMarkersRenderer implements IPrimitivePaneRenderer {
     ctx.stroke()
   }
 
-  private _drawGo(ctx: CanvasRenderingContext2D, setup: TriggerCandidate) {
+  private _drawGo(ctx: CanvasRenderingContext2D, setup: WarbirdSetup) {
     const x = this._timeToX!(setup.goTime! as unknown as Time)
     const y = this._priceToY!(setup.entry!)
     if (x == null || y == null) return
@@ -189,7 +189,7 @@ class WarbirdMarkersRenderer implements IPrimitivePaneRenderer {
 
   private _drawLevelLines(
     ctx: CanvasRenderingContext2D,
-    setup: TriggerCandidate,
+    setup: WarbirdSetup,
     lastTime: number,
     futureEnd: number,
     chartWidth: number,
