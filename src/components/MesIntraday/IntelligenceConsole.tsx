@@ -37,7 +37,7 @@ export default function IntelligenceConsole({
     risk,
   });
 
-  // Derive simple next target for Billboard (based on AI forecast or BHG engine)
+  // Derive simple next target for Billboard (based on AI forecast or Warbird engine)
   const nextTarget =
     leadSetup?.entry ??
     forecast?.keyLevels?.resistance?.[0] ??

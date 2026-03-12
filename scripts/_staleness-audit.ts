@@ -12,7 +12,7 @@ const ALLOWED_TABLES = new Set([
   'econ_inflation_1d', 'econ_labor_1d', 'econ_activity_1d', 'econ_money_1d',
   'econ_commodities_1d', 'econ_indexes_1d', 'econ_news_1d', 'policy_news_1d',
   'macro_reports_1d', 'econ_calendar', 'news_signals',
-  'measured_move_signals', 'bhg_setups', 'ingestion_runs',
+  'measured_move_signals', 'warbird_setups', 'ingestion_runs',
 ])
 const ALLOWED_COLUMNS = new Set([
   'eventTime', 'eventDate', 'pubDate', 'timestamp', 'goTime', 'startedAt',
@@ -132,7 +132,7 @@ async function main() {
   // ── Signals ──
   console.log('\n\n── SIGNALS ──────────────────────────────────')
   await queryTable('measured_move_signals', 'timestamp', 'symbolCode')
-  await queryTable('bhg_setups', 'goTime', 'timeframe')
+  await queryTable('warbird_setups', 'goTime', 'timeframe')
 
   // ── Ingestion Runs ──
   console.log('\n\n── INGESTION RUNS (last 10) ─────────────────')
@@ -176,7 +176,7 @@ async function main() {
     { table: 'econ_calendar', dateCol: 'eventDate' },
     { table: 'news_signals', dateCol: 'pubDate' },
     { table: 'measured_move_signals', dateCol: 'timestamp' },
-    { table: 'bhg_setups', dateCol: 'goTime' },
+    { table: 'warbird_setups', dateCol: 'goTime' },
   ]
 
   const summary: TableSummary[] = []

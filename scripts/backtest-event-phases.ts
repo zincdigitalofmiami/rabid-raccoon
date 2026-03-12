@@ -1,11 +1,11 @@
 #!/usr/bin/env npx tsx
 /**
- * Backtest: BHG setup outcomes by proximity to economic events.
+ * Backtest: Warbird setup outcomes by proximity to economic events.
  *
  * Derives data-driven phase boundaries and confidence adjustments
  * for the Event Awareness Engine (src/lib/event-awareness.ts).
  *
- * Loads all bhg_setups with outcomes (tp1Hit IS NOT NULL) and all
+ * Loads all warbird_setups with outcomes (tp1Hit IS NOT NULL) and all
  * high/medium-impact econ_calendar rows, then measures how TP1/TP2
  * hit rates vary by proximity to the nearest event.
  *
@@ -140,10 +140,10 @@ function padLeft(str: string, width: number): string {
 async function main(): Promise<void> {
   const prisma = getScriptPrismaClient()
 
-  console.log('[backtest-event-phases] Loading BHG setups with outcomes...')
+  console.log('[backtest-event-phases] Loading Warbird setups with outcomes...')
 
   // Load all setups where tp1Hit has been determined (outcome known)
-  const setups: SetupRow[] = await prisma.bhgSetup.findMany({
+  const setups: SetupRow[] = await prisma.warbirdSetup.findMany({
     where: {
       tp1Hit: { not: null },
     },
@@ -163,7 +163,7 @@ async function main(): Promise<void> {
   console.log(`[backtest-event-phases] Setups with valid goTime: ${validSetups.length}`)
 
   if (validSetups.length === 0) {
-    console.log('\nNo BHG setups with outcomes found. Run build-bhg-dataset.ts first to populate tp1Hit/tp2Hit.')
+    console.log('\nNo Warbird setups with outcomes found. Run build-warbird-dataset.ts first to populate tp1Hit/tp2Hit.')
     return
   }
 
@@ -275,7 +275,7 @@ async function main(): Promise<void> {
   const baselineTp2Rate = pct(baselineTp2, baselineTotal)
 
   console.log('')
-  console.log('=== BHG Setup Outcomes by Event Proximity ===')
+  console.log('=== Warbird Setup Outcomes by Event Proximity ===')
   console.log('')
   console.log(`Total setups with outcomes: ${validSetups.length}`)
   console.log(`Total high/medium econ events: ${parsedEvents.length}`)

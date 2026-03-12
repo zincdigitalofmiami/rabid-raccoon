@@ -2,13 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  fromBhgSetup,
-  toBhgSetup,
+  fromWarbirdSetup,
+  toWarbirdSetup,
   type TriggerCandidate,
 } from '@/lib/trigger-candidates'
-import type { BhgSetup } from '@/lib/bhg-engine'
+import type { WarbirdSetup } from '@/lib/warbird-engine'
 
-function baseBhgSetup(): BhgSetup {
+function baseWarbirdSetup(): WarbirdSetup {
   return {
     id: 'legacy-hook-1',
     direction: 'BULLISH',
@@ -35,8 +35,8 @@ function baseBhgSetup(): BhgSetup {
   }
 }
 
-test('fromBhgSetup produces a neutral trigger candidate with preserved trade targets', () => {
-  const candidate = fromBhgSetup(baseBhgSetup())
+test('fromWarbirdSetup produces a neutral trigger candidate with preserved trade targets', () => {
+  const candidate = fromWarbirdSetup(baseWarbirdSetup())
 
   assert.equal(candidate.sourceFamily, 'HOOK_REJECTION')
   assert.equal(candidate.triggerType, 'RETRACE_REJECTION')
@@ -51,9 +51,9 @@ test('fromBhgSetup produces a neutral trigger candidate with preserved trade tar
   assert.match(candidate.thesis, /retracement rejection/i)
 })
 
-test('toBhgSetup round-trips the fields the legacy recorder still needs', () => {
-  const candidate: TriggerCandidate = fromBhgSetup(baseBhgSetup())
-  const legacy = toBhgSetup(candidate)
+test('toWarbirdSetup round-trips the fields the legacy recorder still needs', () => {
+  const candidate: TriggerCandidate = fromWarbirdSetup(baseWarbirdSetup())
+  const legacy = toWarbirdSetup(candidate)
 
-  assert.deepEqual(legacy, baseBhgSetup())
+  assert.deepEqual(legacy, baseWarbirdSetup())
 })

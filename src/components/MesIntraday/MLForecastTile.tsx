@@ -248,7 +248,7 @@ export default function MLForecastTile({ setupsData }: MLForecastTileProps) {
       <div className="mt-4 pt-3 border-t border-white/[0.05] text-[10px] font-mono text-white/15 flex justify-between">
         <span>
           {hasSetup
-            ? 'BHG · Fib confluence · Risk-graded'
+            ? 'Warbird · Fib confluence · Risk-graded'
             : `AutoGluon ensemble${isCalibrated ? ' · Calibrated' : ''}`}
         </span>
         {currentPrice != null && (

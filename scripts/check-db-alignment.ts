@@ -334,18 +334,18 @@ async function main() {
     }
   }
 
-  // ── 15. bhg_setups ─────────────────────────────────────────────────────────
-  section('15. bhg_setups — BHG setup tracking')
+  // ── 15. warbird_setups ──────────────────────────────────────────────────────
+  section('15. warbird_setups — Warbird setup tracking')
   {
-    const total = await prisma.bhgSetup.count()
+    const total = await prisma.warbirdSetup.count()
     row('Total rows', total.toLocaleString())
     if (total > 0) {
-      const earliest = await prisma.bhgSetup.findFirst({ orderBy: { createdAt: 'asc' }, select: { createdAt: true, goTime: true } })
-      const latest = await prisma.bhgSetup.findFirst({ orderBy: { createdAt: 'desc' }, select: { createdAt: true, goTime: true } })
+      const earliest = await prisma.warbirdSetup.findFirst({ orderBy: { createdAt: 'asc' }, select: { createdAt: true, goTime: true } })
+      const latest = await prisma.warbirdSetup.findFirst({ orderBy: { createdAt: 'desc' }, select: { createdAt: true, goTime: true } })
       row('Earliest createdAt', fmtTs(earliest?.createdAt))
       row('Latest createdAt', fmtTs(latest?.createdAt))
 
-      const phaseGroups = await prisma.bhgSetup.groupBy({
+      const phaseGroups = await prisma.warbirdSetup.groupBy({
         by: ['phase'],
         _count: { id: true },
         orderBy: { phase: 'asc' },
@@ -356,7 +356,7 @@ async function main() {
         console.log(`    ${g.phase.padEnd(20)} ${String(g._count.id).padStart(8)} setups`)
       }
 
-      const dirGroups = await prisma.bhgSetup.groupBy({
+      const dirGroups = await prisma.warbirdSetup.groupBy({
         by: ['direction'],
         _count: { id: true },
         orderBy: { direction: 'asc' },

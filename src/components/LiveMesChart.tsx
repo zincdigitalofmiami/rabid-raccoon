@@ -12,7 +12,6 @@ import Image from "next/image";
 import {
   CandlestickSeries,
   ColorType,
-  CrosshairMode,
   createChart,
   IChartApi,
   ISeriesApi,
@@ -22,15 +21,14 @@ import {
   UTCTimestamp,
 } from "lightweight-charts";
 import type { ForecastResponse, MeasuredMove, CandleData } from "@/lib/types";
+import type { WarbirdSetup } from "@/lib/warbird-engine";
 import type { PivotLine, PivotTimeframe } from "@/lib/pivots";
 import { ForecastTargetsPrimitive } from "@/lib/charts/ForecastTargetsPrimitive";
-import { TriggerMarkersPrimitive } from "@/lib/charts/BhgMarkersPrimitive";
+import { TriggerMarkersPrimitive } from "@/lib/charts/WarbirdMarkersPrimitive";
 import { PivotLinesPrimitive } from "@/lib/charts/PivotLinesPrimitive";
 import { mapMeasuredMoveAndCoreToTargets } from "@/lib/charts/blendTargets";
 import { ensureFutureWhitespace } from "@/lib/charts/ensureFutureWhitespace";
 import { calculateFibonacciMultiPeriod } from "@/lib/fibonacci";
-import { getEventDisplayPhase } from "@/lib/event-display";
-import type { TriggerCandidate } from "@/lib/trigger-candidates";
 import TV from "@/lib/colors";
 
 type MesPoint = {
@@ -52,17 +50,13 @@ const DEFAULT_BAR_SPACING = 10;
 const MIN_BAR_SPACING = 8;
 const MAX_TOUCH_MARKERS = 1;
 const MAX_HOOK_MARKERS = 1;
-const LIVE_MES_POLL_INTERVAL_MS = 10_000;
-const LIVE_MES_POLL_BARS = 12;
-const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
-const FNV_PRIME_32 = 0x01000193;
 
 // ─── Pivot Line Colors (per timeframe) ──────────────────────────────────────
 const PIVOT_COLORS: Record<PivotTimeframe, string> = {
-  D: "#FFFFFF",  // white  — daily
-  W: "#F23645",  // TradingView red — weekly
-  M: "#F23645",  // TradingView red — monthly
-  Y: "#F23645",  // TradingView red — yearly
+  D: "#FFFFFF", // white  — daily
+  W: "#F23645", // TradingView red — weekly
+  M: "#F23645", // TradingView red — monthly
+  Y: "#F23645", // TradingView red — yearly
 };
 
 // ─── Gap-Free Time Mapping ──────────────────────────────────────────────────
@@ -160,42 +154,11 @@ function toCandle(point: MesPoint): CandleData {
   };
 }
 
-function pointFingerprint(point: MesPoint): string {
-  return [
-    point.time * 1000,
-    point.open,
-    point.high,
-    point.low,
-    point.close,
-    point.volume ?? 0,
-  ].join("|");
-}
-
-function updateFnv1a32(hash: number, value: string): number {
-  let next = hash;
-  for (let i = 0; i < value.length; i++) {
-    next ^= value.charCodeAt(i);
-    next = Math.imul(next, FNV_PRIME_32);
-  }
-  return next >>> 0;
-}
-
-function pollWindowFingerprint(points: MesPoint[]): string {
-  let hash = FNV_OFFSET_BASIS_32;
-  for (const point of points) {
-    hash = updateFnv1a32(hash, pointFingerprint(point));
-    hash = updateFnv1a32(hash, "\n");
-  }
-  const lastPoint = points[points.length - 1];
-  const lastTimeMs = lastPoint ? lastPoint.time * 1000 : 0;
-  return `${points.length}:${lastTimeMs}:${hash.toString(16)}`;
-}
-
-function setupSortTime(setup: TriggerCandidate): number {
+function setupSortTime(setup: WarbirdSetup): number {
   return setup.goTime ?? setup.hookTime ?? setup.touchTime ?? setup.createdAt;
 }
 
-function isRenderableGoSetup(setup: TriggerCandidate): boolean {
+function isRenderableGoSetup(setup: WarbirdSetup): boolean {
   if (setup.phase !== "TRIGGERED") return false;
   if (
     setup.entry == null ||
@@ -220,9 +183,9 @@ function isRenderableGoSetup(setup: TriggerCandidate): boolean {
 }
 
 function selectSetupsForChart(
-  setups: TriggerCandidate[],
+  setups: WarbirdSetup[],
   lastTimeSec: number | null,
-): TriggerCandidate[] {
+): WarbirdSetup[] {
   if (setups.length === 0) return [];
 
   const goCandidates = setups
@@ -268,7 +231,7 @@ export interface LiveMesChartHandle {
 
 interface LiveMesChartProps {
   forecast?: ForecastResponse | null;
-  setups?: TriggerCandidate[];
+  setups?: WarbirdSetup[];
   eventPhase?: string;
   eventLabel?: string;
 }
@@ -279,14 +242,13 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick", Time> | null>(null);
     const primitiveRef = useRef<ForecastTargetsPrimitive | null>(null);
-    const triggerPrimitiveRef = useRef<TriggerMarkersPrimitive | null>(null);
+    const warbirdPrimitiveRef = useRef<TriggerMarkersPrimitive | null>(null);
     const pivotPrimitiveRef = useRef<PivotLinesPrimitive | null>(null);
     const initialViewportAppliedRef = useRef(false);
-    const displayEventPhase = getEventDisplayPhase(eventPhase);
 
     // Gap-free points (sequential times for chart rendering)
     const pointsRef = useRef<MesPoint[]>([]);
-    // Original real-time points (for fib calc, session stats, BHG time lookup)
+    // Original real-time points (for fib calc, session stats, Warbird time lookup)
     const realPointsRef = useRef<MesPoint[]>([]);
     // Bidirectional time mapping: real ↔ gap-free
     const timeMapRef = useRef<TimeMap>({
@@ -294,7 +256,6 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       gfToReal: new Map(),
       baseTime: 0,
     });
-    const pollFingerprintRef = useRef<string | null>(null);
 
     const [status, setStatus] = useState<StreamStatus>("connecting");
     const [error, setError] = useState<string | null>(null);
@@ -406,7 +367,6 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           },
         },
         crosshair: {
-          mode: CrosshairMode.Normal,
           vertLine: {
             color: "rgba(255,255,255,0.65)",
             width: 1,
@@ -456,9 +416,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       const primitive = new ForecastTargetsPrimitive();
       series.attachPrimitive(primitive);
 
-      // Attach trigger candidate markers primitive
-      const triggerPrimitive = new TriggerMarkersPrimitive();
-      series.attachPrimitive(triggerPrimitive);
+      // Attach Warbird markers primitive
+      const warbirdPrimitive = new TriggerMarkersPrimitive();
+      series.attachPrimitive(warbirdPrimitive);
 
       // Attach pivot lines primitive (custom canvas — no axis boxes, solid lines)
       const pivotPrimitive = new PivotLinesPrimitive();
@@ -467,7 +427,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       chartRef.current = chart;
       seriesRef.current = series;
       primitiveRef.current = primitive;
-      triggerPrimitiveRef.current = triggerPrimitive;
+      warbirdPrimitiveRef.current = warbirdPrimitive;
       pivotPrimitiveRef.current = pivotPrimitive;
 
       const resizeObserver = new ResizeObserver(() => {
@@ -478,19 +438,24 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       return () => {
         resizeObserver.disconnect();
         series.detachPrimitive(primitive);
-        series.detachPrimitive(triggerPrimitive);
+        series.detachPrimitive(warbirdPrimitive);
         series.detachPrimitive(pivotPrimitive);
         chart.remove();
         chartRef.current = null;
         seriesRef.current = null;
         primitiveRef.current = null;
-        triggerPrimitiveRef.current = null;
+        warbirdPrimitiveRef.current = null;
         pivotPrimitiveRef.current = null;
       };
     }, []);
 
-    // --- Live data feed ---
+    // --- JSON polling (snapshot + incremental poll) ---
     useEffect(() => {
+      const POLL_INTERVAL_MS = 5000; // 5 seconds
+      let pollTimer: NodeJS.Timeout | null = null;
+      let currentFingerprint: string | null = null;
+      let aborted = false;
+
       const updateSessionStats = (points: MesPoint[]) => {
         if (points.length === 0) return;
         const last = points[points.length - 1];
@@ -513,261 +478,203 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
         }
       };
 
-      const applySnapshot = (rawPoints: MesPoint[]) => {
+      const processSnapshot = (rawPoints: MesPoint[]) => {
+        if (!seriesRef.current || rawPoints.length === 0) return;
+
+        // Store original real-time points (for fib calc, stats, setup selection)
+        realPointsRef.current = rawPoints;
+
+        // Build gap-free mapping: sequential times, no session gaps
+        const { gfPoints, map } = buildGapFreeMapping(rawPoints);
+        timeMapRef.current = map;
+        pointsRef.current = gfPoints;
+
+        // Add whitespace for future target zones (extends gap-free sequence)
+        const lastGfTime = gfPoints[gfPoints.length - 1].time;
+        const lastRealTime = rawPoints[rawPoints.length - 1].time;
+        const whitespace = ensureFutureWhitespace(
+          lastGfTime,
+          BAR_INTERVAL_SEC,
+          RIGHT_PADDING_BARS,
+        );
+
+        // Register whitespace times in the map so axis labels render correctly
+        for (let i = 0; i < whitespace.length; i++) {
+          const wsGfTime = whitespace[i].time as number;
+          const wsRealTime = lastRealTime + BAR_INTERVAL_SEC * (i + 1);
+          map.gfToReal.set(wsGfTime, wsRealTime);
+          map.realToGf.set(wsRealTime, wsGfTime);
+        }
+
+        const chartData = [...gfPoints.map(toChartPoint), ...whitespace];
+        seriesRef.current.setData(chartData);
+
+        updateSessionStats(rawPoints);
+
+        const timeScale = chartRef.current?.timeScale();
+        // Keep desired spacing after setData (LWC may auto-fit on initial snapshot).
+        timeScale?.applyOptions({
+          barSpacing: DEFAULT_BAR_SPACING,
+          minBarSpacing: MIN_BAR_SPACING,
+        });
+
+        if (timeScale && !initialViewportAppliedRef.current) {
+          // Docs-aligned approach: render a fixed logical window so candles are full-width.
+          const totalBars = gfPoints.length;
+          const visibleBars = Math.min(INITIAL_VISIBLE_BARS, totalBars);
+          const from = Math.max(0, totalBars - visibleBars);
+          const to = Math.max(0, totalBars - 1) + RIGHT_PADDING_BARS;
+          timeScale.setVisibleLogicalRange({ from, to });
+          initialViewportAppliedRef.current = true;
+        } else {
+          // Keep view anchored right during reconnect snapshots.
+          timeScale?.scrollToPosition(RIGHT_PADDING_BARS, false);
+        }
+
+        setStatus("live");
+        setError(null);
+      };
+
+      const processUpdate = (updates: MesPoint[]) => {
+        if (!seriesRef.current || updates.length === 0) return;
+
+        // Merge updates into existing real points
+        const realByTime = new Map(
+          realPointsRef.current.map((p) => [p.time, p] as const),
+        );
+        for (const point of updates) {
+          realByTime.set(point.time, point);
+        }
+        const newRealPoints = [...realByTime.values()].sort(
+          (a, b) => a.time - b.time,
+        );
+        realPointsRef.current = newRealPoints;
+
+        // Rebuild gap-free mapping from scratch (avoids whitespace conflict with update())
+        const { gfPoints, map } = buildGapFreeMapping(newRealPoints);
+        timeMapRef.current = map;
+        pointsRef.current = gfPoints;
+
+        // Rebuild whitespace for future target zones
+        const lastGfTime = gfPoints[gfPoints.length - 1].time;
+        const lastRealTime = newRealPoints[newRealPoints.length - 1].time;
+        const whitespace = ensureFutureWhitespace(
+          lastGfTime,
+          BAR_INTERVAL_SEC,
+          RIGHT_PADDING_BARS,
+        );
+        for (let i = 0; i < whitespace.length; i++) {
+          const wsGfTime = whitespace[i].time as number;
+          const wsRealTime = lastRealTime + BAR_INTERVAL_SEC * (i + 1);
+          map.gfToReal.set(wsGfTime, wsRealTime);
+          map.realToGf.set(wsRealTime, wsGfTime);
+        }
+
+        // Preserve scroll position across setData
+        const range = chartRef.current?.timeScale().getVisibleLogicalRange();
+        seriesRef.current.setData([
+          ...gfPoints.map(toChartPoint),
+          ...whitespace,
+        ]);
+        if (range) {
+          chartRef.current?.timeScale().setVisibleLogicalRange(range);
+        }
+
+        updateSessionStats(newRealPoints);
+        setStatus("live");
+        setError(null);
+      };
+
+      const fetchSnapshot = async () => {
+        if (aborted) return;
         try {
-          if (!seriesRef.current) return;
-          if (rawPoints.length === 0) return;
+          const res = await fetch("/api/live/mes15m?backfill=1000");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = (await res.json()) as {
+            points: MesPoint[];
+            fingerprint?: string;
+          };
+          if (aborted) return;
 
-          // Store original real-time points (for fib calc, stats, setup selection)
-          realPointsRef.current = rawPoints;
-
-          // Build gap-free mapping: sequential times, no session gaps
-          const { gfPoints, map } = buildGapFreeMapping(rawPoints);
-          timeMapRef.current = map;
-          pointsRef.current = gfPoints;
-
-          // Add whitespace for future target zones (extends gap-free sequence)
-          const lastGfTime = gfPoints[gfPoints.length - 1].time;
-          const lastRealTime = rawPoints[rawPoints.length - 1].time;
-          const whitespace = ensureFutureWhitespace(
-            lastGfTime,
-            BAR_INTERVAL_SEC,
-            RIGHT_PADDING_BARS,
+          const rawPoints = data.points || [];
+          currentFingerprint = data.fingerprint || null;
+          console.log(
+            "[LiveMesChart] Snapshot:",
+            rawPoints.length,
+            "bars, fingerprint:",
+            currentFingerprint,
           );
 
-          // Register whitespace times in the map so axis labels render correctly
-          for (let i = 0; i < whitespace.length; i++) {
-            const wsGfTime = whitespace[i].time as number;
-            const wsRealTime = lastRealTime + BAR_INTERVAL_SEC * (i + 1);
-            map.gfToReal.set(wsGfTime, wsRealTime);
-            map.realToGf.set(wsRealTime, wsGfTime);
+          processSnapshot(rawPoints);
+        } catch (e) {
+          if (aborted) return;
+          setStatus("error");
+          setError(e instanceof Error ? e.message : "Failed to fetch snapshot");
+        }
+      };
+
+      const poll = async () => {
+        if (aborted) return;
+        try {
+          const url = new URL("/api/live/mes15m", window.location.origin);
+          url.searchParams.set("poll", "1");
+          url.searchParams.set("bars", "5");
+          if (currentFingerprint) {
+            url.searchParams.set("fingerprint", currentFingerprint);
           }
 
-          const chartData = [...gfPoints.map(toChartPoint), ...whitespace];
-          seriesRef.current.setData(chartData);
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = (await res.json()) as {
+            points: MesPoint[];
+            live: boolean;
+            changed?: boolean;
+            fingerprint?: string;
+          };
+          if (aborted) return;
 
-          updateSessionStats(rawPoints);
+          console.log(
+            "[LiveMesChart] Poll:",
+            data.changed ? "CHANGED" : "no change",
+            "points:",
+            data.points.length,
+            "fingerprint:",
+            data.fingerprint,
+          );
 
-          const timeScale = chartRef.current?.timeScale();
-          // Keep desired spacing after setData (LWC may auto-fit on initial snapshot).
-          timeScale?.applyOptions({
-            barSpacing: DEFAULT_BAR_SPACING,
-            minBarSpacing: MIN_BAR_SPACING,
-          });
-
-          if (timeScale && !initialViewportAppliedRef.current) {
-            // Docs-aligned approach: render a fixed logical window so candles are full-width.
-            const totalBars = gfPoints.length;
-            const visibleBars = Math.min(INITIAL_VISIBLE_BARS, totalBars);
-            const from = Math.max(0, totalBars - visibleBars);
-            const to = Math.max(0, totalBars - 1) + RIGHT_PADDING_BARS;
-            timeScale.setVisibleLogicalRange({ from, to });
-            initialViewportAppliedRef.current = true;
-          } else {
-            // Keep view anchored right during reconnect snapshots.
-            timeScale?.scrollToPosition(RIGHT_PADDING_BARS, false);
+          if (data.changed) {
+            // Full refresh needed
+            await fetchSnapshot();
+          } else if (data.points.length > 0) {
+            // Incremental update
+            processUpdate(data.points);
+            currentFingerprint = data.fingerprint || currentFingerprint;
           }
 
           setStatus("live");
           setError(null);
-          pollFingerprintRef.current = pollWindowFingerprint(
-            rawPoints.slice(-LIVE_MES_POLL_BARS),
-          );
         } catch (e) {
+          if (aborted) return;
           setStatus("error");
-          setError(e instanceof Error ? e.message : "Invalid snapshot");
-        }
-      };
-
-      const applyUpdates = (updates: MesPoint[]) => {
-        try {
-          if (!seriesRef.current) return;
-          if (updates.length === 0) return;
-
-          // Merge updates into existing real points
-          const realByTime = new Map(
-            realPointsRef.current.map((p) => [p.time, p] as const),
-          );
-          for (const point of updates) {
-            realByTime.set(point.time, point);
-          }
-          const newRealPoints = [...realByTime.values()].sort(
-            (a, b) => a.time - b.time,
-          );
-          realPointsRef.current = newRealPoints;
-
-          // Rebuild gap-free mapping from scratch (avoids whitespace conflict with update())
-          const { gfPoints, map } = buildGapFreeMapping(newRealPoints);
-          timeMapRef.current = map;
-          pointsRef.current = gfPoints;
-
-          // Rebuild whitespace for future target zones
-          const lastGfTime = gfPoints[gfPoints.length - 1].time;
-          const lastRealTime = newRealPoints[newRealPoints.length - 1].time;
-          const whitespace = ensureFutureWhitespace(
-            lastGfTime,
-            BAR_INTERVAL_SEC,
-            RIGHT_PADDING_BARS,
-          );
-          for (let i = 0; i < whitespace.length; i++) {
-            const wsGfTime = whitespace[i].time as number;
-            const wsRealTime = lastRealTime + BAR_INTERVAL_SEC * (i + 1);
-            map.gfToReal.set(wsGfTime, wsRealTime);
-            map.realToGf.set(wsRealTime, wsGfTime);
-          }
-
-          // Preserve scroll position across setData
-          const range = chartRef.current?.timeScale().getVisibleLogicalRange();
-          seriesRef.current.setData([
-            ...gfPoints.map(toChartPoint),
-            ...whitespace,
-          ]);
-          if (range) {
-            chartRef.current?.timeScale().setVisibleLogicalRange(range);
-          }
-
-          updateSessionStats(newRealPoints);
-          setStatus("live");
-          setError(null);
-        } catch (e) {
-          setStatus("error");
-          setError(e instanceof Error ? e.message : "Invalid update");
-        }
-      };
-
-      let cancelled = false;
-      let pollInterval: ReturnType<typeof setInterval> | null = null;
-      let pollInFlight = false;
-
-      async function fetchPollWindow() {
-        if (pollInFlight) {
-          return;
-        }
-        pollInFlight = true;
-        try {
-          const params = new URLSearchParams({
-            poll: "1",
-            bars: String(LIVE_MES_POLL_BARS),
-          });
-          const previousFingerprint = pollFingerprintRef.current;
-          if (previousFingerprint) {
-            params.set("fingerprint", previousFingerprint);
-          }
-          const res = await fetch(
-            `/api/live/mes15m?${params.toString()}`,
-            { cache: "no-store" },
-          );
-          const data = (await res.json()) as
-            | {
-                points: MesPoint[];
-                live?: boolean;
-                changed?: boolean;
-                fingerprint?: string;
-              }
-            | { error: string };
-          if (cancelled) {
-            return;
-          }
-          if (!res.ok || !("points" in data)) {
-            throw new Error(
-              "error" in data ? data.error : "Failed to poll MES 15m updates",
-            );
-          }
-
-          const nextFingerprint =
-            typeof data.fingerprint === "string" ? data.fingerprint : null;
-          if (
-            nextFingerprint != null &&
-            nextFingerprint === previousFingerprint
-          ) {
-            return;
-          }
-          if (data.changed === false) {
-            if (nextFingerprint != null) {
-              pollFingerprintRef.current = nextFingerprint;
-            }
-            return;
-          }
-
-          const points = data.points || [];
-          if (points.length === 0) {
-            if (nextFingerprint != null) {
-              pollFingerprintRef.current = nextFingerprint;
-            }
-            return;
-          }
-
-          if (nextFingerprint != null) {
-            pollFingerprintRef.current = nextFingerprint;
-          } else {
-            const localFingerprint = pollWindowFingerprint(points);
-            if (localFingerprint === previousFingerprint) {
-              return;
-            }
-            pollFingerprintRef.current = localFingerprint;
-          }
-
-          if (cancelled) {
-            return;
-          }
-          applyUpdates(points);
+          setError(e instanceof Error ? e.message : "Failed to poll");
         } finally {
-          pollInFlight = false;
-        }
-      }
-
-      async function startPollingFeed() {
-        try {
-          const snapshotRes = await fetch(
-            "/api/live/mes15m?snapshot=1&backfill=1000",
-            {
-              cache: "no-store",
-            },
-          );
-          const snapshotData = (await snapshotRes.json()) as
-            | { points: MesPoint[]; live?: boolean }
-            | { error: string };
-
-          if (cancelled) return;
-          if (!snapshotRes.ok || !("points" in snapshotData)) {
-            throw new Error(
-              "error" in snapshotData
-                ? snapshotData.error
-                : "Failed to load MES 15m snapshot",
-            );
+          if (!aborted) {
+            pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
           }
-
-          applySnapshot(snapshotData.points || []);
-          await fetchPollWindow();
-          if (cancelled) return;
-
-          pollInterval = setInterval(() => {
-            if (cancelled) return;
-            fetchPollWindow().catch((e) => {
-              if (cancelled) return;
-              setStatus("error");
-              setError(
-                e instanceof Error
-                  ? e.message
-                  : "Live poll disconnected. Verify MES ingestion is running.",
-              );
-            });
-          }, LIVE_MES_POLL_INTERVAL_MS);
-        } catch (e) {
-          if (cancelled) return;
-          setStatus("error");
-          setError(
-            e instanceof Error
-              ? e.message
-              : "Failed to start MES 15m polling feed.",
-          );
         }
-      }
+      };
 
-      startPollingFeed();
+      // Initial snapshot, then start polling
+      (async () => {
+        await fetchSnapshot();
+        if (!aborted) {
+          pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
+        }
+      })();
+
       return () => {
-        cancelled = true;
-        if (pollInterval) clearInterval(pollInterval);
+        aborted = true;
+        if (pollTimer) clearTimeout(pollTimer);
       };
     }, []);
 
@@ -799,16 +706,16 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
       primitiveRef.current.setTargets(targets);
     }, [activeMove, lastPrice]);
 
-    // --- Wire trigger candidates to primitive ---
+    // --- Wire Warbird setups to primitive ---
     useEffect(() => {
-      if (!triggerPrimitiveRef.current) return;
+      if (!warbirdPrimitiveRef.current) return;
 
       if (
         !chartSetups ||
         chartSetups.length === 0 ||
         pointsRef.current.length === 0
       ) {
-        triggerPrimitiveRef.current.setMarkers(null);
+        warbirdPrimitiveRef.current.setMarkers(null);
         return;
       }
 
@@ -829,7 +736,7 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
           s.goTime != null ? (realToGapFree(s.goTime) ?? s.goTime) : s.goTime,
       }));
 
-      triggerPrimitiveRef.current.setMarkers({
+      warbirdPrimitiveRef.current.setMarkers({
         setups: mappedSetups,
         lastTime: lastGfTime,
         futureBars: 16,
@@ -853,7 +760,9 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
         }
       }
       fetchPivots();
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }, []);
 
     // --- Wire pivot data to primitive ---
@@ -922,18 +831,19 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
             </span>
             {eventPhase && eventPhase !== "CLEAR" && (
               <span
-                title={eventLabel ?? undefined}
                 className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${
-                  displayEventPhase === "LOCKOUT"
+                  eventPhase === "BLACKOUT"
                     ? "bg-red-500/10 text-red-400 border-red-500/20"
-                    : displayEventPhase === "WATCH"
-                      ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
-                      : displayEventPhase === "REPRICE"
+                    : eventPhase === "IMMINENT"
+                      ? "bg-red-500/10 text-red-400 border-red-500/20"
+                      : eventPhase === "APPROACHING"
+                        ? "bg-red-500/10 text-red-400 border-red-500/20"
+                        : eventPhase === "DIGESTING"
                           ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
                           : "bg-white/5 text-white/40 border-white/10"
                 }`}
               >
-                {displayEventPhase}
+                {eventLabel ?? eventPhase}
               </span>
             )}
           </div>
@@ -996,10 +906,10 @@ const LiveMesChart = forwardRef<LiveMesChartHandle, LiveMesChartProps>(
             <Image
               src="/chart_watermark.svg"
               alt=""
-              width={300}
-              height={300}
+              width={280}
+              height={140}
               className="opacity-[0.10]"
-              unoptimized
+              style={{ filter: "grayscale(100%)" }}
               priority
             />
           </div>

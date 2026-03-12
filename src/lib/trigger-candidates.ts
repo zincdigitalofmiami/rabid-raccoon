@@ -1,4 +1,4 @@
-import { advanceBhgSetups, type BhgSetup } from '@/lib/bhg-engine'
+import { advanceWarbirdSetups, type WarbirdSetup } from '@/lib/warbird-engine'
 import type { CandleData, FibResult, MeasuredMove } from '@/lib/types'
 
 export type TriggerDirection = 'BULLISH' | 'BEARISH'
@@ -90,7 +90,7 @@ export interface TriggerCandidate {
   expiryBars: number
 }
 
-function buildThesis(setup: BhgSetup): string {
+function buildThesis(setup: WarbirdSetup): string {
   const fibPercent = `${(setup.fibRatio * 100).toFixed(1)}%`
   if (setup.phase === 'TRIGGERED') {
     return `${fibPercent} retracement rejection has triggered ${setup.direction.toLowerCase()} continuation`
@@ -104,7 +104,7 @@ function buildThesis(setup: BhgSetup): string {
   return `${fibPercent} retracement candidate forming`
 }
 
-function buildStructuralReason(setup: BhgSetup): string {
+function buildStructuralReason(setup: WarbirdSetup): string {
   if (setup.phase === 'TRIGGERED') {
     const triggerMode = setup.goType === 'CLOSE' ? 'close-through' : 'break-through'
     return `Hook rejection resolved via ${triggerMode} of the hook extreme`
@@ -124,21 +124,21 @@ function buildStructuralReason(setup: BhgSetup): string {
   return 'Retracement candidate is waiting for contact'
 }
 
-function resolveCandidateTime(setup: BhgSetup): number {
+function resolveCandidateTime(setup: WarbirdSetup): number {
   return setup.goTime ?? setup.hookTime ?? setup.touchTime ?? setup.createdAt
 }
 
-function resolveEntryZoneLow(setup: BhgSetup): number | null {
+function resolveEntryZoneLow(setup: WarbirdSetup): number | null {
   if (setup.entry == null) return setup.fibLevel
   return Math.min(setup.entry, setup.fibLevel)
 }
 
-function resolveEntryZoneHigh(setup: BhgSetup): number | null {
+function resolveEntryZoneHigh(setup: WarbirdSetup): number | null {
   if (setup.entry == null) return setup.fibLevel
   return Math.max(setup.entry, setup.fibLevel)
 }
 
-export function fromBhgSetup(setup: BhgSetup): TriggerCandidate {
+export function fromWarbirdSetup(setup: WarbirdSetup): TriggerCandidate {
   return {
     id: setup.id,
     sourceFamily: 'HOOK_REJECTION',
@@ -177,7 +177,7 @@ export function fromBhgSetup(setup: BhgSetup): TriggerCandidate {
   }
 }
 
-export function toBhgSetup(candidate: TriggerCandidate): BhgSetup {
+export function toWarbirdSetup(candidate: TriggerCandidate): WarbirdSetup {
   return {
     id: candidate.id,
     direction: candidate.direction,
@@ -209,7 +209,7 @@ export function generateTriggerCandidates(
   fibResult: FibResult,
   measuredMoves: MeasuredMove[],
 ): TriggerCandidate[] {
-  return advanceBhgSetups(candles, fibResult, measuredMoves).map(fromBhgSetup)
+  return advanceWarbirdSetups(candles, fibResult, measuredMoves).map(fromWarbirdSetup)
 }
 
 export function getTriggeredCandidates(

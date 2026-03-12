@@ -11,6 +11,8 @@ export interface FibLevel {
   label: string
   color: string
   isExtension: boolean
+  role?: 'pivot' | 'zone' | 'target' | 'downMagnet' | 'anchor' | 'other'
+  lineWidth?: number
 }
 
 export interface FibResult {
@@ -20,6 +22,20 @@ export interface FibResult {
   isBullish: boolean
   anchorHighBarIndex: number
   anchorLowBarIndex: number
+  fibBull?: boolean
+  fibRange?: number
+  activeFibPeriod?: number
+  confluenceScore?: number
+  drawLeftBarIndex?: number
+  pivot?: number
+  zoneLow?: number
+  zoneHigh?: number
+  zoneLower?: number
+  zoneUpper?: number
+  target1?: number
+  target2?: number
+  downMagnet1?: number
+  downMagnet2?: number
 }
 
 export interface CandleData {
@@ -127,8 +143,8 @@ export interface SymbolForecast {
 
 export type { ForecastTarget, ForecastTargetKind } from './charts/types'
 
-// BHG Engine types
-export type { GoType, SetupPhase, SetupDirection, BhgSetup } from './bhg-engine'
+// Warbird Engine types (formerly BHG)
+export type { GoType, SetupPhase, SetupDirection, WarbirdSetup } from './warbird-engine'
 
 // Risk Engine types
 export type { RiskParams, RiskResult, RiskGrade } from './risk-engine'

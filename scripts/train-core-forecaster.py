@@ -323,11 +323,11 @@ def main():
     #   yield_proxy ≈ zn_ret_1h (r=1.000) — drop yield_proxy (keep the raw)
     #   usd_shock ≈ e6_ret_1h (r=1.000) — drop usd_shock (keep the raw)
     #   econ_surprise_index ≈ claims_release_z (r=0.995) — drop econ_surprise_index
-    #   bhg_setups_count_30d ≈ bhg_setups_count_7d (r=0.994) — drop 30d
+    #   warbird_setups_count_30d ≈ warbird_setups_count_7d (r=0.994) — drop 30d
     #   news_total_volume_7d ≈ policy_news_volume_7d (r=0.966) — drop news_total
     REDUNDANT_FEATURES = {
         "yield_proxy", "usd_shock", "econ_surprise_index",
-        "bhg_setups_count_30d", "news_total_volume_7d",
+        "warbird_setups_count_30d", "news_total_volume_7d",
     }
 
     # Feature columns = everything except identity + targets + redundant

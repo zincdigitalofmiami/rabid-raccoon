@@ -3,7 +3,7 @@
  *
  * Pure functions for computing stop distance, contract size, dollar risk,
  * and risk:reward ratio. Extracted from instant-analysis.ts for reuse
- * across BHG engine and API endpoints.
+ * across Warbird engine and API endpoints.
  */
 
 // ─── Types ────────────────────────────────────────────────────────────────────

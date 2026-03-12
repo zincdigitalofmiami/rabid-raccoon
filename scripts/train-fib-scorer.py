@@ -11,10 +11,10 @@ Composite score: 0.30 * P(TP1) + 0.70 * P(TP2)
 Grade: A >= 0.65, B >= 0.50, C >= 0.35, D < 0.35
 
 Walk-forward OOF with purge gap = horizon bars.
-All mandatory feature groups (A-F) from the BHG setup dataset.
+All mandatory feature groups (A-F) from the Warbird setup dataset.
 
 Inputs:
-  datasets/autogluon/bhg_setups.csv  (built by build-bhg-dataset.ts)
+  datasets/autogluon/warbird_setups.csv  (built by build-warbird-dataset.ts)
 
 Outputs:
   models/fib_scorer/y1272/           (AutoGluon model)
@@ -25,7 +25,7 @@ Outputs:
 Setup:
   pip install "autogluon>=1.5" pandas scikit-learn
   pip install -r requirements-finance.txt
-  npx tsx scripts/build-bhg-dataset.ts   # Build dataset first
+  npx tsx scripts/build-warbird-dataset.ts   # Build dataset first
   python scripts/train-fib-scorer.py
 
 Note: AutoGluon >=1.5 TabularPredictor auto-detects text columns (headlines_24h)
@@ -49,7 +49,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "bhg_setups.csv"
+DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "warbird_setups.csv"
 MODEL_DIR = PROJECT_ROOT / "models" / "fib_scorer"
 OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "fib_scorer_oof.csv"
 
@@ -171,7 +171,7 @@ def main():
 
     print(f"Loading dataset from {DATASET_PATH}")
     if not DATASET_PATH.exists():
-        print(f"ERROR: Dataset not found. Run: npx tsx scripts/build-bhg-dataset.ts")
+        print(f"ERROR: Dataset not found. Run: npx tsx scripts/build-warbird-dataset.ts")
         sys.exit(1)
 
     df = pd.read_csv(DATASET_PATH)

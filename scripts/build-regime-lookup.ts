@@ -1,7 +1,7 @@
 /**
  * build-regime-lookup.ts — Build bucketed p(TP1)/p(TP2) lookup table
  *
- * Reads bhg_setups.csv (with outcome labels) and computes empirical
+ * Reads warbird_setups.csv (with outcome labels) and computes empirical
  * hit rates bucketed by key features. Outputs regime-lookup.json
  * consumed by ml-baseline.ts for live inference.
  *
@@ -9,7 +9,7 @@
  *   - fibRatio: 0.5 | 0.618
  *   - riskGrade: A | B | C | D
  *   - vixBucket: low (<16) | mid (16-25) | high (>25)
- *   - sessionBucket: from bhg_setups.csv session_bucket field
+ *   - sessionBucket: from warbird_setups.csv session_bucket field
  *   - goType: BREAK | CLOSE
  *
  * Run: npx tsx scripts/build-regime-lookup.ts
@@ -18,7 +18,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 
-interface BhgRow {
+interface WarbirdRow {
   fib_ratio: number
   grade: string
   vix_level: number | null
@@ -49,7 +49,7 @@ function unquote(s: string): string {
   return s
 }
 
-function parseCSV(filepath: string): BhgRow[] {
+function parseCSV(filepath: string): WarbirdRow[] {
   const raw = fs.readFileSync(filepath, 'utf-8')
   const lines = raw.trim().split('\n')
   const headers = lines[0].split(',')
@@ -60,7 +60,7 @@ function parseCSV(filepath: string): BhgRow[] {
     return i
   }
 
-  const rows: BhgRow[] = []
+  const rows: WarbirdRow[] = []
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(',')
     const vix = cols[idx('vix_level')]
@@ -96,7 +96,7 @@ function buildKey(fibR: string, grade: string, vix: string, session: string, goT
 }
 
 function main() {
-  const csvPath = path.resolve(__dirname, '../datasets/autogluon/bhg_setups.csv')
+  const csvPath = path.resolve(__dirname, '../datasets/autogluon/warbird_setups.csv')
   if (!fs.existsSync(csvPath)) {
     console.error(`File not found: ${csvPath}`)
     process.exit(1)

@@ -1,9 +1,9 @@
 /**
- * check-trade-outcomes — Scheduled outcome resolver for BHG setups.
+ * check-trade-outcomes — Scheduled outcome resolver for Warbird setups.
  *
  * Schedule: every 15 minutes, weekdays.
  * Calls the existing checkTradeOutcomes() from outcome-tracker.ts to resolve
- * pending BHG setups (TP1 @ 4h, TP2 @ 8h).
+ * pending Warbird setups (TP1 @ 4h, TP2 @ 8h).
  *
  * This replaces the fire-and-forget call that was in the API route.
  */

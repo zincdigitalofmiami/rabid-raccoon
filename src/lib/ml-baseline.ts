@@ -6,7 +6,7 @@
  * a TradeFeatureVector to the nearest regime bucket.
  *
  * The lookup table is built by scripts/build-regime-lookup.ts from
- * actual BHG setup outcomes in bhg_setups.csv.
+ * actual Warbird setup outcomes in warbird_setups.csv.
  *
  * Baseline source: exact historical regime bucket only.
  */
@@ -71,7 +71,7 @@ function featureFibBucket(fibRatio: number): string {
 
 /**
  * Map the current time to the session bucket used in training data.
- * Mirrors build-bhg-dataset.ts getSessionBucket() exactly.
+ * Mirrors build-warbird-dataset.ts getSessionBucket() exactly.
  * Uses CT (Central Time) hhmm format.
  */
 function currentSessionBucket(): string {

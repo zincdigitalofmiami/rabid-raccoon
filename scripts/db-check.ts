@@ -4,11 +4,11 @@ import { loadDotEnvFiles } from "./ingest-utils"
 loadDotEnvFiles()
 
 async function run() {
-  // BHG setups
+  // Warbird setups
   try {
-    const bhg = await prisma.bhgSetup.count()
-    console.log("bhg_setups:", bhg)
-  } catch { console.log("bhg_setups: TABLE NOT FOUND") }
+    const warbird = await prisma.warbirdSetup.count()
+    console.log("warbird_setups:", warbird)
+  } catch { console.log("warbird_setups: TABLE NOT FOUND") }
 
   // News signals
   try {

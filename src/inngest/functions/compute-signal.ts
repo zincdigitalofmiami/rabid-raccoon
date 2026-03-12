@@ -9,7 +9,7 @@
  * Runs the FULL pipeline once:
  *   1. Read MES 1m from DB (freshness owned by ingest-mkt-mes-1m)
  *   2. Run Python volume features script → volume JSON
- *   3. Trigger candidate engine (currently backed by legacy BHG logic)
+ *   3. Trigger candidate engine (currently backed by Warbird engine)
  *   4. Event context from econ_calendar
  *   5. Market context (cached morning-stable via tiered cache)
  *   6. Trade features (with volume + macro — ONE call, not per-setup)
@@ -396,7 +396,7 @@ export const computeSignal = inngest.createFunction(
             : 'neutral',
     }
 
-    // Step 3: Trigger candidate pipeline (currently backed by legacy BHG logic)
+    // Step 3: Trigger candidate pipeline (currently backed by Warbird engine)
     const signal = await step.run('score-setups', async () => {
       const swings = detectSwings(candleData, 5, 5, 20)
       const fibResult = calculateFibonacciMultiPeriod(candleData)

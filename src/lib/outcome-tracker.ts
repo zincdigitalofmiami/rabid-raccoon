@@ -1,6 +1,6 @@
 /**
  * outcome-tracker.ts — Resolve trade outcomes for both canonical setup records
- * (bhg_setups) and training records (scored_trades).
+ * (warbird_setups) and training records (scored_trades).
  */
 
 import { prisma } from "@/lib/prisma";
@@ -98,7 +98,7 @@ function evaluateOutcome(
   return result;
 }
 
-function deriveBhgPhase(outcome: OutcomeResult): "GO_FIRED" | "STOPPED" | "TP1_HIT" | "TP2_HIT" | "EXPIRED" {
+function deriveWarbirdPhase(outcome: OutcomeResult): "GO_FIRED" | "STOPPED" | "TP1_HIT" | "TP2_HIT" | "EXPIRED" {
   if (outcome.slHit) return "STOPPED";
   if (outcome.tp2Hit) return "TP2_HIT";
   if (outcome.tp1Hit) return "TP1_HIT";
@@ -130,8 +130,8 @@ async function loadMesWindow(start: Date, end: Date): Promise<CandleRow[]> {
   }));
 }
 
-async function resolveBhgSetupOutcomes(cutoff: Date): Promise<number> {
-  const pending = await prisma.bhgSetup.findMany({
+async function resolveWarbirdSetupOutcomes(cutoff: Date): Promise<number> {
+  const pending = await prisma.warbirdSetup.findMany({
     where: {
       phase: "GO_FIRED",
       goTime: { lt: cutoff, not: null },
@@ -174,10 +174,10 @@ async function resolveBhgSetupOutcomes(cutoff: Date): Promise<number> {
       candles,
     );
 
-    const phase = deriveBhgPhase(outcome);
+    const phase = deriveWarbirdPhase(outcome);
 
     await prisma.$transaction([
-      prisma.bhgSetup.update({
+      prisma.warbirdSetup.update({
         where: { id: setup.id },
         data: {
           phase,
@@ -242,7 +242,7 @@ async function resolveLegacyScoredTradeOutcomes(cutoff: Date): Promise<number> {
   let updated = 0;
 
   for (const trade of pending) {
-    const linkedSetup = await prisma.bhgSetup.findUnique({
+    const linkedSetup = await prisma.warbirdSetup.findUnique({
       where: { setupId: trade.setupHash },
       select: { setupId: true },
     });
@@ -297,15 +297,15 @@ export async function checkTradeOutcomes(): Promise<number> {
   inFlightOutcomeRun = (async () => {
   const cutoff = new Date(Date.now() - TP2_HORIZON_MS);
 
-  const [bhgUpdated, legacyUpdated] = await Promise.all([
-    resolveBhgSetupOutcomes(cutoff),
+  const [warbirdUpdated, legacyUpdated] = await Promise.all([
+    resolveWarbirdSetupOutcomes(cutoff),
     resolveLegacyScoredTradeOutcomes(cutoff),
   ]);
 
-  const total = bhgUpdated + legacyUpdated;
+  const total = warbirdUpdated + legacyUpdated;
   if (total > 0) {
     console.log(
-      `[outcome-tracker] Updated outcomes: bhg=${bhgUpdated}, legacy_scored=${legacyUpdated}`,
+      `[outcome-tracker] Updated outcomes: warbird=${warbirdUpdated}, legacy_scored=${legacyUpdated}`,
     );
   }
   return total;

@@ -47,7 +47,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EVENT_LOOKBACK_WINDOW_DAYS = 365 * 3;
 const EVENT_LOOKBACK_MIN_OBS = 6;
 const EVENT_FEATURE_LAG_DAYS = 1;
-const BHG_RESOLUTION_LAG_MS = 24 * 60 * 60 * 1000;
+const WARBIRD_RESOLUTION_LAG_MS = 24 * 60 * 60 * 1000;
 
 interface EventSignalConfig {
   column: string;
@@ -1202,7 +1202,7 @@ async function run(): Promise<void> {
   const crossAssetStart = new Date(start.getTime() - 200 * 60 * 60 * 1000);
   const newsLookbackMs = 45 * MS_PER_DAY;
   const newsStartDate = new Date(start.getTime() - newsLookbackMs);
-  const bhgStartDate = new Date(start.getTime() - 400 * MS_PER_DAY);
+  const warbirdStartDate = new Date(start.getTime() - 400 * MS_PER_DAY);
   const outPath = safeOutputPath(outFile, path.resolve(__dirname, ".."));
   const manifestPath = manifestPathForOutput(outPath);
 
@@ -1360,17 +1360,17 @@ async function run(): Promise<void> {
     },
   );
 
-  sourceWatermarks["bhg_setups"] = await runWatermarkQuery(
+  sourceWatermarks["warbird_setups"] = await runWatermarkQuery(
     `SELECT COUNT(*)::bigint AS "rowCount",
             MAX("goTime") AS "maxDataTime",
             MAX("createdAt") AS "maxIngestedAt",
             MAX("updatedAt") AS "maxUpdatedAt"
-     FROM "bhg_setups"
+     FROM "warbird_setups"
      WHERE "goTime" >= $1`,
-    [bhgStartDate],
+    [warbirdStartDate],
     {
-      table: "bhg_setups",
-      goTimeGte: bhgStartDate.toISOString(),
+      table: "warbird_setups",
+      goTimeGte: warbirdStartDate.toISOString(),
     },
   );
 
@@ -1382,7 +1382,7 @@ async function run(): Promise<void> {
     calendarLoadStartIso: calendarLoadStart.toISOString(),
     crossAssetStartIso: crossAssetStart.toISOString(),
     newsStartDateIso: newsStartDate.toISOString(),
-    bhgStartDateIso: bhgStartDate.toISOString(),
+    warbirdStartDateIso: warbirdStartDate.toISOString(),
     fredFeatures: FRED_FEATURES,
     eventSignalConfigs: EVENT_SIGNAL_CONFIGS,
     crossAssetSymbols: CROSS_ASSET_SYMBOLS,
@@ -1785,11 +1785,11 @@ async function run(): Promise<void> {
   );
   console.log(`  Combined news:   ${newsTotalVolumeByDate.size} unique dates`);
 
-  // ── 5. Load BHG setup timestamps for rolling setup-count features ──
+  // ── 5. Load Warbird setup timestamps for rolling setup-count features ──
   console.log(
-    "[lean-dataset] Loading bhg_setups for rolling setup-count features...",
+    "[lean-dataset] Loading warbird_setups for rolling setup-count features...",
   );
-  const bhgRows = await prisma.bhgSetup.findMany({
+  const warbirdRows = await prisma.warbirdSetup.findMany({
     where: { goTime: { gte: new Date(start.getTime() - 400 * MS_PER_DAY) } },
     select: {
       goTime: true,
@@ -1805,8 +1805,8 @@ async function run(): Promise<void> {
     orderBy: { goTime: "asc" },
   });
 
-  const bhgAllGoTimesMs: number[] = [];
-  interface BhgOutcomeRow {
+  const warbirdAllGoTimesMs: number[] = [];
+  interface WarbirdOutcomeRow {
     goTimeMs: number;
     tp1Hit: boolean | null;
     tp2Hit: boolean | null;
@@ -1815,12 +1815,12 @@ async function run(): Promise<void> {
     maxAdverse: number | null;
     durationMinutes: number | null;
   }
-  const bhgOutcomeRows: BhgOutcomeRow[] = [];
-  for (const row of bhgRows) {
+  const warbirdOutcomeRows: WarbirdOutcomeRow[] = [];
+  for (const row of warbirdRows) {
     if (!row.goTime) continue;
-    bhgAllGoTimesMs.push(row.goTime.getTime());
+    warbirdAllGoTimesMs.push(row.goTime.getTime());
     const endTime = row.tp1HitTime ?? row.tp2HitTime ?? row.slHitTime;
-    bhgOutcomeRows.push({
+    warbirdOutcomeRows.push({
       goTimeMs: row.goTime.getTime(),
       tp1Hit: row.tp1Hit,
       tp2Hit: row.tp2Hit,
@@ -1833,10 +1833,10 @@ async function run(): Promise<void> {
           : null,
     });
   }
-  console.log(`  BHG setups: ${bhgRows.length} total (${bhgOutcomeRows.filter((r) => r.tp1Hit !== null || r.slHit !== null).length} resolved)`);
+  console.log(`  Warbird setups: ${warbirdRows.length} total (${warbirdOutcomeRows.filter((r) => r.tp1Hit !== null || r.slHit !== null).length} resolved)`);
 
-  // Helper: compute rolling BHG outcome features for a given window
-  function computeBhgOutcomeFeatures(
+  // Helper: compute rolling Warbird outcome features for a given window
+  function computeWarbirdOutcomeFeatures(
     tsMs: number,
     windowDays: number,
   ): {
@@ -1848,8 +1848,8 @@ async function run(): Promise<void> {
     avgDuration: number | null;
   } {
     const cutoffMs = tsMs - windowDays * MS_PER_DAY;
-    const lagMs = tsMs - BHG_RESOLUTION_LAG_MS;
-    const relevant = bhgOutcomeRows.filter(
+    const lagMs = tsMs - WARBIRD_RESOLUTION_LAG_MS;
+    const relevant = warbirdOutcomeRows.filter(
       (r) =>
         r.goTimeMs >= cutoffMs &&
         r.goTimeMs < lagMs &&
@@ -2356,18 +2356,18 @@ async function run(): Promise<void> {
     "econ_news_volume_7d", // econ news articles (FRED blog, BEA, EIA)
     "policy_news_volume_7d", // policy/regulatory news (Fed, SEC, ECB, CFTC)
     "news_total_volume_7d", // combined econ + policy news
-    // BHG rolling setup counts (2)
-    "bhg_setups_count_7d",
-    "bhg_setups_count_30d",
-    // BHG outcome features (8) — rolling hit rates, MFE/MAE, win rate, duration
-    "bhg_tp1_hit_rate_7d",
-    "bhg_tp2_hit_rate_7d",
-    "bhg_tp1_hit_rate_30d",
-    "bhg_tp2_hit_rate_30d",
-    "bhg_avg_mfe_7d",
-    "bhg_avg_mae_7d",
-    "bhg_win_rate_7d",
-    "bhg_avg_duration_7d",
+    // Warbird rolling setup counts (2)
+    "warbird_setups_count_7d",
+    "warbird_setups_count_30d",
+    // Warbird outcome features (8) — rolling hit rates, MFE/MAE, win rate, duration
+    "warbird_tp1_hit_rate_7d",
+    "warbird_tp2_hit_rate_7d",
+    "warbird_tp1_hit_rate_30d",
+    "warbird_tp2_hit_rate_30d",
+    "warbird_avg_mfe_7d",
+    "warbird_avg_mae_7d",
+    "warbird_win_rate_7d",
+    "warbird_avg_duration_7d",
     // Volume training features (4) — acceleration, spikes, VWAP, trend
     "vol_ma_ratio_5",
     "vol_spike",
@@ -2742,16 +2742,16 @@ async function run(): Promise<void> {
       1,
     );
 
-    // BHG rolling setup counts (strictly historical + 24h resolution lag)
-    const bhgSetupsCount7d = countInTimeRange(
-      bhgAllGoTimesMs,
+    // Warbird rolling setup counts (strictly historical + 24h resolution lag)
+    const warbirdSetupsCount7d = countInTimeRange(
+      warbirdAllGoTimesMs,
       tsMs - 7 * MS_PER_DAY,
-      tsMs - BHG_RESOLUTION_LAG_MS,
+      tsMs - WARBIRD_RESOLUTION_LAG_MS,
     );
-    const bhgSetupsCount30d = countInTimeRange(
-      bhgAllGoTimesMs,
+    const warbirdSetupsCount30d = countInTimeRange(
+      warbirdAllGoTimesMs,
       tsMs - 30 * MS_PER_DAY,
-      tsMs - BHG_RESOLUTION_LAG_MS,
+      tsMs - WARBIRD_RESOLUTION_LAG_MS,
     );
 
     // ── ASSEMBLE ROW ──
@@ -2902,13 +2902,13 @@ async function run(): Promise<void> {
       econNewsVolume7d,
       policyNewsVolume7d,
       newsTotalVolume7d,
-      // BHG rolling setup counts (2)
-      bhgSetupsCount7d,
-      bhgSetupsCount30d,
-      // BHG outcome features (8)
+      // Warbird rolling setup counts (2)
+      warbirdSetupsCount7d,
+      warbirdSetupsCount30d,
+      // Warbird outcome features (8)
       ...(() => {
-        const o7 = computeBhgOutcomeFeatures(tsMs, 7);
-        const o30 = computeBhgOutcomeFeatures(tsMs, 30);
+        const o7 = computeWarbirdOutcomeFeatures(tsMs, 7);
+        const o30 = computeWarbirdOutcomeFeatures(tsMs, 30);
         return [
           o7.tp1HitRate,
           o7.tp2HitRate,
@@ -3128,16 +3128,16 @@ async function run(): Promise<void> {
     "econ_news_volume_7d",
     "policy_news_volume_7d",
     "news_total_volume_7d",
-    "bhg_setups_count_7d",
-    "bhg_setups_count_30d",
-    "bhg_tp1_hit_rate_7d",
-    "bhg_tp2_hit_rate_7d",
-    "bhg_tp1_hit_rate_30d",
-    "bhg_tp2_hit_rate_30d",
-    "bhg_avg_mfe_7d",
-    "bhg_avg_mae_7d",
-    "bhg_win_rate_7d",
-    "bhg_avg_duration_7d",
+    "warbird_setups_count_7d",
+    "warbird_setups_count_30d",
+    "warbird_tp1_hit_rate_7d",
+    "warbird_tp2_hit_rate_7d",
+    "warbird_tp1_hit_rate_30d",
+    "warbird_tp2_hit_rate_30d",
+    "warbird_avg_mfe_7d",
+    "warbird_avg_mae_7d",
+    "warbird_win_rate_7d",
+    "warbird_avg_duration_7d",
     "vol_ma_ratio_5",
     "vol_spike",
     "vwap_dist",
