@@ -14,6 +14,7 @@ Usage:
   .venv-finance/bin/python scripts/ingest-options.py --ohlcv-only
   .venv-finance/bin/python scripts/ingest-options.py --stats-only
   .venv-finance/bin/python scripts/ingest-options.py --parent ES_OPT
+  .venv-finance/bin/python scripts/ingest-options.py --parent ES_OPT --db-url "$DIRECT_URL"
   .venv-finance/bin/python scripts/ingest-options.py --dry-run
 """
 import pandas as pd
@@ -55,31 +56,50 @@ def create_ingestion_run(conn, job: str, details: dict | None = None) -> int:
     """Create an IngestionRun record and return its ID."""
     from sqlalchemy import text
     result = conn.execute(text("""
-        INSERT INTO "ingestionRun" (job, status, details, "createdAt", "updatedAt")
-        VALUES (:job, 'RUNNING', :details::jsonb, NOW(), NOW())
+        INSERT INTO ingestion_runs
+            (job, status, details, "startedAt", "rowsProcessed", "rowsInserted", "rowsFailed")
+        VALUES
+            (:job, 'RUNNING', CAST(:details_json AS jsonb), NOW(), 0, 0, 0)
         RETURNING id
-    """), {"job": job, "details": json.dumps(details) if details else None})
+    """), {
+        "job": job,
+        "details_json": json.dumps(details or {}),
+    })
     row = result.fetchone()
     return row[0] if row else None
 
 
-def finalize_ingestion_run(conn, run_id: int, status: str, rows_inserted: int = 0, error: str | None = None) -> None:
+def finalize_ingestion_run(
+    conn,
+    run_id: int,
+    status: str,
+    rows_processed: int = 0,
+    rows_inserted: int = 0,
+    rows_failed: int = 0,
+    details: dict | None = None,
+    error: str | None = None,
+) -> None:
     """Update IngestionRun with final status and row counts."""
     from sqlalchemy import text
-    details = {"error": error} if error else {}
+    details_patch = dict(details or {})
+    if error:
+        details_patch["error"] = error
     conn.execute(text("""
-        UPDATE "ingestionRun"
+        UPDATE ingestion_runs
         SET status = :status,
             "finishedAt" = NOW(),
-            "updatedAt" = NOW(),
+            "rowsProcessed" = :rows_processed,
             "rowsInserted" = :rows_inserted,
-            details = details || :details::jsonb
+            "rowsFailed" = :rows_failed,
+            details = COALESCE(details, '{}'::jsonb) || CAST(:details_json AS jsonb)
         WHERE id = :id
     """), {
         "id": run_id,
         "status": status,
+        "rows_processed": rows_processed,
         "rows_inserted": rows_inserted,
-        "details": json.dumps(details)
+        "rows_failed": rows_failed,
+        "details_json": json.dumps(details_patch),
     })
 
 
@@ -106,12 +126,15 @@ def load_env() -> dict[str, str]:
     return env
 
 
-def get_engine():
+def get_engine(db_url: str | None = None):
     """Create SQLAlchemy engine. Uses LOCAL_DATABASE_URL when available
     (local dev, zero Accelerate cost), falls back to DIRECT_URL (production)."""
     from sqlalchemy import create_engine
-    env = load_env()
-    url = env.get("LOCAL_DATABASE_URL") or env.get("DIRECT_URL")
+    if db_url:
+        url = db_url
+    else:
+        env = load_env()
+        url = env.get("LOCAL_DATABASE_URL") or env.get("DIRECT_URL")
     if not url:
         raise RuntimeError("Neither LOCAL_DATABASE_URL nor DIRECT_URL found in .env.local")
     # SQLAlchemy requires postgresql:// not postgres://
@@ -377,9 +400,12 @@ def main():
     dry_run = "--dry-run" in sys.argv
 
     target_parent = None
+    db_url_override = None
     for i, arg in enumerate(sys.argv):
         if arg == "--parent" and i + 1 < len(sys.argv):
             target_parent = sys.argv[i + 1]
+        if arg == "--db-url" and i + 1 < len(sys.argv):
+            db_url_override = sys.argv[i + 1]
 
     print("Options Data Ingestion → Postgres")
     if dry_run:
@@ -387,7 +413,7 @@ def main():
     if target_parent:
         print(f"  TARGET: {target_parent}")
 
-    engine = get_engine()
+    engine = get_engine(db_url_override)
 
     # Create IngestionRun record
     run_id = None
@@ -426,7 +452,27 @@ def main():
         try:
             with engine.begin() as conn:
                 status = "FAILED" if error_msg else "COMPLETED"
-                finalize_ingestion_run(conn, run_id, status, ohlcv_rows + stats_rows, error_msg)
+                rows_processed = ohlcv_rows + stats_rows
+                rows_inserted = 0 if dry_run else rows_processed
+                rows_failed = 0 if not error_msg else max(1, rows_processed - rows_inserted)
+                finalize_ingestion_run(
+                    conn,
+                    run_id,
+                    status,
+                    rows_processed=rows_processed,
+                    rows_inserted=rows_inserted,
+                    rows_failed=rows_failed,
+                    details={
+                        "dry_run": dry_run,
+                        "target_parent": target_parent,
+                        "do_ohlcv": do_ohlcv,
+                        "do_stats": do_stats,
+                        "ohlcv_rows": ohlcv_rows,
+                        "stats_rows": stats_rows,
+                        "elapsed_sec": round(elapsed, 3),
+                    },
+                    error=error_msg,
+                )
         except Exception as e:
             print(f"  WARNING: Could not finalize IngestionRun: {e}")
 

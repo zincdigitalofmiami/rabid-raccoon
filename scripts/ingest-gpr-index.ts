@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/prisma";
 import { isMainModule, loadDotEnvFiles, parseArg } from "./ingest-utils";
@@ -9,6 +12,8 @@ import { isMainModule, loadDotEnvFiles, parseArg } from "./ingest-utils";
 const GPR_URL =
   "https://www.matteoiacoviello.com/gpr_files/data_gpr_daily_recent.xls";
 const GPR_SOURCE = "caldara_iacoviello";
+const GPR_JOB = "gpr-index";
+const GPR_RUN_TTL_MINUTES = 180;
 
 interface GprRow {
   eventDate: Date;
@@ -181,6 +186,55 @@ function toCreateManyRows(
   }));
 }
 
+function resolvePythonInterpreters(): string[] {
+  const interpreters: string[] = [];
+  const venvPython = join(process.cwd(), ".venv-finance", "bin", "python");
+  if (existsSync(venvPython)) {
+    interpreters.push(venvPython);
+  }
+  interpreters.push("python3");
+  return interpreters;
+}
+
+function convertXlsToCsv(xlsBuffer: Buffer): string {
+  const tmpPrefix = join(tmpdir(), "rabid-raccoon-gpr-");
+  const tmpDir = mkdtempSync(tmpPrefix);
+  const xlsPath = join(tmpDir, "gpr.xls");
+  try {
+    writeFileSync(xlsPath, xlsBuffer);
+    const py = String.raw`import csv, io, sys, xlrd
+wb = xlrd.open_workbook(sys.argv[1])
+ws = wb.sheet_by_index(0)
+out = io.StringIO()
+w = csv.writer(out)
+for r in range(ws.nrows):
+    w.writerow([ws.cell_value(r,c) for c in range(ws.ncols)])
+sys.stdout.write(out.getvalue())
+`;
+    const attempts: string[] = [];
+    for (const interpreter of resolvePythonInterpreters()) {
+      try {
+        return execFileSync(interpreter, ["-c", py, xlsPath], {
+          encoding: "utf8",
+          maxBuffer: 10 * 1024 * 1024,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        attempts.push(`${interpreter}: ${message}`);
+      }
+    }
+    throw new Error(
+      `no usable Python interpreter for XLS conversion. Tried ${resolvePythonInterpreters().join(", ")}. ` +
+        `Errors: ${attempts.join(" | ")}`,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`GPR XLS->CSV conversion failed: ${message}`);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 export async function runIngestGprIndex(opts?: {
   daysBack?: number;
 }): Promise<GprIngestSummary> {
@@ -188,10 +242,45 @@ export async function runIngestGprIndex(opts?: {
 
   const daysBack = parseDaysBack(opts?.daysBack);
   const minDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
+  const staleCutoff = new Date(Date.now() - GPR_RUN_TTL_MINUTES * 60 * 1000);
+
+  await prisma.ingestionRun.updateMany({
+    where: {
+      job: GPR_JOB,
+      status: "RUNNING",
+      startedAt: { lt: staleCutoff },
+    },
+    data: {
+      status: "FAILED",
+      finishedAt: new Date(),
+      rowsFailed: 1,
+      details: toJson({
+        error: "stale RUNNING run auto-closed",
+        autoCloseReason: "ttl_exceeded",
+        ttlMinutes: GPR_RUN_TTL_MINUTES,
+      }),
+    },
+  });
+
+  const activeRun = await prisma.ingestionRun.findFirst({
+    where: { job: GPR_JOB, status: "RUNNING" },
+    select: { id: true, startedAt: true },
+    orderBy: { startedAt: "desc" },
+  });
+  if (activeRun) {
+    return {
+      daysBack,
+      rowsProcessed: 0,
+      rowsInserted: 0,
+      rowsFailed: 0,
+      latestEventDate: null,
+      sourceUrl: GPR_URL,
+    };
+  }
 
   const run = await prisma.ingestionRun.create({
     data: {
-      job: "gpr-index",
+      job: GPR_JOB,
       status: "RUNNING",
       details: toJson({ daysBack, sourceUrl: GPR_URL }),
     },
@@ -211,19 +300,7 @@ export async function runIngestGprIndex(opts?: {
     }
 
     const xlsBuffer = Buffer.from(await response.arrayBuffer());
-    const csv = execSync(
-      `python3 -c "
-import sys, xlrd, csv, io
-wb = xlrd.open_workbook(file_contents=sys.stdin.buffer.read())
-ws = wb.sheet_by_index(0)
-out = io.StringIO()
-w = csv.writer(out)
-for r in range(ws.nrows):
-    w.writerow([ws.cell_value(r,c) for c in range(ws.ncols)])
-print(out.getvalue(), end='')
-"`,
-      { input: xlsBuffer, maxBuffer: 10 * 1024 * 1024 },
-    ).toString();
+    const csv = convertXlsToCsv(xlsBuffer);
     const parsedRows = parseGprCsv(csv, minDate);
     const payload = toCreateManyRows(parsedRows);
 

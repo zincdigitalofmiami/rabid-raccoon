@@ -10,6 +10,11 @@ if not API_KEY:
     print("ERROR: DATABENTO_API_KEY not set. Run: source .env.local")
     sys.exit(1)
 
+if os.environ.get("ALLOW_DATABENTO_BATCH") != "1":
+    print("ERROR: Batch Databento submits are disabled by default in this workspace.")
+    print("Set ALLOW_DATABENTO_BATCH=1 only for an intentional approved pull.")
+    sys.exit(1)
+
 c = db.Historical(API_KEY)
 
 # CME option parents — loaded from symbol registry (AGENTS.md Rule #1)

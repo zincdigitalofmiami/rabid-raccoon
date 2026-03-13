@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-26T20:55:37.288Z",
+  "generatedAt": "2026-03-11T20:39:54.711Z",
   "primarySymbol": "MES",
   "symbols": [
     {
@@ -60,7 +60,7 @@
       "dataset": null,
       "databentoSymbol": null,
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "EMD",
@@ -96,7 +96,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "ES.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "EUU.OPT",
@@ -108,7 +108,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "EUU.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "GC",
@@ -132,7 +132,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "HXE.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "JPU.OPT",
@@ -144,7 +144,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "JPU.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "LO.OPT",
@@ -156,7 +156,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "LO.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "M2K",
@@ -264,7 +264,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "NQ.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "OB.OPT",
@@ -276,7 +276,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "OB.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "OG.OPT",
@@ -288,7 +288,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "OG.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "OH.OPT",
@@ -300,7 +300,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "OH.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "OKE.OPT",
@@ -312,7 +312,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "OKE.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "ON.OPT",
@@ -324,7 +324,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "ON.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "OZB.OPT",
@@ -336,7 +336,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "OZB.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "OZF.OPT",
@@ -348,7 +348,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "OZF.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "OZN.OPT",
@@ -360,7 +360,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "OZN.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "RS1",
@@ -432,7 +432,7 @@
       "dataset": "GLBX.MDP3",
       "databentoSymbol": "SO.OPT",
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "SOX",
@@ -445,6 +445,18 @@
       "databentoSymbol": "SOX.c.0",
       "fredSymbol": null,
       "isActive": true
+    },
+    {
+      "code": "SR1",
+      "displayName": "SR1",
+      "shortName": "SOFR 1M",
+      "description": "1-Month SOFR Futures",
+      "tickSize": 0.0025,
+      "dataSource": "DATABENTO",
+      "dataset": "GLBX.MDP3",
+      "databentoSymbol": "SR1.c.0",
+      "fredSymbol": null,
+      "isActive": false
     },
     {
       "code": "SR3",
@@ -528,7 +540,7 @@
       "dataset": null,
       "databentoSymbol": null,
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "VX",
@@ -540,7 +552,7 @@
       "dataset": null,
       "databentoSymbol": null,
       "fredSymbol": null,
-      "isActive": true
+      "isActive": false
     },
     {
       "code": "XAB",
@@ -721,6 +733,30 @@
       "databentoSymbol": "ZN.c.0",
       "fredSymbol": null,
       "isActive": true
+    },
+    {
+      "code": "ZQ",
+      "displayName": "ZQ",
+      "shortName": "Fed Funds",
+      "description": "30-Day Federal Funds Futures",
+      "tickSize": 0.005,
+      "dataSource": "DATABENTO",
+      "dataset": "GLBX.MDP3",
+      "databentoSymbol": "ZQ.c.0",
+      "fredSymbol": null,
+      "isActive": false
+    },
+    {
+      "code": "ZT",
+      "displayName": "ZT",
+      "shortName": "2Y Note",
+      "description": "2-Year Treasury Note Futures",
+      "tickSize": 0.007813,
+      "dataSource": "DATABENTO",
+      "dataset": "GLBX.MDP3",
+      "databentoSymbol": "ZT.c.0",
+      "fredSymbol": null,
+      "isActive": false
     }
   ],
   "roleMembers": [
@@ -798,15 +834,39 @@
     },
     {
       "roleKey": "CORRELATION_SET",
-      "symbolCode": "VX",
+      "symbolCode": "RTY",
       "position": 2,
       "enabled": true
     },
     {
       "roleKey": "CORRELATION_SET",
-      "symbolCode": "DX",
+      "symbolCode": "ZN",
       "position": 3,
       "enabled": true
+    },
+    {
+      "roleKey": "CORRELATION_SET",
+      "symbolCode": "CL",
+      "position": 4,
+      "enabled": true
+    },
+    {
+      "roleKey": "CORRELATION_SET",
+      "symbolCode": "6E",
+      "position": 5,
+      "enabled": true
+    },
+    {
+      "roleKey": "CORRELATION_SET",
+      "symbolCode": "VX",
+      "position": 102,
+      "enabled": false
+    },
+    {
+      "roleKey": "CORRELATION_SET",
+      "symbolCode": "DX",
+      "position": 103,
+      "enabled": false
     },
     {
       "roleKey": "DASHBOARD_MARKETS_COMMODITIES",
@@ -1369,6 +1429,24 @@
   ],
   "providerMappings": [
     {
+      "symbolCode": "6E",
+      "source": "DATABENTO",
+      "sourceTable": "databento.continuous",
+      "sourceSymbol": "6E.c.0",
+      "isPrimary": true,
+      "confidenceScore": 1,
+      "notes": null
+    },
+    {
+      "symbolCode": "6J",
+      "source": "DATABENTO",
+      "sourceTable": "databento.continuous",
+      "sourceSymbol": "6J.c.0",
+      "isPrimary": true,
+      "confidenceScore": 1,
+      "notes": null
+    },
+    {
       "symbolCode": "BIO",
       "source": "DATABENTO",
       "sourceTable": "databento.continuous",
@@ -1450,6 +1528,15 @@
       "notes": null
     },
     {
+      "symbolCode": "NG",
+      "source": "DATABENTO",
+      "sourceTable": "databento.continuous",
+      "sourceSymbol": "NG.c.0",
+      "isPrimary": true,
+      "confidenceScore": 1,
+      "notes": null
+    },
+    {
       "symbolCode": "NIY",
       "source": "DATABENTO",
       "sourceTable": "databento.continuous",
@@ -1526,6 +1613,15 @@
       "source": "DATABENTO",
       "sourceTable": "databento.continuous",
       "sourceSymbol": "SOX.c.0",
+      "isPrimary": true,
+      "confidenceScore": 1,
+      "notes": null
+    },
+    {
+      "symbolCode": "SR3",
+      "source": "DATABENTO",
+      "sourceTable": "databento.continuous",
+      "sourceSymbol": "SR3.c.0",
       "isPrimary": true,
       "confidenceScore": 1,
       "notes": null

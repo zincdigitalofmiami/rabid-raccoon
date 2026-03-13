@@ -2,6 +2,9 @@ import { inngest } from "../client";
 import { prisma } from "../../lib/prisma";
 import { runIngestEconCalendar } from "../../lib/ingest/econ-calendar";
 
+const ECON_CALENDAR_JOB = "ingest-econ-calendar";
+const ECON_CALENDAR_RUN_TTL_MINUTES = 180;
+
 const RELEASE_BATCHES: Array<{ id: string; releaseIds: number[] }> = [
   { id: "tier1-fomc-nfp-cpi-pce", releaseIds: [101, 50, 10, 53] },
   {
@@ -43,10 +46,50 @@ export const ingestEconCalendar = inngest.createFunction(
   { id: "ingest-econ-calendar", retries: 2 },
   { cron: "0 15 * * *" },
   async ({ step }) => {
+    await step.run("close-stale-running-runs", async () => {
+      const staleClosed = await prisma.$executeRaw`
+        UPDATE ingestion_runs
+        SET
+          status = 'FAILED',
+          "finishedAt" = NOW(),
+          "rowsFailed" = GREATEST("rowsFailed", 1),
+          details = COALESCE(details, '{}'::jsonb) || jsonb_build_object(
+            'error', 'stale RUNNING run auto-closed',
+            'autoCloseReason', 'ttl_exceeded',
+            'autoClosedAt', NOW(),
+            'ttlMinutes', ${ECON_CALENDAR_RUN_TTL_MINUTES}
+          )
+        WHERE
+          job = ${ECON_CALENDAR_JOB}
+          AND status = 'RUNNING'
+          AND "startedAt" < NOW() - make_interval(mins => ${ECON_CALENDAR_RUN_TTL_MINUTES})
+      `;
+      return { staleClosed: Number(staleClosed ?? 0) };
+    });
+
+    const activeRun = await step.run("check-active-running-run", async () => {
+      const running = await prisma.ingestionRun.findFirst({
+        where: { job: ECON_CALENDAR_JOB, status: "RUNNING" },
+        select: { id: true, startedAt: true },
+        orderBy: { startedAt: "desc" },
+      });
+      return running
+        ? { hasActiveRun: true, id: running.id.toString(), startedAt: running.startedAt.toISOString() }
+        : { hasActiveRun: false };
+    });
+
+    if (activeRun.hasActiveRun) {
+      return {
+        skipped: true,
+        reason: "active-running-ingestion-run-exists",
+        activeRun,
+      };
+    }
+
     const run = await step.run("create-ingestion-run", async () => {
       const record = await prisma.ingestionRun.create({
         data: {
-          job: "ingest-econ-calendar",
+          job: ECON_CALENDAR_JOB,
           status: "RUNNING",
           details: {
             releaseBatches: RELEASE_BATCHES.length,
