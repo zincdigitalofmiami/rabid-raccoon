@@ -2,6 +2,7 @@ import { Prisma, Timeframe } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { fetchOhlcv, toCandles } from '../src/lib/databento'
+import { hasRuntimeDatabaseUrl } from '../src/lib/server-env'
 import { INGESTION_SYMBOLS, type IngestionSymbol } from '../src/lib/ingestion-symbols'
 import {
   aggregateCandles,
@@ -545,8 +546,8 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
   assertHardConfigIntegrity()
   const dryRun = assertNoForbiddenOverrides()
 
-  if (!process.env.DATABASE_URL) {
-    hardFail('DATABASE_URL is required')
+  if (!hasRuntimeDatabaseUrl()) {
+    hardFail('A database URL is required (DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL)')
   }
   if (!process.env.DATABENTO_API_KEY) {
     hardFail('DATABENTO_API_KEY is required')

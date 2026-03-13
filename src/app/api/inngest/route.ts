@@ -1,5 +1,6 @@
 import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
+import { normalizeServerEnv } from "@/lib/server-env";
 import {
   // Market Data (Databento) — 7 functions
   ingestMktMes1m,
@@ -23,16 +24,8 @@ import {
   ingestNewsSignals,
   ingestAltNews,
   ingestFredNews,
-  // Signals — 1 function
-  ingestMeasuredMoves,
-  // 15m Signal Pipeline — 2 functions
-  computeSignal,
-  checkOutcomes,
-  // Geopolitical / policy — 2 functions
-  ingestGprIndex,
+  // Geopolitical / policy — 1 function
   ingestTrumpEffect,
-  // Coverage audit — 1 function (weekly)
-  checkSymbolCoverage,
   // Backfill — 1 function (event-triggered)
   backfillMesAllTimeframes,
 } from "@/inngest";
@@ -40,6 +33,8 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+normalizeServerEnv();
 
 // Only use INNGEST_SERVE_HOST on real Vercel (VERCEL_URL is set by the
 // platform; .env.production.local sets it to "" when pulled locally via
@@ -73,16 +68,15 @@ const handlers = serve({
     ingestNewsSignals,
     ingestAltNews,
     ingestFredNews, // daily at 17:15 UTC
-    // Signals (18:00 UTC)
-    ingestMeasuredMoves,
-    // 15m Signal Pipeline
-    computeSignal,
-    checkOutcomes,
+    // Heavy compute lanes are intentionally not served on Vercel.
+    // Runs in local/host-native compute only:
+    // - ingestMeasuredMoves
+    // - computeSignal
+    // - checkOutcomes
+    // - ingestGprIndex
+    // - checkSymbolCoverage
     // Geopolitical / policy (19:00–19:30 UTC)
-    ingestGprIndex,
     ingestTrumpEffect,
-    // Coverage audit (weekly Sun 06:00 UTC)
-    checkSymbolCoverage,
     // Backfill (event-triggered)
     backfillMesAllTimeframes,
   ],

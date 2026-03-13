@@ -1,11 +1,12 @@
 import { prisma } from './prisma'
+import { hasRuntimeDatabaseUrl } from './server-env'
 import { SYMBOLS } from './symbols'
 import { CandleData } from './types'
 import { toNum } from './decimal'
 
 type DbState = 'disabled' | 'probing' | 'enabled' | 'failed'
 
-let dbState: DbState = process.env.DATABASE_URL ? 'probing' : 'disabled'
+let dbState: DbState = hasRuntimeDatabaseUrl() ? 'probing' : 'disabled'
 let dbProbePromise: Promise<boolean> | null = null
 
 async function canUseDatabase(): Promise<boolean> {

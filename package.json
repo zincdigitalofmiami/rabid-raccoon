@@ -7,15 +7,19 @@
   },
   "scripts": {
     "postinstall": "prisma generate",
-    "dev": "next dev",
+    "dev": "LOCAL_DEV=1 next dev -p 3001",
+    "dev:direct": "next dev -p 3001",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "echo 'Lint disabled by project policy'",
     "backtest": "tsx scripts/backtest-signals.ts",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio",
-    "db:migrate": "prisma migrate deploy",
+    "prisma:migrate": "PRISMA_TARGET=local prisma migrate dev",
+    "prisma:studio": "PRISMA_TARGET=local prisma studio",
+    "prisma:studio:local": "PRISMA_TARGET=local prisma studio",
+    "prisma:studio:direct": "PRISMA_TARGET=direct prisma studio",
+    "db:migrate": "PRISMA_TARGET=local prisma migrate deploy",
+    "db:migrate:direct": "PRISMA_TARGET=direct prisma migrate deploy",
     "db:counts": "tsx scripts/db-counts.ts",
     "ingest:market": "tsx scripts/ingest-market-prices.ts",
     "ingest:market:daily": "tsx scripts/ingest-market-prices-daily.ts",
@@ -34,7 +38,7 @@
     "dataset:autogluon:1h": "tsx scripts/build-complete-dataset.ts",
     "dataset:autogluon:15m": "tsx scripts/build-15m-dataset.ts",
     "test:feature-availability": "node --import tsx --test scripts/feature-availability.test.ts",
-    "inngest:dev": "npx inngest-cli dev -u http://localhost:3000/api/inngest"
+    "inngest:dev": "npx inngest-cli dev -u http://localhost:3001/api/inngest"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.37",

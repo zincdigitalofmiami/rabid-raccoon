@@ -13,6 +13,7 @@ import { Prisma } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { fetchOhlcv, toCandles } from '../src/lib/databento'
+import { hasRuntimeDatabaseUrl } from '../src/lib/server-env'
 import {
   aggregateCandles,
   asUtcDateFromUnixSeconds,
@@ -87,7 +88,9 @@ async function insertBatch(
 async function main() {
   loadDotEnvFiles()
 
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!hasRuntimeDatabaseUrl()) {
+    throw new Error('A database URL is required (DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL)')
+  }
   if (!process.env.DATABENTO_API_KEY) throw new Error('DATABENTO_API_KEY is required')
 
   const startStr = parseArg('start', '2024-01-01')

@@ -49,3 +49,5 @@ security_best_practices_report.md
 indicators/*.bak*
 .audit-reports/
 .worktrees/
+backups/
+prisma/migrations/20260303180000_add_mkt_futures_mes_1m/

@@ -11,7 +11,7 @@
  * Each 7-day chunk is an Inngest step so the job is resumable.
  *
  * Trigger via Inngest dev UI or:
- *   curl -X POST http://localhost:3000/api/inngest \
+ *   curl -X POST http://localhost:3001/api/inngest \
  *     -H 'Content-Type: application/json' \
  *     -d '{"name":"backfill/mes.all-timeframes","data":{}}'
  */

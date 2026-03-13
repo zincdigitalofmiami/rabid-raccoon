@@ -1,5 +1,6 @@
 import { Prisma, SignalDirection, SignalStatus } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
+import { hasRuntimeDatabaseUrl } from '../src/lib/server-env'
 import { detectMeasuredMoves } from '../src/lib/measured-move'
 import { detectSwings } from '../src/lib/swing-detection'
 import { toNum } from '../src/lib/decimal'
@@ -197,7 +198,9 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
   const { daysBack, timeframe, dryRun, symbolsRequested } = resolveMmOptions(options)
 
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!hasRuntimeDatabaseUrl()) {
+    throw new Error('A database URL is required (DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL)')
+  }
   if (!Number.isFinite(daysBack) || daysBack <= 0) {
     throw new Error(`Invalid --days-back '${daysBack}'`)
   }

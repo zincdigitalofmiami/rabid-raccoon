@@ -8,6 +8,7 @@
 import { Prisma } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
+import { hasRuntimeDatabaseUrl } from '../src/lib/server-env'
 import { loadDotEnvFiles } from './ingest-utils'
 
 loadDotEnvFiles()
@@ -178,7 +179,9 @@ async function insert1d(records: RawRecord[]): Promise<number> {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required')
+  if (!hasRuntimeDatabaseUrl()) {
+    throw new Error('A database URL is required (DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL)')
+  }
   if (!process.env.DATABENTO_API_KEY) throw new Error('DATABENTO_API_KEY required')
 
   const START = '2019-12-01T00:00:00Z'  // a bit before 2020-01 for safety

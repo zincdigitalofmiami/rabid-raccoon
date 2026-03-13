@@ -67,7 +67,7 @@ cors = [
     origin.strip()
     for origin in os.getenv(
         "MES_HFT_CORS_ORIGINS",
-        "https://rabid-raccoon.vercel.app,http://localhost:3000",
+        "https://rabid-raccoon.vercel.app,http://localhost:3000,http://localhost:3001",
     ).split(",")
     if origin.strip()
 ]

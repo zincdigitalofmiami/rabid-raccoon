@@ -16,6 +16,7 @@
 import { createHash } from 'node:crypto'
 import pg from 'pg'
 import { fetchFredSeries } from '../src/lib/fred'
+import { resolveDirectDatabaseUrl } from '../src/lib/server-env'
 import { isMainModule, loadDotEnvFiles } from './ingest-utils'
 
 type EconDomain =
@@ -50,8 +51,8 @@ let pool: pg.Pool | null = null
 
 function getPool(): pg.Pool {
   if (!pool) {
-    const url = process.env.DIRECT_URL || process.env.DATABASE_URL
-    if (!url) throw new Error('Neither DIRECT_URL nor DATABASE_URL is set')
+    const url = resolveDirectDatabaseUrl()
+    if (!url) throw new Error('DIRECT_URL or LOCAL_DATABASE_URL is required')
     pool = new pg.Pool({ connectionString: url, max: 3 })
   }
   return pool
@@ -400,7 +401,7 @@ async function truncateEconTables(): Promise<void> {
 async function run() {
   loadDotEnvFiles()
   if (!process.env.FRED_API_KEY) throw new Error('FRED_API_KEY is required')
-  if (!process.env.DIRECT_URL && !process.env.DATABASE_URL) throw new Error('DIRECT_URL or DATABASE_URL is required')
+  if (!resolveDirectDatabaseUrl()) throw new Error('DIRECT_URL or LOCAL_DATABASE_URL is required')
 
   const args = process.argv.slice(2)
   const daysBack = Number(args.find((a) => a.startsWith('--days-back='))?.split('=')[1] ?? '730')

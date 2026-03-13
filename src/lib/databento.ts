@@ -1,9 +1,21 @@
 import { CandleData, DatabentoOhlcvRecord } from './types'
+import { normalizeEnvValue, normalizeServerEnv } from './server-env'
 
 const DATABENTO_BASE = 'https://hist.databento.com/v0'
 const FIXED_PRICE_SCALE = 1_000_000_000
 const DATABENTO_REQUEST_TIMEOUT_MS = 90_000
 const DATABENTO_MAX_ATTEMPTS = 4
+const APPROVED_DATABENTO_DATASETS = new Set(['GLBX.MDP3'])
+
+export function assertApprovedDatabentoDataset(dataset: string): string {
+  const normalizedDataset = dataset.trim().toUpperCase()
+  if (!APPROVED_DATABENTO_DATASETS.has(normalizedDataset)) {
+    throw new Error(
+      `Databento dataset ${dataset} is not approved in this workspace. Approved datasets: ${[...APPROVED_DATABENTO_DATASETS].join(', ')}`
+    )
+  }
+  return normalizedDataset
+}
 
 export async function fetchOhlcv(params: {
   dataset: string
@@ -15,10 +27,12 @@ export async function fetchOhlcv(params: {
   timeoutMs?: number
   maxAttempts?: number
 }): Promise<DatabentoOhlcvRecord[]> {
-  const apiKey = process.env.DATABENTO_API_KEY
+  normalizeServerEnv()
+  const apiKey = normalizeEnvValue(process.env.DATABENTO_API_KEY)
   if (!apiKey) {
     throw new Error('DATABENTO_API_KEY environment variable is not set')
   }
+  const dataset = assertApprovedDatabentoDataset(params.dataset)
 
   const basicAuth = Buffer.from(`${apiKey}:`).toString('base64')
 
@@ -37,7 +51,7 @@ export async function fetchOhlcv(params: {
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const body = new URLSearchParams({
-      dataset: params.dataset,
+      dataset,
       symbols: params.symbol,
       schema: params.schema || 'ohlcv-1m',
       stype_in: params.stypeIn,

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Timeframe } from '@prisma/client'
+import { normalizeEnvValue, normalizeServerEnv } from '../src/lib/server-env'
 import { CandleData } from '../src/lib/types'
 
 /** Entry-guard helper — works even when the cwd path contains spaces or symlinks. */
@@ -38,10 +39,13 @@ export function loadDotEnvFiles(): void {
       const eq = line.indexOf('=')
       if (eq <= 0) continue
       const key = line.slice(0, eq).trim()
-      const value = line.slice(eq + 1).trim().replace(/^"(.*)"$/, '$1')
-      if (!process.env[key]) process.env[key] = value
+      const rawValue = line.slice(eq + 1).trim().replace(/^"(.*)"$/, '$1')
+      const value = normalizeEnvValue(rawValue)
+      if (value && !process.env[key]) process.env[key] = value
     }
   }
+
+  normalizeServerEnv()
 }
 
 export function parseArg(name: string, fallback: string): string {
@@ -149,4 +153,3 @@ export function safeOutputPath(raw: string, projectRoot: string): string {
   }
   return resolved
 }
-

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
+import { hasRuntimeDatabaseUrl } from '../src/lib/server-env'
 import {
   fetchDollarCandles,
   fetchFedFundsCandles,
@@ -259,7 +260,9 @@ export async function runIngestMacroIndicators(options?: MacroIngestOptions): Pr
   loadDotEnvFiles()
 
   const { daysBack, dryRun } = resolveMacroOptions(options)
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!hasRuntimeDatabaseUrl()) {
+    throw new Error('A database URL is required (DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL)')
+  }
   if (!process.env.FRED_API_KEY) throw new Error('FRED_API_KEY is required')
   if (!Number.isFinite(daysBack) || daysBack <= 0) {
     throw new Error(`Invalid --days-back '${daysBack}'`)
