@@ -9,6 +9,7 @@
     "postinstall": "prisma generate",
     "dev": "next dev",
     "build": "prisma generate && next build",
+    "vercel-build": "next build",
     "start": "next start",
     "lint": "echo 'Lint disabled by project policy'",
     "backtest": "tsx scripts/backtest-signals.ts",

@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const revalidate = 1800;
+
+const CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=1800, stale-while-revalidate=3600",
+};
 
 /**
  * GET /api/gpr — Returns latest GPR data with historical context.
@@ -130,32 +136,35 @@ export async function GET() {
         ? Number(latestGprd[0].value) - Number(latestGprd[1].value)
         : null;
 
-    return NextResponse.json({
-      current: {
-        date: currentDate.toISOString().slice(0, 10),
-        ...toIndexMap(currentDay),
+    return NextResponse.json(
+      {
+        current: {
+          date: currentDate.toISOString().slice(0, 10),
+          ...toIndexMap(currentDay),
+        },
+        previous: prevDate
+          ? {
+              date: prevDate.toISOString().slice(0, 10),
+              ...toIndexMap(prevDay),
+            }
+          : null,
+        change1d,
+        ma7: ma7 !== null ? round2(ma7) : null,
+        ma30: ma30 !== null ? round2(ma30) : null,
+        percentile90d: percentile90d !== null ? round2(percentile90d) : null,
+        zScore90d: zScore90d !== null ? round2(zScore90d) : null,
+        regime,
+        riskCap,
+        sparkline: last30.map((v) => round2(v)),
+        updatedAt: new Date().toISOString(),
       },
-      previous: prevDate
-        ? {
-            date: prevDate.toISOString().slice(0, 10),
-            ...toIndexMap(prevDay),
-          }
-        : null,
-      change1d,
-      ma7: ma7 !== null ? round2(ma7) : null,
-      ma30: ma30 !== null ? round2(ma30) : null,
-      percentile90d: percentile90d !== null ? round2(percentile90d) : null,
-      zScore90d: zScore90d !== null ? round2(zScore90d) : null,
-      regime,
-      riskCap,
-      sparkline: last30.map((v) => round2(v)),
-      updatedAt: new Date().toISOString(),
-    });
+      { headers: CACHE_HEADERS },
+    );
   } catch (error) {
     console.error("[/api/gpr] error:", error);
     return NextResponse.json(
       { error: "Failed to fetch GPR data" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

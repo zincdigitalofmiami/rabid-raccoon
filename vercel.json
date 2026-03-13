@@ -1,5 +1,11 @@
 {
   "framework": "nextjs",
+  "git": {
+    "deploymentEnabled": {
+      "*": false,
+      "main": true
+    }
+  },
   "regions": ["iad1"],
   "functions": {
     "src/app/api/**/*.ts": {
