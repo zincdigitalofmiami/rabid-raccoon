@@ -1,7 +1,26 @@
 {
     "recommendations": [
-        "kaigouthro.pinescript-vscode",
+        "kilocode.kilo-code",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "prisma.prisma",
+        "ms-playwright.playwright",
         "usernamehw.errorlens",
-        "eamodio.gitlens"
+        "mechatroner.rainbow-csv",
+        "tradesdontlie.pinescript-v6-vscode"
+    ],
+    "unwantedRecommendations": [
+        "Codeium.codeium",
+        "GitHub.copilot-chat",
+        "openai.chatgpt",
+        "Anthropic.claude-code",
+        "RooVeterinaryInc.roo-cline",
+        "chrisdias.promptboost",
+        "codescene.codescene-vscode",
+        "revanthpobala.pine-script-pro",
+        "sarthikbhat.json-server"
     ]
 }

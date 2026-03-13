@@ -2,6 +2,8 @@
 
 Audit completed against current workspace state and live runtime signals on Monday, March 9, 2026.
 
+> Update (2026-03-11): Use [2026-03-11-trigger-data-hit-map.md](/Volumes/Satechi%20Hub/rabid-raccoon/docs/plans/2026-03-11-trigger-data-hit-map.md) for the active "what hits where and when" table and restart gate tracking. This March 9 file remains a historical audit snapshot.
+
 ## Prisma + Local DB State
 
 - Prisma datasource switching is explicit: `PRISMA_LOCAL=1` uses `LOCAL_DATABASE_URL`, else `DIRECT_URL` in [prisma.config.ts](../../prisma.config.ts#L6).
