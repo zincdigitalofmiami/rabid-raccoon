@@ -1,0 +1,39 @@
+{
+    "mcpServers": {
+        "memory": {
+            "type": "stdio",
+            "command": "/opt/homebrew/bin/npx",
+            "args": [
+                "-y",
+                "@modelcontextprotocol/server-memory"
+            ],
+            "env": {
+                "MEMORY_FILE_PATH": "/Volumes/Satechi Hub/rabid-raccoon/.claude/memory.jsonl"
+            }
+        },
+        "sequentialthinking": {
+            "type": "stdio",
+            "command": "/opt/homebrew/bin/npx",
+            "args": [
+                "-y",
+                "@modelcontextprotocol/server-sequential-thinking"
+            ]
+        },
+        "context7": {
+            "type": "stdio",
+            "command": "/opt/homebrew/bin/npx",
+            "args": [
+                "-y",
+                "@upstash/context7-mcp"
+            ]
+        },
+        "puppeteer": {
+            "type": "stdio",
+            "command": "/opt/homebrew/bin/npx",
+            "args": [
+                "-y",
+                "@modelcontextprotocol/server-puppeteer"
+            ]
+        }
+    }
+}
