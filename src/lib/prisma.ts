@@ -1,20 +1,19 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import { withAccelerate } from "@prisma/extension-accelerate";
+import {
+  normalizeEnvValue,
+  normalizeServerEnv,
+  resolveDirectDatabaseUrl,
+} from "./server-env";
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
   prismaUrl?: string;
 };
 
-function normalizeDatabaseUrl(value?: string): string | undefined {
-  if (!value) return undefined;
-  const normalized = value.trim().replace(/(?:\\n|\n)+$/g, "");
-  return normalized.length > 0 ? normalized : undefined;
-}
-
 function positiveIntFromEnv(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
+  const parsed = Number.parseInt(normalizeEnvValue(value) ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
@@ -29,40 +28,38 @@ function getPrismaClient(): PrismaClient {
   //    → Direct Postgres via @prisma/adapter-pg. Default for all environments.
   //      Zero per-op cost. Works on Vercel, local dev, scripts, Inngest.
   //
-  // 3. DATABASE_URL as fallback (postgres:// or prisma+postgres://)
-  //    → Legacy path. If DATABASE_URL is an Accelerate URL and USE_ACCELERATE
-  //      is not set, we still use it but log a warning.
+  // 3. DATABASE_URL as fallback only when it's direct postgres://
+  //    → If DATABASE_URL is an Accelerate URL, require explicit USE_ACCELERATE=1.
 
-  const forceAccelerate = process.env.USE_ACCELERATE === "1";
-  const directUrl =
-    normalizeDatabaseUrl(process.env.DIRECT_URL) ||
-    normalizeDatabaseUrl(process.env.LOCAL_DATABASE_URL);
-  const accelerateDatabaseUrl = normalizeDatabaseUrl(process.env.DATABASE_URL);
+  normalizeServerEnv();
+
+  const forceAccelerate = normalizeEnvValue(process.env.USE_ACCELERATE) === "1";
+  const directUrl = resolveDirectDatabaseUrl();
+  const runtimeDatabaseUrl = normalizeEnvValue(process.env.DATABASE_URL);
 
   // Determine which URL to use
   let databaseUrl: string;
   let mode: "direct" | "accelerate";
 
-  if (forceAccelerate && accelerateDatabaseUrl) {
+  if (forceAccelerate && runtimeDatabaseUrl) {
     // Explicit opt-in to Accelerate (for edge caching with cacheStrategy)
-    databaseUrl = accelerateDatabaseUrl;
+    databaseUrl = runtimeDatabaseUrl;
     mode = "accelerate";
   } else if (directUrl) {
     // Default: direct Postgres — zero Accelerate cost
     databaseUrl = directUrl;
     mode = "direct";
-  } else if (accelerateDatabaseUrl) {
-    // Fallback to DATABASE_URL whatever it is
-    databaseUrl = accelerateDatabaseUrl;
-    const isAccelerateUrl = /^prisma(\+postgres)?:\/\//i.test(databaseUrl);
-    mode = isAccelerateUrl ? "accelerate" : "direct";
+  } else if (runtimeDatabaseUrl) {
+    const isAccelerateUrl = /^prisma(\+postgres)?:\/\//i.test(runtimeDatabaseUrl);
     if (isAccelerateUrl) {
-      console.warn(
-        "[prisma] WARNING: Using Accelerate proxy without USE_ACCELERATE=1. " +
-          "Set DIRECT_URL to avoid per-operation Accelerate charges, or set " +
-          "USE_ACCELERATE=1 to silence this warning.",
+      throw new Error(
+        "[prisma] DIRECT_URL or LOCAL_DATABASE_URL is required for direct runtime access. " +
+          "DATABASE_URL points to Accelerate; set USE_ACCELERATE=1 only when explicitly opting in.",
       );
     }
+    // Fallback to DATABASE_URL only when it's direct postgres URL.
+    databaseUrl = runtimeDatabaseUrl;
+    mode = "direct";
   } else {
     throw new Error(
       "No database URL configured. Set DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL.",

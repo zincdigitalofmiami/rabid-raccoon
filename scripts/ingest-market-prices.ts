@@ -1,6 +1,7 @@
 import { Prisma, Timeframe } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
+import { resolveDirectDatabaseUrl } from '../src/lib/server-env'
 import { fetchOhlcv, toCandles } from '../src/lib/databento'
 import { INGESTION_SYMBOLS, type IngestionSymbol } from '../src/lib/ingestion-symbols'
 import {
@@ -545,8 +546,10 @@ export async function runIngestMarketPrices(): Promise<PriceIngestSummary> {
   assertHardConfigIntegrity()
   const dryRun = assertNoForbiddenOverrides()
 
-  if (!process.env.DATABASE_URL) {
-    hardFail('DATABASE_URL is required')
+  if (!resolveDirectDatabaseUrl()) {
+    hardFail(
+      'Set DIRECT_URL or LOCAL_DATABASE_URL for market-prices-mes-1h-nonmes-1d; DATABASE_URL/Accelerate fallback is not allowed for this path',
+    )
   }
   if (!process.env.DATABENTO_API_KEY) {
     hardFail('DATABENTO_API_KEY is required')

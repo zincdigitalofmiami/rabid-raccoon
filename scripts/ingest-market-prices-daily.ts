@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
+import { resolveDirectDatabaseUrl } from '../src/lib/server-env'
 import { fetchOhlcv, toCandles } from '../src/lib/databento'
 import { INGESTION_SYMBOLS } from '../src/lib/ingestion-symbols'
 import {
@@ -299,7 +300,11 @@ export async function runIngestMarketPricesDaily(options?: DailyIngestOptions): 
   const resolved = resolveOptions(options)
   const symbols = pickSymbols(resolved.symbols)
   if (symbols.length === 0) throw new Error('No valid symbols selected for daily market price ingestion')
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!resolveDirectDatabaseUrl()) {
+    throw new Error(
+      'Set DIRECT_URL or LOCAL_DATABASE_URL for market-prices-futures-daily; DATABASE_URL/Accelerate fallback is not allowed for this path',
+    )
+  }
   if (!process.env.DATABENTO_API_KEY) throw new Error('DATABENTO_API_KEY is required')
   if (!Number.isFinite(resolved.lookbackHours) || resolved.lookbackHours <= 0) {
     throw new Error(`Invalid lookback-hours '${resolved.lookbackHours}'`)

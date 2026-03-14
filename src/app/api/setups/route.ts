@@ -17,8 +17,42 @@ import {
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+type SetupsRouteStatus =
+  | 'full-success'
+  | 'empty-success'
+  | 'insufficient-source-data'
+  | 'derivation-failure'
+  | 'trigger-generation-failure'
+  | 'runtime-failure'
+
+const ENGINE_META = {
+  seam: 'trigger-candidates-adapter',
+  generator: 'generateTriggerCandidates',
+  backing: 'legacy-bhg-adapter',
+  handoffPhases: ['0C', '0D', '4'] as const,
+} as const
+
+const DERIVATION_LIMIT = 200
+const DERIVATION_MIN_BARS = 195
+const ANALYSIS_MIN_BARS = 10
+
 type SetupResponseItem = TriggerCandidate & {
   risk?: ReturnType<typeof computeRisk>
+}
+
+interface SetupsResponseMeta {
+  status: SetupsRouteStatus
+  reason?: string
+  engine: typeof ENGINE_META
+  data: {
+    derivedBars: number
+    minBarsForAnalysis: number
+    derivationRequest: {
+      limit: number
+      minimumDerivedBars: number
+    }
+  }
+  updatedAt: string
 }
 
 interface SetupsResponseBody {
@@ -29,14 +63,24 @@ interface SetupsResponseBody {
   eventContext?: ReturnType<typeof getEventContext>
   timestamp: string
   error?: string
+  meta: SetupsResponseMeta
+}
+
+interface BuildSetupsResult {
+  body: SetupsResponseBody
+  statusCode: 200 | 500 | 503
+  cacheable: boolean
 }
 
 const CACHE_KEY = 'mes-setups'
 const CACHE_HEADERS = {
   'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=90',
 }
+const NO_STORE_HEADERS = {
+  'Cache-Control': 'no-store',
+}
 
-let inFlightBody: Promise<SetupsResponseBody> | null = null
+let inFlightBody: Promise<BuildSetupsResult> | null = null
 
 function rowToCandle(row: {
   eventTime: Date
@@ -56,20 +100,133 @@ function rowToCandle(row: {
   }
 }
 
-async function buildResponseBody(): Promise<SetupsResponseBody> {
-  // 1. Fetch MES 15m candles derived from the 1m source of truth
-  const rows = await readLatestMes15mRowsPrefer1m(200, 195)
+function nowIso(): string {
+  return new Date().toISOString()
+}
 
-  if (rows.length < 10) {
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function parseInsufficientDerivation(message: string): {
+  derivedBars: number
+  minimumBars: number
+} | null {
+  if (!message.includes('Insufficient derived MES 15m bars')) return null
+  const match = message.match(/\((\d+)\s*<\s*(\d+)\)/)
+  if (!match) return { derivedBars: 0, minimumBars: DERIVATION_MIN_BARS }
+  return {
+    derivedBars: Number(match[1]),
+    minimumBars: Number(match[2]),
+  }
+}
+
+function buildMeta(
+  status: SetupsRouteStatus,
+  derivedBars: number,
+  reason?: string,
+): SetupsResponseMeta {
+  return {
+    status,
+    reason,
+    engine: ENGINE_META,
+    data: {
+      derivedBars,
+      minBarsForAnalysis: ANALYSIS_MIN_BARS,
+      derivationRequest: {
+        limit: DERIVATION_LIMIT,
+        minimumDerivedBars: DERIVATION_MIN_BARS,
+      },
+    },
+    updatedAt: nowIso(),
+  }
+}
+
+function buildBody(params: {
+  status: SetupsRouteStatus
+  derivedBars: number
+  setups: SetupResponseItem[]
+  fibResult: ReturnType<typeof calculateFibonacciMultiPeriod> | null
+  currentPrice: number | null
+  measuredMoves?: ReturnType<typeof detectMeasuredMoves>
+  eventContext?: ReturnType<typeof getEventContext>
+  error?: string
+  reason?: string
+}): SetupsResponseBody {
+  const body: SetupsResponseBody = {
+    setups: params.setups,
+    fibResult: params.fibResult,
+    currentPrice: params.currentPrice,
+    measuredMoves: params.measuredMoves,
+    eventContext: params.eventContext,
+    timestamp: nowIso(),
+    meta: buildMeta(params.status, params.derivedBars, params.reason),
+  }
+
+  if (params.error) body.error = params.error
+  return body
+}
+
+async function buildResponseBody(): Promise<BuildSetupsResult> {
+  // 1. Fetch MES 15m candles derived from the 1m source of truth
+  let rows: Awaited<ReturnType<typeof readLatestMes15mRowsPrefer1m>>
+  try {
+    rows = await readLatestMes15mRowsPrefer1m(
+      DERIVATION_LIMIT,
+      DERIVATION_MIN_BARS,
+    )
+  } catch (error) {
+    const message = errorMessage(error)
+    const insufficient = parseInsufficientDerivation(message)
+    if (insufficient) {
+      return {
+        statusCode: 503,
+        cacheable: false,
+        body: buildBody({
+          status: 'insufficient-source-data',
+          reason: `derived-bars-below-threshold(${insufficient.derivedBars}<${insufficient.minimumBars})`,
+          derivedBars: insufficient.derivedBars,
+          setups: [],
+          fibResult: null,
+          currentPrice: null,
+          error: 'Insufficient MES 15m data',
+        }),
+      }
+    }
+
     return {
-      setups: [],
-      fibResult: null,
-      currentPrice: null,
-      timestamp: new Date().toISOString(),
-      error: 'Insufficient MES 15m data',
+      statusCode: 500,
+      cacheable: false,
+      body: buildBody({
+        status: 'derivation-failure',
+        reason: 'mes-15m-derivation-threw',
+        derivedBars: 0,
+        setups: [],
+        fibResult: null,
+        currentPrice: null,
+        error: `MES 15m derivation failed: ${message}`,
+      }),
     }
   }
 
+  if (rows.length < ANALYSIS_MIN_BARS) {
+    const currentPrice = rows.length > 0 ? toNum(rows[0].close) : null
+    return {
+      statusCode: 503,
+      cacheable: false,
+      body: buildBody({
+        status: 'insufficient-source-data',
+        reason: `analysis-bars-below-min(${rows.length}<${ANALYSIS_MIN_BARS})`,
+        derivedBars: rows.length,
+        setups: [],
+        fibResult: null,
+        currentPrice,
+        error: 'Insufficient MES 15m data',
+      }),
+    }
+  }
+
+  const derivedBars = rows.length
   const candles = [...rows].reverse().map(rowToCandle)
   const currentPrice = candles[candles.length - 1].close
 
@@ -79,20 +236,44 @@ async function buildResponseBody(): Promise<SetupsResponseBody> {
 
   if (!fibResult) {
     return {
-      setups: [],
-      fibResult: null,
-      currentPrice,
-      timestamp: new Date().toISOString(),
+      statusCode: 200,
+      cacheable: true,
+      body: buildBody({
+        status: 'empty-success',
+        reason: 'no-fib-confluence',
+        derivedBars,
+        setups: [],
+        fibResult: null,
+        currentPrice,
+      }),
     }
   }
 
   const measuredMoves = detectMeasuredMoves(swings.highs, swings.lows, currentPrice)
 
   // 3. Generate current trigger candidates via the neutral contract seam
-  const setups = withCanonicalSetupIds(
-    generateTriggerCandidates(candles, fibResult, measuredMoves),
-    'M15',
-  )
+  let setups: SetupResponseItem[]
+  try {
+    setups = withCanonicalSetupIds(
+      generateTriggerCandidates(candles, fibResult, measuredMoves),
+      'M15',
+    )
+  } catch (error) {
+    return {
+      statusCode: 500,
+      cacheable: false,
+      body: buildBody({
+        status: 'trigger-generation-failure',
+        reason: 'generate-trigger-candidates-threw',
+        derivedBars,
+        setups: [],
+        fibResult,
+        currentPrice,
+        measuredMoves,
+        error: `Trigger generation failed: ${errorMessage(error)}`,
+      }),
+    }
+  }
 
   // 4. Attach risk computations for TRIGGERED setups
   const enrichedSetups = setups.map((s) => {
@@ -107,13 +288,24 @@ async function buildResponseBody(): Promise<SetupsResponseBody> {
   const todayEvents = await loadTodayEvents()
   const eventContext = getEventContext(new Date(), todayEvents)
 
+  const status: SetupsRouteStatus =
+    enrichedSetups.length > 0 ? 'full-success' : 'empty-success'
+  const reason =
+    enrichedSetups.length > 0 ? undefined : 'no-trigger-candidates'
+
   return {
-    setups: enrichedSetups,
-    fibResult,
-    currentPrice,
-    measuredMoves,
-    eventContext,
-    timestamp: new Date().toISOString(),
+    statusCode: 200,
+    cacheable: true,
+    body: buildBody({
+      status,
+      reason,
+      derivedBars,
+      setups: enrichedSetups,
+      fibResult,
+      currentPrice,
+      measuredMoves,
+      eventContext,
+    }),
   }
 }
 
@@ -126,21 +318,34 @@ export async function GET(): Promise<Response> {
 
     if (!inFlightBody) {
       inFlightBody = buildResponseBody()
-        .then((body) => {
-          intradayCache.set(CACHE_KEY, body)
-          return body
+        .then((result) => {
+          if (result.cacheable) intradayCache.set(CACHE_KEY, result.body)
+          return result
         })
         .finally(() => {
           inFlightBody = null
         })
     }
 
-    return NextResponse.json(await inFlightBody, { headers: CACHE_HEADERS })
+    const result = await inFlightBody
+    return NextResponse.json(result.body, {
+      status: result.statusCode,
+      headers: result.cacheable ? CACHE_HEADERS : NO_STORE_HEADERS,
+    })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return NextResponse.json(
-      { error: message, setups: [], fibResult: null, currentPrice: null },
-      { status: 500 }
-    )
+    const message = errorMessage(error)
+    const body = buildBody({
+      status: 'runtime-failure',
+      reason: 'unexpected-route-runtime-failure',
+      derivedBars: 0,
+      setups: [],
+      fibResult: null,
+      currentPrice: null,
+      error: message,
+    })
+    return NextResponse.json(body, {
+      status: 500,
+      headers: NO_STORE_HEADERS,
+    })
   }
 }

@@ -10,6 +10,25 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const EXPECTED_LINES_BY_TIMEFRAME = {
+  daily: 7,
+  weekly: 5,
+  monthly: 5,
+  yearly: 3,
+} as const;
+
+type PivotTimeframe = keyof typeof EXPECTED_LINES_BY_TIMEFRAME;
+type PivotCoverageState = "full" | "partial" | "empty";
+
+interface PivotCoverage {
+  available: boolean;
+  sourceBars: number;
+  sourceStart: string | null;
+  sourceEnd: string | null;
+  lineCount: number;
+  expectedLineCount: number;
+}
+
 /**
  * GET /api/pivots/mes
  *
@@ -29,8 +48,43 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   try {
+    const computedAt = new Date().toISOString();
     const lines: PivotLine[] = [];
     const now = new Date();
+    const coverage: Record<PivotTimeframe, PivotCoverage> = {
+      daily: {
+        available: false,
+        sourceBars: 0,
+        sourceStart: null,
+        sourceEnd: null,
+        lineCount: 0,
+        expectedLineCount: EXPECTED_LINES_BY_TIMEFRAME.daily,
+      },
+      weekly: {
+        available: false,
+        sourceBars: 0,
+        sourceStart: null,
+        sourceEnd: null,
+        lineCount: 0,
+        expectedLineCount: EXPECTED_LINES_BY_TIMEFRAME.weekly,
+      },
+      monthly: {
+        available: false,
+        sourceBars: 0,
+        sourceStart: null,
+        sourceEnd: null,
+        lineCount: 0,
+        expectedLineCount: EXPECTED_LINES_BY_TIMEFRAME.monthly,
+      },
+      yearly: {
+        available: false,
+        sourceBars: 0,
+        sourceStart: null,
+        sourceEnd: null,
+        lineCount: 0,
+        expectedLineCount: EXPECTED_LINES_BY_TIMEFRAME.yearly,
+      },
+    };
     const withStart = (items: PivotLine[], start: Date): PivotLine[] => {
       const startSec = Math.floor(start.getTime() / 1000);
       return items.map((line) => ({ ...line, startTime: startSec }));
@@ -43,7 +97,7 @@ export async function GET() {
         eventDate: { lt: new Date() },
       },
       orderBy: { eventDate: "desc" },
-      select: { high: true, low: true, close: true },
+      select: { high: true, low: true, close: true, eventDate: true },
     });
 
     if (prevDay) {
@@ -54,7 +108,16 @@ export async function GET() {
       );
       const startOfThisDay = new Date(now);
       startOfThisDay.setUTCHours(0, 0, 0, 0);
-      lines.push(...withStart(pivotLevelsToLines(daily, "D", 3), startOfThisDay));
+      const dailyLines = withStart(pivotLevelsToLines(daily, "D", 3), startOfThisDay);
+      lines.push(...dailyLines);
+      coverage.daily = {
+        available: true,
+        sourceBars: 1,
+        sourceStart: toIsoDate(prevDay.eventDate),
+        sourceEnd: toIsoDate(prevDay.eventDate),
+        lineCount: dailyLines.length,
+        expectedLineCount: EXPECTED_LINES_BY_TIMEFRAME.daily,
+      };
     }
 
     // ── Weekly Pivots ─────────────────────────────────────────────────────
@@ -80,7 +143,16 @@ export async function GET() {
       const weekLow = Math.min(...weekBars.map((b) => toNum(b.low)));
       const weekClose = toNum(weekBars[weekBars.length - 1].close);
       const weekly = calculateTraditionalPivots(weekHigh, weekLow, weekClose);
-      lines.push(...withStart(pivotLevelsToLines(weekly, "W", 2), startOfThisWeek));
+      const weeklyLines = withStart(pivotLevelsToLines(weekly, "W", 2), startOfThisWeek);
+      lines.push(...weeklyLines);
+      coverage.weekly = {
+        available: true,
+        sourceBars: weekBars.length,
+        sourceStart: toIsoDate(weekBars[0].eventDate),
+        sourceEnd: toIsoDate(weekBars[weekBars.length - 1].eventDate),
+        lineCount: weeklyLines.length,
+        expectedLineCount: EXPECTED_LINES_BY_TIMEFRAME.weekly,
+      };
     }
 
     // ── Monthly Pivots ────────────────────────────────────────────────────
@@ -108,7 +180,19 @@ export async function GET() {
         monthLow,
         monthClose,
       );
-      lines.push(...withStart(pivotLevelsToLines(monthly, "M", 2), startOfThisMonth));
+      const monthlyLines = withStart(
+        pivotLevelsToLines(monthly, "M", 2),
+        startOfThisMonth,
+      );
+      lines.push(...monthlyLines);
+      coverage.monthly = {
+        available: true,
+        sourceBars: monthBars.length,
+        sourceStart: toIsoDate(monthBars[0].eventDate),
+        sourceEnd: toIsoDate(monthBars[monthBars.length - 1].eventDate),
+        lineCount: monthlyLines.length,
+        expectedLineCount: EXPECTED_LINES_BY_TIMEFRAME.monthly,
+      };
     }
 
     // ── Yearly Pivots ─────────────────────────────────────────────────────
@@ -128,18 +212,63 @@ export async function GET() {
       const yearLow = Math.min(...yearBars.map((b) => toNum(b.low)));
       const yearClose = toNum(yearBars[yearBars.length - 1].close);
       const yearly = calculateTraditionalPivots(yearHigh, yearLow, yearClose);
-      lines.push(...withStart(pivotLevelsToLines(yearly, "Y", 1), startOfThisYear));
+      const yearlyLines = withStart(pivotLevelsToLines(yearly, "Y", 1), startOfThisYear);
+      lines.push(...yearlyLines);
+      coverage.yearly = {
+        available: true,
+        sourceBars: yearBars.length,
+        sourceStart: toIsoDate(yearBars[0].eventDate),
+        sourceEnd: toIsoDate(yearBars[yearBars.length - 1].eventDate),
+        lineCount: yearlyLines.length,
+        expectedLineCount: EXPECTED_LINES_BY_TIMEFRAME.yearly,
+      };
     }
+
+    const availableTimeframes = Object.values(coverage).filter(
+      (entry) => entry.available,
+    ).length;
+    const totalTimeframes = Object.keys(coverage).length;
+    const expectedLineCount = Object.values(EXPECTED_LINES_BY_TIMEFRAME).reduce(
+      (acc, count) => acc + count,
+      0,
+    );
+    const status: PivotCoverageState =
+      lines.length === 0
+        ? "empty"
+        : availableTimeframes === totalTimeframes
+          ? "full"
+          : "partial";
 
     return NextResponse.json({
       pivots: lines,
-      computed: new Date().toISOString(),
+      computed: computedAt,
+      meta: {
+        status,
+        source: "mktFuturesMes1d",
+        availableTimeframes,
+        totalTimeframes,
+        lineCount: lines.length,
+        expectedLineCount,
+        timeframes: coverage,
+        updatedAt: computedAt,
+      },
     });
   } catch (err) {
     console.error("[pivots/mes] Error:", err);
     return NextResponse.json(
-      { error: "Failed to compute pivots" },
+      {
+        error: "Failed to compute pivots",
+        meta: {
+          status: "runtime-failure",
+          source: "mktFuturesMes1d",
+          updatedAt: new Date().toISOString(),
+        },
+      },
       { status: 500 },
     );
   }
+}
+
+function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
 }

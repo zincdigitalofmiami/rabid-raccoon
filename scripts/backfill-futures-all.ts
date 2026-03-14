@@ -14,6 +14,7 @@
 import { Prisma } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
+import { resolveDirectDatabaseUrl } from '../src/lib/server-env'
 import { loadDotEnvFiles } from './ingest-utils'
 
 loadDotEnvFiles()
@@ -194,7 +195,11 @@ async function backfillSymbolHourly(symbol: string, records: RawRecord[]): Promi
 
 async function main() {
   if (!process.env.DATABENTO_API_KEY) throw new Error('DATABENTO_API_KEY required')
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required')
+  if (!resolveDirectDatabaseUrl()) {
+    throw new Error(
+      'Set DIRECT_URL or LOCAL_DATABASE_URL for backfill-futures-all; DATABASE_URL/Accelerate fallback is not allowed for this path',
+    )
+  }
 
   const { symbols, schemas, start } = parseArgs()
   const endDate = new Date().toISOString().slice(0, 10)

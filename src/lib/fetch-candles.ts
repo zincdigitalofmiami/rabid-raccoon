@@ -1,15 +1,21 @@
 import { prisma } from './prisma'
+import { hasRuntimeDatabaseUrl } from './server-env'
 import { SYMBOLS } from './symbols'
 import { CandleData } from './types'
 import { toNum } from './decimal'
 
-type DbState = 'disabled' | 'probing' | 'enabled' | 'failed'
+type DbState = 'disabled' | 'probing' | 'enabled'
 
-let dbState: DbState = process.env.DATABASE_URL ? 'probing' : 'disabled'
+let dbState: DbState = hasRuntimeDatabaseUrl() ? 'probing' : 'disabled'
 let dbProbePromise: Promise<boolean> | null = null
 
 async function canUseDatabase(): Promise<boolean> {
-  if (dbState === 'disabled' || dbState === 'failed') return false
+  if (!hasRuntimeDatabaseUrl()) {
+    dbState = 'disabled'
+    return false
+  }
+
+  if (dbState === 'disabled') dbState = 'probing'
   if (dbState === 'enabled') return true
 
   if (!dbProbePromise) {
@@ -19,7 +25,8 @@ async function canUseDatabase(): Promise<boolean> {
         dbState = 'enabled'
         return true
       } catch {
-        dbState = 'failed'
+        // Keep probing mode so transient DB outages can recover in-process.
+        dbState = 'probing'
         return false
       } finally {
         dbProbePromise = null
@@ -179,7 +186,7 @@ async function fetchCandlesFromDb(symbol: string, startIso: string, endIso: stri
       }
     )
   } catch {
-    dbState = 'failed'
+    dbState = 'probing'
     return null
   }
 }
@@ -238,7 +245,7 @@ async function fetchMacroFromDb(indicator: string, startIso: string, endIso: str
 
     return null
   } catch {
-    dbState = 'failed'
+    dbState = 'probing'
     return null
   }
 }

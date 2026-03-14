@@ -1,5 +1,10 @@
 import { toNum } from '@/lib/decimal'
-import { readLatestMes1mRows } from '@/lib/mes-live-queries'
+import {
+  MES_1M_OWNER_PATH,
+  readLatestMes1mRows,
+  readMes1mFreshnessSnapshot,
+  type Mes1mFreshnessSnapshot,
+} from '@/lib/mes-live-queries'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -34,6 +39,54 @@ interface Mes1mRow {
 
 const JSON_HEADERS = {
   'Cache-Control': 'no-store, max-age=0',
+}
+const SOURCE_TABLE = MES_1M_OWNER_PATH.sourceTable
+const STALE_AFTER_SECONDS = 20 * 60
+
+type RouteMode = 'poll' | 'snapshot'
+type Mes1mOwnerMode = 'inngest' | 'worker'
+type OwnerLagState = 'on-time' | 'lagging' | 'no-recent-rows' | 'market-closed' | 'unknown'
+type FreshnessAttribution =
+  | 'owner-path-healthy'
+  | 'owner-path-freshness-lag'
+  | 'no-recent-1m-rows'
+  | 'reader-path-runtime-failure'
+  | 'market-closed'
+  | 'owner-path-telemetry-unavailable'
+
+interface LiveMesOwnerPathMeta {
+  writerFunctionId: string
+  writerFunctionFile: string
+  writerPath: string
+  ownerMode: Mes1mOwnerMode
+  upstreamProvider: string
+  sourceTable: string
+  expectedCadenceSeconds: number
+  lagAlertSeconds: number
+  marketOpen: boolean
+  latest1mRowTime: string | null
+  latest1mRowAgeSeconds: number | null
+  rowsLast5m: number | null
+  rowsLast15m: number | null
+  rowsLast60m: number | null
+  freshnessLagSeconds: number | null
+  lagState: OwnerLagState
+  telemetryAvailable: boolean
+}
+
+interface LiveMesMeta {
+  status: 'fresh' | 'stale' | 'empty-source' | 'runtime-failure'
+  attribution: FreshnessAttribution
+  mode: RouteMode
+  source: string
+  requestedBars: number
+  sourceBarCount: number
+  latestBarTime: string | null
+  sourceAgeSeconds: number | null
+  staleAfterSeconds: number
+  isStale: boolean | null
+  ownerPath: LiveMesOwnerPathMeta
+  updatedAt: string
 }
 
 function asPoint(row: MesRow): MesPricePoint {
@@ -205,8 +258,169 @@ async function loadPollRows(pollBars: number): Promise<MesRow[]> {
     .filter((r) => !isWeekendBar(r.eventTime))
 }
 
+function sourceAgeSeconds(latest: Date | null): number | null {
+  if (!latest) return null
+  return Math.max(0, Math.floor((Date.now() - latest.getTime()) / 1000))
+}
+
+function getMes1mOwnerMode(): Mes1mOwnerMode {
+  const raw = (process.env.MES_1M_OWNER || process.env.MES_HIGHER_TF_OWNER || 'inngest')
+    .trim()
+    .toLowerCase()
+  return raw === 'worker' ? 'worker' : 'inngest'
+}
+
+function isMesMarketOpen(date: Date): boolean {
+  const day = date.getUTCDay()
+  const hour = date.getUTCHours()
+  if (day === 6) return false
+  if (day === 0) return hour >= 22
+  if (day === 5) return hour < 22
+  return true
+}
+
+function buildOwnerPathMeta(snapshot: Mes1mFreshnessSnapshot | null): LiveMesOwnerPathMeta {
+  const marketOpen = isMesMarketOpen(new Date())
+  const latest = snapshot?.latestEventTime ?? null
+  const latestAge = sourceAgeSeconds(latest)
+  const telemetryAvailable = snapshot !== null
+  let lagState: OwnerLagState = 'unknown'
+
+  if (telemetryAvailable) {
+    if (!marketOpen) {
+      lagState = 'market-closed'
+    } else if (latestAge == null || (snapshot.rowsLast15m ?? 0) === 0) {
+      lagState = 'no-recent-rows'
+    } else if (latestAge > MES_1M_OWNER_PATH.lagAlertSeconds) {
+      lagState = 'lagging'
+    } else {
+      lagState = 'on-time'
+    }
+  }
+
+  return {
+    writerFunctionId: MES_1M_OWNER_PATH.writerFunctionId,
+    writerFunctionFile: MES_1M_OWNER_PATH.writerFunctionFile,
+    writerPath: `${MES_1M_OWNER_PATH.writerFunctionFile}#${MES_1M_OWNER_PATH.writerFunctionId}`,
+    ownerMode: getMes1mOwnerMode(),
+    upstreamProvider: MES_1M_OWNER_PATH.upstreamProvider,
+    sourceTable: MES_1M_OWNER_PATH.sourceTable,
+    expectedCadenceSeconds: MES_1M_OWNER_PATH.expectedCadenceSeconds,
+    lagAlertSeconds: MES_1M_OWNER_PATH.lagAlertSeconds,
+    marketOpen,
+    latest1mRowTime: latest ? latest.toISOString() : null,
+    latest1mRowAgeSeconds: latestAge,
+    rowsLast5m: snapshot?.rowsLast5m ?? null,
+    rowsLast15m: snapshot?.rowsLast15m ?? null,
+    rowsLast60m: snapshot?.rowsLast60m ?? null,
+    freshnessLagSeconds:
+      latestAge == null ? null : Math.max(0, latestAge - MES_1M_OWNER_PATH.expectedCadenceSeconds),
+    lagState,
+    telemetryAvailable,
+  }
+}
+
+function staleAttribution(ownerPath: LiveMesOwnerPathMeta): FreshnessAttribution {
+  if (!ownerPath.telemetryAvailable) return 'owner-path-telemetry-unavailable'
+  if (!ownerPath.marketOpen) return 'market-closed'
+  if (ownerPath.lagState === 'no-recent-rows') return 'no-recent-1m-rows'
+  return 'owner-path-freshness-lag'
+}
+
+function freshAttribution(ownerPath: LiveMesOwnerPathMeta): FreshnessAttribution {
+  if (!ownerPath.telemetryAvailable) return 'owner-path-telemetry-unavailable'
+  if (!ownerPath.marketOpen) return 'market-closed'
+  return 'owner-path-healthy'
+}
+
+function emptySourceAttribution(ownerPath: LiveMesOwnerPathMeta): FreshnessAttribution {
+  if (!ownerPath.telemetryAvailable) return 'owner-path-telemetry-unavailable'
+  if (!ownerPath.marketOpen) return 'market-closed'
+  if (ownerPath.lagState === 'no-recent-rows') return 'no-recent-1m-rows'
+  return 'owner-path-freshness-lag'
+}
+
+function freshMeta(
+  rows: MesRow[],
+  mode: RouteMode,
+  requestedBars: number,
+  ownerPath: LiveMesOwnerPathMeta,
+): LiveMesMeta {
+  const latest = rows[rows.length - 1]?.eventTime ?? null
+  const age = sourceAgeSeconds(latest)
+  const isStale = age !== null ? age > STALE_AFTER_SECONDS : null
+  const stale = isStale === true
+
+  return {
+    status: stale ? 'stale' : 'fresh',
+    attribution: stale ? staleAttribution(ownerPath) : freshAttribution(ownerPath),
+    mode,
+    source: SOURCE_TABLE,
+    requestedBars,
+    sourceBarCount: rows.length,
+    latestBarTime: latest ? latest.toISOString() : null,
+    sourceAgeSeconds: age,
+    staleAfterSeconds: STALE_AFTER_SECONDS,
+    isStale,
+    ownerPath,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function emptySourceMeta(
+  mode: RouteMode,
+  requestedBars: number,
+  ownerPath: LiveMesOwnerPathMeta,
+): LiveMesMeta {
+  return {
+    status: 'empty-source',
+    attribution: emptySourceAttribution(ownerPath),
+    mode,
+    source: SOURCE_TABLE,
+    requestedBars,
+    sourceBarCount: 0,
+    latestBarTime: null,
+    sourceAgeSeconds: null,
+    staleAfterSeconds: STALE_AFTER_SECONDS,
+    isStale: null,
+    ownerPath,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function runtimeFailureMeta(
+  mode: RouteMode,
+  requestedBars: number,
+  ownerPath: LiveMesOwnerPathMeta,
+): LiveMesMeta {
+  return {
+    status: 'runtime-failure',
+    attribution: 'reader-path-runtime-failure',
+    mode,
+    source: SOURCE_TABLE,
+    requestedBars,
+    sourceBarCount: 0,
+    latestBarTime: null,
+    sourceAgeSeconds: null,
+    staleAfterSeconds: STALE_AFTER_SECONDS,
+    isStale: null,
+    ownerPath,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+async function loadOwnerPathMeta(): Promise<LiveMesOwnerPathMeta> {
+  try {
+    const snapshot = await readMes1mFreshnessSnapshot()
+    return buildOwnerPathMeta(snapshot)
+  } catch {
+    return buildOwnerPathMeta(null)
+  }
+}
+
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url)
+  const ownerPathMeta = await loadOwnerPathMeta()
   const backfill = Number(url.searchParams.get('backfill') || '96')
   const pollOnly = url.searchParams.get('poll') === '1'
   const pollBarsRaw = Number(url.searchParams.get('bars') || '12')
@@ -228,8 +442,9 @@ export async function GET(request: Request): Promise<Response> {
           {
             error:
               'No MES 15m data in DB yet. Start ingestion: npm run ingest:mes:live:stream',
+            meta: emptySourceMeta('poll', pollBars, ownerPathMeta),
           },
-          { status: 503 }
+          { status: 503, headers: JSON_HEADERS }
         )
       }
 
@@ -241,11 +456,15 @@ export async function GET(request: Request): Promise<Response> {
         live: true,
         changed,
         fingerprint,
+        meta: freshMeta(pollRows, 'poll', pollBars, ownerPathMeta),
       }, { headers: JSON_HEADERS })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return Response.json(
-        { error: `Failed to load MES 15m poll snapshot: ${message}` },
+        {
+          error: `Failed to load MES 15m poll snapshot: ${message}`,
+          meta: runtimeFailureMeta('poll', pollBars, ownerPathMeta),
+        },
         { status: 500, headers: JSON_HEADERS }
       )
     }
@@ -257,8 +476,9 @@ export async function GET(request: Request): Promise<Response> {
     if (initial.length === 0) {
       return Response.json(
         {
-          error:
-            'No MES 15m data in DB yet. Start ingestion: npm run ingest:mes:live:stream',
+            error:
+              'No MES 15m data in DB yet. Start ingestion: npm run ingest:mes:live:stream',
+          meta: emptySourceMeta('snapshot', backfillCount, ownerPathMeta),
         },
         { status: 503, headers: JSON_HEADERS }
       )
@@ -267,11 +487,15 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({
       points: initial.map(asPoint),
       live: false,
+      meta: freshMeta(initial, 'snapshot', backfillCount, ownerPathMeta),
     }, { headers: JSON_HEADERS })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return Response.json(
-      { error: `Failed to load MES 15m snapshot: ${message}` },
+      {
+        error: `Failed to load MES 15m snapshot: ${message}`,
+        meta: runtimeFailureMeta('snapshot', backfillCount, ownerPathMeta),
+      },
       { status: 500, headers: JSON_HEADERS }
     )
   }

@@ -1,5 +1,6 @@
 import { Prisma, SignalDirection, SignalStatus } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
+import { resolveDirectDatabaseUrl } from '../src/lib/server-env'
 import { detectMeasuredMoves } from '../src/lib/measured-move'
 import { detectSwings } from '../src/lib/swing-detection'
 import { toNum } from '../src/lib/decimal'
@@ -197,7 +198,11 @@ export async function runIngestMeasuredMoveSignals(options?: MmIngestOptions): P
 
   const { daysBack, timeframe, dryRun, symbolsRequested } = resolveMmOptions(options)
 
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!resolveDirectDatabaseUrl()) {
+    throw new Error(
+      'Set DIRECT_URL or LOCAL_DATABASE_URL for mm-signals; DATABASE_URL/Accelerate fallback is not allowed for this path',
+    )
+  }
   if (!Number.isFinite(daysBack) || daysBack <= 0) {
     throw new Error(`Invalid --days-back '${daysBack}'`)
   }

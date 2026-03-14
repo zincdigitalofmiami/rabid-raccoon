@@ -9,6 +9,22 @@ export interface MesPriceRow {
   volume: number;
 }
 
+export const MES_1M_OWNER_PATH = {
+  writerFunctionId: "ingest-mkt-mes-1m",
+  writerFunctionFile: "src/inngest/functions/mkt-mes-1m.ts",
+  upstreamProvider: "databento",
+  sourceTable: "mkt_futures_mes_1m",
+  expectedCadenceSeconds: 60,
+  lagAlertSeconds: 180,
+} as const;
+
+export interface Mes1mFreshnessSnapshot {
+  latestEventTime: Date | null;
+  rowsLast5m: number;
+  rowsLast15m: number;
+  rowsLast60m: number;
+}
+
 const TABLES = {
   mes1m: '"mkt_futures_mes_1m"',
   mes15m: '"mkt_futures_mes_15m"',
@@ -25,6 +41,12 @@ function asNumber(value: unknown): number {
 
 function asDate(value: unknown): Date {
   return value instanceof Date ? value : new Date(String(value));
+}
+
+function asNullableDate(value: unknown): Date | null {
+  if (value == null) return null;
+  const date = asDate(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 async function readLatestMesRows(
@@ -74,4 +96,43 @@ export async function readLatestMes15mRows(
   limit: number,
 ): Promise<MesPriceRow[]> {
   return readLatestMesRows("mes15m", limit);
+}
+
+export async function readMes1mFreshnessSnapshot(): Promise<Mes1mFreshnessSnapshot> {
+  const pool = getDirectPool();
+  const result = await pool.query<{
+    latestEventTime: Date | string | null;
+    rowsLast5m: number | string;
+    rowsLast15m: number | string;
+    rowsLast60m: number | string;
+  }>(
+    `
+      SELECT
+        MAX("eventTime") AS "latestEventTime",
+        COUNT(*) FILTER (
+          WHERE "eventTime" >= NOW() - INTERVAL '5 minutes'
+        )::integer AS "rowsLast5m",
+        COUNT(*) FILTER (
+          WHERE "eventTime" >= NOW() - INTERVAL '15 minutes'
+        )::integer AS "rowsLast15m",
+        COUNT(*) FILTER (
+          WHERE "eventTime" >= NOW() - INTERVAL '60 minutes'
+        )::integer AS "rowsLast60m"
+      FROM ${TABLES.mes1m}
+    `,
+  );
+
+  const row = result.rows[0] ?? {
+    latestEventTime: null,
+    rowsLast5m: 0,
+    rowsLast15m: 0,
+    rowsLast60m: 0,
+  };
+
+  return {
+    latestEventTime: asNullableDate(row.latestEventTime),
+    rowsLast5m: asNumber(row.rowsLast5m),
+    rowsLast15m: asNumber(row.rowsLast15m),
+    rowsLast60m: asNumber(row.rowsLast60m),
+  };
 }

@@ -8,6 +8,14 @@ export const revalidate = 1800;
 const CACHE_HEADERS = {
   "Cache-Control": "public, s-maxage=1800, stale-while-revalidate=3600",
 };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STALE_AFTER_DAYS = 7;
+
+type GprCoverage = {
+  gprd: boolean;
+  gprdAct: boolean;
+  gprdThreat: boolean;
+};
 
 /**
  * GET /api/gpr — Returns latest GPR data with historical context.
@@ -29,6 +37,8 @@ const CACHE_HEADERS = {
  */
 export async function GET() {
   try {
+    const nowIso = new Date().toISOString();
+
     // Latest 2 days of GPRD for current + change
     const latestGprd = await prisma.geopoliticalRisk.findMany({
       where: { indexName: "GPRD" },
@@ -38,8 +48,23 @@ export async function GET() {
 
     if (latestGprd.length === 0) {
       return NextResponse.json(
-        { error: "No GPR data available" },
-        { status: 404 },
+        {
+          error: "No GPR data available",
+          meta: {
+            status: "empty-source",
+            source: "geopoliticalRisk",
+            latestDate: null,
+            sourceAgeDays: null,
+            isStale: null,
+            staleAfterDays: STALE_AFTER_DAYS,
+            indexCoverage: {
+              currentDay: { gprd: false, gprdAct: false, gprdThreat: false },
+              previousDay: null,
+            },
+            updatedAt: nowIso,
+          },
+        },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -130,22 +155,27 @@ export async function GET() {
       }
       return map;
     };
+    const emptyIndexes = { gprd: null, gprdAct: null, gprdThreat: null };
 
     const change1d =
       latestGprd.length >= 2
         ? Number(latestGprd[0].value) - Number(latestGprd[1].value)
         : null;
+    const currentIndexes = toIndexMap(currentDay);
+    const previousIndexes = prevDate ? toIndexMap(prevDay) : null;
+    const sourceAgeDays = ageInDays(currentDate);
+    const isStale = sourceAgeDays > STALE_AFTER_DAYS;
 
     return NextResponse.json(
       {
         current: {
           date: currentDate.toISOString().slice(0, 10),
-          ...toIndexMap(currentDay),
+          ...currentIndexes,
         },
         previous: prevDate
           ? {
               date: prevDate.toISOString().slice(0, 10),
-              ...toIndexMap(prevDay),
+              ...(previousIndexes ?? emptyIndexes),
             }
           : null,
         change1d,
@@ -156,14 +186,36 @@ export async function GET() {
         regime,
         riskCap,
         sparkline: last30.map((v) => round2(v)),
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso,
+        meta: {
+          status: isStale ? "stale" : "fresh",
+          source: "geopoliticalRisk",
+          latestDate: formatDate(currentDate),
+          sourceAgeDays,
+          isStale,
+          staleAfterDays: STALE_AFTER_DAYS,
+          historyWindowDays: 90,
+          historyRows: hist90.length,
+          indexCoverage: {
+            currentDay: toCoverage(currentIndexes),
+            previousDay: previousIndexes ? toCoverage(previousIndexes) : null,
+          },
+          updatedAt: nowIso,
+        },
       },
       { headers: CACHE_HEADERS },
     );
   } catch (error) {
     console.error("[/api/gpr] error:", error);
     return NextResponse.json(
-      { error: "Failed to fetch GPR data" },
+      {
+        error: "Failed to fetch GPR data",
+        meta: {
+          status: "runtime-failure",
+          source: "geopoliticalRisk",
+          updatedAt: new Date().toISOString(),
+        },
+      },
       { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
@@ -171,6 +223,23 @@ export async function GET() {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function formatDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function ageInDays(date: Date): number {
+  const now = Date.now();
+  return Math.max(0, Math.floor((now - date.getTime()) / DAY_MS));
+}
+
+function toCoverage(map: Record<string, number | null>): GprCoverage {
+  return {
+    gprd: map.gprd !== null,
+    gprdAct: map.gprdAct !== null,
+    gprdThreat: map.gprdThreat !== null,
+  };
 }
 
 type GprRegime = "LOW" | "ELEVATED" | "HIGH" | "EXTREME";

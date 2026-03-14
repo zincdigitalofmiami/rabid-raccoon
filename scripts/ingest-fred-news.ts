@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
+import { resolveDirectDatabaseUrl } from '../src/lib/server-env'
 import { isMainModule, loadDotEnvFiles } from './ingest-utils'
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -313,7 +314,11 @@ async function finalizeFredNewsRun(
 
 export async function runIngestFredNews(): Promise<RunStats> {
   loadDotEnvFiles()
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!resolveDirectDatabaseUrl()) {
+    throw new Error(
+      'Set DIRECT_URL or LOCAL_DATABASE_URL for fred-news-rss-sync; DATABASE_URL/Accelerate fallback is not allowed for this path',
+    )
+  }
 
   await upsertRegistry()
 

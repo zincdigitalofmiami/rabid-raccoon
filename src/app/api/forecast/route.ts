@@ -17,6 +17,49 @@ import {
 import { SYMBOLS, SYMBOL_KEYS } from '@/lib/symbols'
 import { MarketSummary, CandleData, FibResult, MeasuredMove } from '@/lib/types'
 
+type ForecastRouteStatus =
+  | 'full-success'
+  | 'data-unavailable'
+  | 'ai-unavailable'
+  | 'runtime-failure'
+
+type ForecastRouteSource =
+  | 'forecast-cache'
+  | 'forecast-pipeline'
+  | 'intraday-market-data'
+  | 'daily-market-context'
+  | 'ai-provider'
+  | 'forecast-route'
+
+interface ForecastRouteMeta {
+  status: ForecastRouteStatus
+  source: ForecastRouteSource
+  reason?: string
+  stage?: string
+  cache: 'HIT' | 'MISS' | 'BYPASS'
+  window: ForecastWindow
+  requestedWindow: ForecastWindow | null
+  forceRefresh: boolean
+  availableSymbols?: number
+  expectedSymbols?: number
+  updatedAt: string
+}
+
+const SUCCESS_CACHE_HEADERS_HIT = {
+  'Cache-Control': 's-maxage=300, stale-while-revalidate=600',
+  'X-Forecast-Cache': 'HIT',
+}
+
+const SUCCESS_CACHE_HEADERS_MISS = {
+  'Cache-Control': 's-maxage=300, stale-while-revalidate=600',
+  'X-Forecast-Cache': 'MISS',
+}
+
+const FAILURE_HEADERS = {
+  'Cache-Control': 'no-store',
+  'X-Forecast-Cache': 'BYPASS',
+}
+
 function aggregateCandles(candles: CandleData[], periodMinutes: number): CandleData[] {
   if (candles.length === 0) return []
   const periodSec = periodMinutes * 60
@@ -41,6 +84,45 @@ function aggregateCandles(candles: CandleData[], periodMinutes: number): CandleD
   return result
 }
 
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+function normalizeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error'
+}
+
+function isAiUnavailableError(message: string): boolean {
+  return message.includes('AI forecast unavailable')
+}
+
+function buildMeta(params: {
+  status: ForecastRouteStatus
+  source: ForecastRouteSource
+  cache: 'HIT' | 'MISS' | 'BYPASS'
+  window: ForecastWindow
+  requestedWindow: ForecastWindow | null
+  forceRefresh: boolean
+  reason?: string
+  stage?: string
+  availableSymbols?: number
+  expectedSymbols?: number
+}): ForecastRouteMeta {
+  return {
+    status: params.status,
+    source: params.source,
+    reason: params.reason,
+    stage: params.stage,
+    cache: params.cache,
+    window: params.window,
+    requestedWindow: params.requestedWindow,
+    forceRefresh: params.forceRefresh,
+    availableSymbols: params.availableSymbols,
+    expectedSymbols: params.expectedSymbols,
+    updatedAt: nowIso(),
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -55,11 +137,18 @@ export async function GET(request: NextRequest) {
     if (!forceRefresh) {
       const cached = getCachedForecast(window)
       if (cached) {
-        return NextResponse.json(cached, {
-          headers: {
-            'Cache-Control': 's-maxage=300, stale-while-revalidate=600',
-            'X-Forecast-Cache': 'HIT',
-          },
+        return NextResponse.json({
+          ...cached,
+          meta: buildMeta({
+            status: 'full-success',
+            source: 'forecast-cache',
+            cache: 'HIT',
+            window,
+            requestedWindow,
+            forceRefresh,
+          }),
+        }, {
+          headers: SUCCESS_CACHE_HEADERS_HIT,
         })
       }
     }
@@ -105,8 +194,22 @@ export async function GET(request: NextRequest) {
 
     if (processedSymbols.length === 0) {
       return NextResponse.json(
-        { error: 'No market data available for forecast generation' },
-        { status: 503 }
+        {
+          error: 'No market data available for forecast generation',
+          meta: buildMeta({
+            status: 'data-unavailable',
+            source: 'intraday-market-data',
+            reason: 'no-symbol-candles-available',
+            stage: 'intraday-context-build',
+            cache: 'BYPASS',
+            window,
+            requestedWindow,
+            forceRefresh,
+            availableSymbols: 0,
+            expectedSymbols: SYMBOL_KEYS.length,
+          }),
+        },
+        { status: 503, headers: FAILURE_HEADERS }
       )
     }
 
@@ -129,8 +232,22 @@ export async function GET(request: NextRequest) {
     }
     if (macroCandlesMap.size === 0) {
       return NextResponse.json(
-        { error: 'No daily market data available for forecast context' },
-        { status: 503 }
+        {
+          error: 'No daily market data available for forecast context',
+          meta: buildMeta({
+            status: 'data-unavailable',
+            source: 'daily-market-context',
+            reason: 'no-daily-context-candles-available',
+            stage: 'daily-context-build',
+            cache: 'BYPASS',
+            window,
+            requestedWindow,
+            forceRefresh,
+            availableSymbols: 0,
+            expectedSymbols: SYMBOL_KEYS.length,
+          }),
+        },
+        { status: 503, headers: FAILURE_HEADERS }
       )
     }
     const priceChanges = new Map<string, number>()
@@ -194,27 +311,86 @@ export async function GET(request: NextRequest) {
     })
 
     // Generate AI forecast
-    const forecast = await generateForecast({
-      symbols: summaries,
-      compositeSignal,
-      window,
-      marketContext,
-    })
+    let forecast: Awaited<ReturnType<typeof generateForecast>>
+    try {
+      forecast = await generateForecast({
+        symbols: summaries,
+        compositeSignal,
+        window,
+        marketContext,
+      })
+    } catch (error) {
+      const message = normalizeErrorMessage(error)
+      const aiUnavailable = isAiUnavailableError(message)
+      return NextResponse.json(
+        {
+          error: aiUnavailable
+            ? message
+            : `Failed to generate forecast: ${message}`,
+          meta: buildMeta({
+            status: aiUnavailable ? 'ai-unavailable' : 'runtime-failure',
+            source: aiUnavailable ? 'ai-provider' : 'forecast-route',
+            reason: aiUnavailable
+              ? 'ai-provider-or-response-unavailable'
+              : 'forecast-generation-threw',
+            stage: 'forecast-generation',
+            cache: 'BYPASS',
+            window,
+            requestedWindow,
+            forceRefresh,
+          }),
+        },
+        { status: 500, headers: FAILURE_HEADERS }
+      )
+    }
 
     // Cache the result
     setCachedForecast(forecast)
 
-    return NextResponse.json(forecast, {
-      headers: {
-        'Cache-Control': 's-maxage=300, stale-while-revalidate=600',
-        'X-Forecast-Cache': 'MISS',
-      },
+    return NextResponse.json({
+      ...forecast,
+      meta: buildMeta({
+        status: 'full-success',
+        source: 'forecast-pipeline',
+        cache: 'MISS',
+        window,
+        requestedWindow,
+        forceRefresh,
+        availableSymbols: processedSymbols.length,
+        expectedSymbols: SYMBOL_KEYS.length,
+      }),
+    }, {
+      headers: SUCCESS_CACHE_HEADERS_MISS,
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error'
+    const message = normalizeErrorMessage(error)
+    const aiUnavailable = isAiUnavailableError(message)
+    const { searchParams } = new URL(request.url)
+    const windowParam = (searchParams.get('window') || '').toLowerCase()
+    const requestedWindow = ['morning', 'premarket', 'midday', 'afterhours'].includes(windowParam)
+      ? (windowParam as ForecastWindow)
+      : null
+    const window = requestedWindow || getCurrentWindow()
+    const forceRefresh = searchParams.get('refresh') === 'true'
     return NextResponse.json(
-      { error: `Failed to generate forecast: ${message}` },
-      { status: 500 }
+      {
+        error: aiUnavailable
+          ? message
+          : `Failed to generate forecast: ${message}`,
+        meta: buildMeta({
+          status: aiUnavailable ? 'ai-unavailable' : 'runtime-failure',
+          source: aiUnavailable ? 'ai-provider' : 'forecast-route',
+          reason: aiUnavailable
+            ? 'ai-provider-or-response-unavailable'
+            : 'unexpected-route-runtime-failure',
+          stage: 'route-handler',
+          cache: 'BYPASS',
+          window,
+          requestedWindow,
+          forceRefresh,
+        }),
+      },
+      { status: 500, headers: FAILURE_HEADERS }
     )
   }
 }

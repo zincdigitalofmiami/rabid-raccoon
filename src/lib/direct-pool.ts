@@ -13,6 +13,7 @@
  */
 
 import pg from "pg";
+import { resolveDirectDatabaseUrl } from "./server-env";
 
 let pool: pg.Pool | null = null;
 
@@ -22,7 +23,7 @@ let pool: pg.Pool | null = null;
  */
 export function getDirectPool(): pg.Pool {
   if (!pool) {
-    const url = process.env.DIRECT_URL || process.env.LOCAL_DATABASE_URL;
+    const url = resolveDirectDatabaseUrl();
     if (!url) {
       throw new Error(
         "DIRECT_URL (or LOCAL_DATABASE_URL) not set — cannot create direct pool",

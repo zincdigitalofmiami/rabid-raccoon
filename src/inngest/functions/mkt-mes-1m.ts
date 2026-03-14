@@ -7,6 +7,7 @@ import {
   refreshMes1dFromDb1m,
 } from '../../lib/mes-refresh'
 import { getDirectPool } from '../../lib/direct-pool'
+import { MES_1M_OWNER_PATH } from '../../lib/mes-live-queries'
 import { isMesMarketOpen } from './mes-market-hours'
 import { getMes1mOwner, shouldSkipMes1mInngest } from './mes-owner'
 
@@ -74,7 +75,10 @@ export const ingestMktMes1m = inngest.createFunction(
 
     const markers = await step.run('read-mes-derived-latest-markers', async () => {
       const pool = getDirectPool()
-      const [latest1hResult, latest4hResult, latest1dResult] = await Promise.all([
+      const [latest1mResult, latest1hResult, latest4hResult, latest1dResult] = await Promise.all([
+        pool.query<{ eventTime: Date | string }>(
+          'SELECT "eventTime" FROM "mkt_futures_mes_1m" ORDER BY "eventTime" DESC LIMIT 1',
+        ),
         pool.query<{ eventTime: Date | string }>(
           'SELECT "eventTime" FROM "mkt_futures_mes_1h" ORDER BY "eventTime" DESC LIMIT 1',
         ),
@@ -93,12 +97,14 @@ export const ingestMktMes1m = inngest.createFunction(
       }
 
       return {
+        latest1mIso: asIso(latest1mResult.rows[0]?.eventTime),
         latest1hIso: asIso(latest1hResult.rows[0]?.eventTime),
         latest4hIso: asIso(latest4hResult.rows[0]?.eventTime),
         latest1dIso: asIso(latest1dResult.rows[0]?.eventDate),
       }
     })
 
+    const latest1m = markers.latest1mIso ? new Date(markers.latest1mIso) : null
     const latest1h = markers.latest1hIso ? new Date(markers.latest1hIso) : null
     const latest4h = markers.latest4hIso ? new Date(markers.latest4hIso) : null
     const latest1d = markers.latest1dIso ? new Date(markers.latest1dIso) : null
@@ -183,6 +189,19 @@ export const ingestMktMes1m = inngest.createFunction(
       )
     }
 
+    const ownerFreshness = {
+      writerFunctionId: MES_1M_OWNER_PATH.writerFunctionId,
+      writerFunctionFile: MES_1M_OWNER_PATH.writerFunctionFile,
+      sourceTable: MES_1M_OWNER_PATH.sourceTable,
+      upstreamProvider: MES_1M_OWNER_PATH.upstreamProvider,
+      expectedCadenceSeconds: MES_1M_OWNER_PATH.expectedCadenceSeconds,
+      lagAlertSeconds: MES_1M_OWNER_PATH.lagAlertSeconds,
+      latest1mRowTime: markers.latest1mIso,
+      latest1mAgeSeconds: latest1m
+        ? Math.max(0, Math.floor((Date.now() - latest1m.getTime()) / 1000))
+        : null,
+    }
+
     return {
       ranAt: now.toISOString(),
       result,
@@ -190,6 +209,7 @@ export const ingestMktMes1m = inngest.createFunction(
       derived1h,
       derived4h,
       derived1d,
+      ownerFreshness,
       owner,
       authoritative: true,
       timeframe: '1m',
