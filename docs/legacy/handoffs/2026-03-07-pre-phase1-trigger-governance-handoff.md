@@ -357,7 +357,7 @@ Use this first in the next chat:
 We are resuming pre-Phase-1 trigger governance work in /Volumes/Satechi Hub/rabid-raccoon.
 
 Read this handoff first:
-/Volumes/Satechi Hub/rabid-raccoon/docs/handoffs/2026-03-07-pre-phase1-trigger-governance-handoff.md
+/Volumes/Satechi Hub/rabid-raccoon/docs/legacy/handoffs/2026-03-07-pre-phase1-trigger-governance-handoff.md
 
 Current state:
 - main is at 01bef05

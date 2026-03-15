@@ -14,7 +14,7 @@ Walk-forward OOF with purge gap = horizon bars.
 All mandatory feature groups (A-F) from the BHG setup dataset.
 
 Inputs:
-  datasets/autogluon/bhg_setups.csv  (built by build-bhg-dataset.ts)
+  datasets/autogluon/warbird_setups.csv  (built by build-bhg-dataset.ts)
 
 Outputs:
   models/fib_scorer/y1272/           (AutoGluon model)
@@ -49,7 +49,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "bhg_setups.csv"
+DATASET_PATH = PROJECT_ROOT / "datasets" / "autogluon" / "warbird_setups.csv"
 MODEL_DIR = PROJECT_ROOT / "models" / "fib_scorer"
 OOF_OUTPUT = PROJECT_ROOT / "datasets" / "autogluon" / "fib_scorer_oof.csv"
 

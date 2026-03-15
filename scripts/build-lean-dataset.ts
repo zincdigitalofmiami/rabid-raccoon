@@ -81,6 +81,12 @@ const FRED_FEATURES: FredSeriesConfig[] = [
     table: "econ_vol_indices_1d",
     frequency: "daily",
   },
+  {
+    seriesId: "VXVCLS",
+    column: "fred_vxv",
+    table: "econ_vol_indices_1d",
+    frequency: "daily",
+  },
 
   // Rates — where the Fed is
   {
@@ -112,6 +118,12 @@ const FRED_FEATURES: FredSeriesConfig[] = [
   {
     seriesId: "DGS2",
     column: "fred_y2y",
+    table: "econ_yields_1d",
+    frequency: "daily",
+  },
+  {
+    seriesId: "DGS5",
+    column: "fred_y5y",
     table: "econ_yields_1d",
     frequency: "daily",
   },
@@ -281,6 +293,12 @@ const FRED_FEATURES: FredSeriesConfig[] = [
 
   // Real yields — TIPS 10Y for proper real rate
   {
+    seriesId: "DFII5",
+    column: "fred_tips5y",
+    table: "econ_inflation_1d",
+    frequency: "daily",
+  },
+  {
     seriesId: "DFII10",
     column: "fred_tips10y",
     table: "econ_inflation_1d",
@@ -309,16 +327,20 @@ function featureIndex(column: string): number {
 }
 
 const IDX_VIX = featureIndex("fred_vix");
+const IDX_VXV = featureIndex("fred_vxv");
 const _IDX_DFF = featureIndex("fred_dff");
 const IDX_FED_TARGET_LOWER = featureIndex("fred_fed_target_lower");
 const IDX_FED_TARGET_UPPER = featureIndex("fred_fed_target_upper");
 const IDX_Y2Y = featureIndex("fred_y2y");
+const IDX_Y5Y = featureIndex("fred_y5y");
 const IDX_Y10Y = featureIndex("fred_y10y");
+const IDX_Y30Y = featureIndex("fred_y30y");
 const _IDX_DXY = featureIndex("fred_dxy");
 const IDX_IG_OAS = featureIndex("fred_ig_oas");
 const IDX_HY_OAS = featureIndex("fred_hy_oas");
 const IDX_FED_ASSETS = featureIndex("fred_fed_assets");
 const IDX_RRP = featureIndex("fred_rrp");
+const IDX_TIPS5Y = featureIndex("fred_tips5y");
 const IDX_TIPS10Y = featureIndex("fred_tips10y");
 const IDX_BREAKEVEN_5Y = featureIndex("fred_breakeven_5y");
 const IDX_BREAKEVEN_10Y = featureIndex("fred_breakeven_10y");
@@ -360,6 +382,15 @@ const CROSS_ASSET_SYMBOLS: CrossAssetSymbol[] = [
 
 interface MesCandle {
   eventTime: Date;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: bigint | null;
+}
+
+interface MesDailyCandle {
+  eventDate: Date;
   open: number;
   high: number;
   low: number;
@@ -1090,6 +1121,20 @@ interface WatermarkQueryRow {
   maxRowHash?: string | null;
 }
 
+type SetupHistoryTableName = "bhg_setups" | "warbird_setups";
+
+interface SetupHistoryQueryRow {
+  goTime: Date | string | null;
+  tp1Hit: boolean | null;
+  tp2Hit: boolean | null;
+  slHit: boolean | null;
+  maxFavorable: number | string | null;
+  maxAdverse: number | string | null;
+  tp1HitTime: Date | string | null;
+  tp2HitTime: Date | string | null;
+  slHitTime: Date | string | null;
+}
+
 function hasBooleanFlag(name: string): boolean {
   const exact = `--${name}`;
   const truthy = new Set([`--${name}=1`, `--${name}=true`, `--${name}=yes`]);
@@ -1200,6 +1245,7 @@ async function run(): Promise<void> {
   const mesTableSql =
     timeframe === "15m" ? "mkt_futures_mes_15m" : "mkt_futures_mes_1h";
   const crossAssetStart = new Date(start.getTime() - 200 * 60 * 60 * 1000);
+  const dailyContextStart = new Date(start.getTime() - 400 * MS_PER_DAY);
   const newsLookbackMs = 45 * MS_PER_DAY;
   const newsStartDate = new Date(start.getTime() - newsLookbackMs);
   const bhgStartDate = new Date(start.getTime() - 400 * MS_PER_DAY);
@@ -1221,6 +1267,33 @@ async function run(): Promise<void> {
     const rows = await prisma.$queryRawUnsafe<WatermarkQueryRow[]>(sql, ...params);
     return buildSourceWatermark(rows[0], scope);
   };
+
+  const resolveSetupHistoryTable = async (): Promise<SetupHistoryTableName> => {
+    const rows = await prisma.$queryRawUnsafe<Array<{ table_name: string }>>(
+      `
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name IN ('warbird_setups', 'bhg_setups')
+        ORDER BY CASE table_name
+          WHEN 'warbird_setups' THEN 1
+          WHEN 'bhg_setups' THEN 2
+          ELSE 99
+        END
+      `,
+    );
+
+    const tableName = rows[0]?.table_name;
+    if (tableName === "warbird_setups" || tableName === "bhg_setups") {
+      return tableName;
+    }
+
+    throw new Error(
+      'No additive setup-history table found. Expected public.warbird_setups or public.bhg_setups.'
+    );
+  };
+
+  const setupHistoryTable = await resolveSetupHistoryTable();
 
   const sourceWatermarks: Record<string, SourceWatermark> = {};
   sourceWatermarks["mes_candles"] = await runWatermarkQuery(
@@ -1252,6 +1325,21 @@ async function run(): Promise<void> {
       table: "mkt_futures_1h",
       symbols: CROSS_ASSET_SYMBOLS.map((s) => s.code).sort(),
       eventTimeGte: crossAssetStart.toISOString(),
+    },
+  );
+
+  sourceWatermarks["mes_daily_context"] = await runWatermarkQuery(
+    `SELECT COUNT(*)::bigint AS "rowCount",
+            MAX("eventDate") AS "maxDataTime",
+            MAX("ingestedAt") AS "maxIngestedAt",
+            MAX("knowledgeTime") AS "maxKnowledgeTime",
+            MAX("rowHash") AS "maxRowHash"
+     FROM "mkt_futures_mes_1d"
+     WHERE "eventDate" >= $1`,
+    [dailyContextStart],
+    {
+      table: "mkt_futures_mes_1d",
+      eventDateGte: dailyContextStart.toISOString(),
     },
   );
 
@@ -1360,16 +1448,16 @@ async function run(): Promise<void> {
     },
   );
 
-  sourceWatermarks["bhg_setups"] = await runWatermarkQuery(
+  sourceWatermarks[setupHistoryTable] = await runWatermarkQuery(
     `SELECT COUNT(*)::bigint AS "rowCount",
             MAX("goTime") AS "maxDataTime",
             MAX("createdAt") AS "maxIngestedAt",
             MAX("updatedAt") AS "maxUpdatedAt"
-     FROM "bhg_setups"
+     FROM "${setupHistoryTable}"
      WHERE "goTime" >= $1`,
     [bhgStartDate],
     {
-      table: "bhg_setups",
+      table: setupHistoryTable,
       goTimeGte: bhgStartDate.toISOString(),
     },
   );
@@ -1381,8 +1469,10 @@ async function run(): Promise<void> {
     startIso: start.toISOString(),
     calendarLoadStartIso: calendarLoadStart.toISOString(),
     crossAssetStartIso: crossAssetStart.toISOString(),
+    dailyContextStartIso: dailyContextStart.toISOString(),
     newsStartDateIso: newsStartDate.toISOString(),
     bhgStartDateIso: bhgStartDate.toISOString(),
+    setupHistoryTable,
     fredFeatures: FRED_FEATURES,
     eventSignalConfigs: EVENT_SIGNAL_CONFIGS,
     crossAssetSymbols: CROSS_ASSET_SYMBOLS,
@@ -1469,6 +1559,32 @@ async function run(): Promise<void> {
     );
   }
   console.log(`[lean-dataset] MES ${timeframe} candles: ${candles.length}`);
+
+  // ── 1a. Load MES daily candles for daily-context features ──
+  console.log(
+    "[lean-dataset] Loading MES daily candles for daily-context features...",
+  );
+  const dailyRows = await prisma.mktFuturesMes1d.findMany({
+    where: { eventDate: { gte: dailyContextStart, lt: now } },
+    orderBy: { eventDate: "asc" },
+    select: {
+      eventDate: true,
+      open: true,
+      high: true,
+      low: true,
+      close: true,
+      volume: true,
+    },
+  });
+  const dailyCandles: MesDailyCandle[] = dailyRows.map((row) => ({
+    eventDate: row.eventDate,
+    open: toNum(row.open),
+    high: toNum(row.high),
+    low: toNum(row.low),
+    close: toNum(row.close),
+    volume: row.volume,
+  }));
+  console.log(`[lean-dataset] MES daily candles: ${dailyCandles.length}`);
 
   // ── 1b. Load cross-asset hourly candles from mkt_futures_1h ──
   // Only meaningful for 1h timeframe; for 15m we still align on the hourly bars.
@@ -1785,25 +1901,28 @@ async function run(): Promise<void> {
   );
   console.log(`  Combined news:   ${newsTotalVolumeByDate.size} unique dates`);
 
-  // ── 5. Load BHG setup timestamps for rolling setup-count features ──
+  // ── 5. Load setup timestamps for rolling setup-count features ──
   console.log(
-    "[lean-dataset] Loading bhg_setups for rolling setup-count features...",
+    `[lean-dataset] Loading ${setupHistoryTable} for rolling setup-count features...`,
   );
-  const bhgRows = await prisma.bhgSetup.findMany({
-    where: { goTime: { gte: new Date(start.getTime() - 400 * MS_PER_DAY) } },
-    select: {
-      goTime: true,
-      tp1Hit: true,
-      tp2Hit: true,
-      slHit: true,
-      maxFavorable: true,
-      maxAdverse: true,
-      tp1HitTime: true,
-      tp2HitTime: true,
-      slHitTime: true,
-    },
-    orderBy: { goTime: "asc" },
-  });
+  const bhgRows = await prisma.$queryRawUnsafe<SetupHistoryQueryRow[]>(
+    `
+      SELECT
+        "goTime",
+        "tp1Hit",
+        "tp2Hit",
+        "slHit",
+        "maxFavorable",
+        "maxAdverse",
+        "tp1HitTime",
+        "tp2HitTime",
+        "slHitTime"
+      FROM "${setupHistoryTable}"
+      WHERE "goTime" >= $1
+      ORDER BY "goTime" ASC
+    `,
+    new Date(start.getTime() - 400 * MS_PER_DAY),
+  );
 
   const bhgAllGoTimesMs: number[] = [];
   interface BhgOutcomeRow {
@@ -1817,23 +1936,27 @@ async function run(): Promise<void> {
   }
   const bhgOutcomeRows: BhgOutcomeRow[] = [];
   for (const row of bhgRows) {
-    if (!row.goTime) continue;
-    bhgAllGoTimesMs.push(row.goTime.getTime());
-    const endTime = row.tp1HitTime ?? row.tp2HitTime ?? row.slHitTime;
+    const goTime = row.goTime ? new Date(row.goTime) : null;
+    if (!goTime || Number.isNaN(goTime.getTime())) continue;
+    bhgAllGoTimesMs.push(goTime.getTime());
+    const tp1HitTime = row.tp1HitTime ? new Date(row.tp1HitTime) : null;
+    const tp2HitTime = row.tp2HitTime ? new Date(row.tp2HitTime) : null;
+    const slHitTime = row.slHitTime ? new Date(row.slHitTime) : null;
+    const endTime = tp1HitTime ?? tp2HitTime ?? slHitTime;
     bhgOutcomeRows.push({
-      goTimeMs: row.goTime.getTime(),
+      goTimeMs: goTime.getTime(),
       tp1Hit: row.tp1Hit,
       tp2Hit: row.tp2Hit,
       slHit: row.slHit,
-      maxFavorable: row.maxFavorable ? Number(row.maxFavorable) : null,
-      maxAdverse: row.maxAdverse ? Number(row.maxAdverse) : null,
+      maxFavorable: row.maxFavorable != null ? Number(row.maxFavorable) : null,
+      maxAdverse: row.maxAdverse != null ? Number(row.maxAdverse) : null,
       durationMinutes:
-        endTime && row.goTime
-          ? (endTime.getTime() - row.goTime.getTime()) / 60_000
+        endTime
+          ? (endTime.getTime() - goTime.getTime()) / 60_000
           : null,
     });
   }
-  console.log(`  BHG setups: ${bhgRows.length} total (${bhgOutcomeRows.filter((r) => r.tp1Hit !== null || r.slHit !== null).length} resolved)`);
+  console.log(`  ${setupHistoryTable}: ${bhgRows.length} total (${bhgOutcomeRows.filter((r) => r.tp1Hit !== null || r.slHit !== null).length} resolved)`);
 
   // Helper: compute rolling BHG outcome features for a given window
   function computeBhgOutcomeFeatures(
@@ -1953,6 +2076,46 @@ async function run(): Promise<void> {
   console.log(
     `[lean-dataset] Built ${FRED_FEATURES.length} FRED arrays for velocity/stationary features`,
   );
+
+  // ── 6b. Build MES daily-context maps for 200d-shadow features ──
+  const dailyOpenByDate = new Map<string, number>();
+  const ma200ByDate = new Map<string, number | null>();
+  const slope200dMaByDate = new Map<string, number | null>();
+  const avgDailyRange20ByDate = new Map<string, number | null>();
+  let trailingCloseSum = 0;
+  let trailingRangeSum = 0;
+  for (let i = 0; i < dailyCandles.length; i++) {
+    const daily = dailyCandles[i];
+    const dateKey = dateKeyUtc(daily.eventDate);
+    const dailyRange = daily.high - daily.low;
+    dailyOpenByDate.set(dateKey, daily.open);
+    if (i >= 200) {
+      ma200ByDate.set(dateKey, trailingCloseSum / 200);
+    } else {
+      ma200ByDate.set(dateKey, null);
+    }
+    const currentMa200 = ma200ByDate.get(dateKey);
+    const priorSlopeDateKey =
+      i >= 5 ? dateKeyUtc(dailyCandles[i - 5].eventDate) : null;
+    const priorMa200 =
+      priorSlopeDateKey != null ? ma200ByDate.get(priorSlopeDateKey) ?? null : null;
+    slope200dMaByDate.set(
+      dateKey,
+      currentMa200 != null && priorMa200 != null ? currentMa200 - priorMa200 : null,
+    );
+    avgDailyRange20ByDate.set(
+      dateKey,
+      i >= 20 ? trailingRangeSum / 20 : null,
+    );
+    trailingCloseSum += daily.close;
+    trailingRangeSum += dailyRange;
+    if (i >= 200) {
+      trailingCloseSum -= dailyCandles[i - 200].close;
+    }
+    if (i >= 20) {
+      trailingRangeSum -= dailyCandles[i - 20].high - dailyCandles[i - 20].low;
+    }
+  }
 
   // ── 7. Precompute MES technical indicators ──
   console.log("[lean-dataset] Computing technical indicators...");
@@ -2222,6 +2385,13 @@ async function run(): Promise<void> {
     "is_us_session",
     "is_asia_session",
     "is_europe_session",
+    // Daily 200d shadow context (6) — current price vs trailing 200-session MA
+    "price_vs_200d_ma",
+    "distance_from_200d_ma_pct",
+    "slope_200d_ma",
+    "sessions_above_below_200d",
+    "daily_ret",
+    "daily_range_vs_avg",
     // MES technicals (19) — NO raw price levels (ma8/24/120 removed, dist_ma stays)
     "mes_ret_1h",
     "mes_ret_4h",
@@ -2260,11 +2430,17 @@ async function run(): Promise<void> {
     "vol_regime", // std24 / std120 — short vs long-term vol
     "vol_of_vol", // rolling std of std24 — volatility of volatility
     // FRED stationary (NO raw levels — all changes, diffs, ratios, z-scores)
-    // Macro context — cross-sectional spreads (5)
+    // Macro context — cross-sectional spreads and aliases (11)
     "yield_curve_slope",
+    "yield_curve_2s10s",
+    "yield_curve_10s30s",
     "credit_spread_diff",
+    "credit_spread_hy_ig",
+    "real_rate_5y",
     "real_rate_10y",
+    "vix_term_structure",
     "fed_liquidity",
+    "fed_liquidity_proxy",
     "breakeven_10y_minus_5y",
     // Macro context — levels that are mean-reverting / bounded (2)
     "fed_midpoint", // fed funds target midpoint (bounded by policy)
@@ -2280,13 +2456,14 @@ async function run(): Promise<void> {
     "tips10y_1d_change", // TIPS 10Y change
     "breakeven_5y_1d_change",
     "breakeven_10y_1d_change",
-    // Macro velocity — 5d momentum (6)
+    // Macro velocity — 5d momentum (7)
     "dgs10_velocity_5d",
     "dollar_momentum_5d",
     "hy_spread_momentum_5d",
     "eurusd_momentum_5d",
     "jpyusd_momentum_5d",
     "wti_momentum_5d",
+    "oil_momentum_5d",
     // Macro regime — percentiles (2)
     "vix_percentile_20d",
     "claims_percentile_20d",
@@ -2332,13 +2509,14 @@ async function run(): Promise<void> {
     "epu_fiscal_minus_overall",
     "emv_macro_minus_overall",
     "epu_overall_percentile_6m",
-    // Calendar + event timing (6)
+    // Calendar + event timing (7)
     "is_fomc_day",
     "is_high_impact_day",
     "is_cpi_day",
     "is_nfp_day",
     "events_this_week_count",
     "hours_to_next_high_impact",
+    "hours_since_last_high_impact",
     // Release signal proxies (7) — z-scored release deltas from econ_calendar actuals
     "nfp_release_z",
     "cpi_release_z",
@@ -2401,6 +2579,11 @@ async function run(): Promise<void> {
 
   const rows: string[][] = [];
   let nextHighImpactIdx = 0;
+  let currentIntradayDateKey = "";
+  let intradayDayHigh = Number.NEGATIVE_INFINITY;
+  let intradayDayLow = Number.POSITIVE_INFINITY;
+  let sessionsAboveBelow200d = 0;
+  let priorPriceVs200dMa: number | null = null;
   const eventSignalWeights = EVENT_SIGNAL_CONFIGS.map(
     (config) => config.weight,
   );
@@ -2432,6 +2615,38 @@ async function run(): Promise<void> {
     const isUsSession = hourUtc >= 13 && hourUtc < 21 ? 1 : 0;
     const isAsiaSession = hourUtc >= 0 && hourUtc < 7 ? 1 : 0;
     const isEuropeSession = hourUtc >= 7 && hourUtc < 13 ? 1 : 0;
+    const dateKey = dateKeyUtc(ts);
+    if (dateKey !== currentIntradayDateKey) {
+      currentIntradayDateKey = dateKey;
+      intradayDayHigh = c.high;
+      intradayDayLow = c.low;
+    } else {
+      intradayDayHigh = Math.max(intradayDayHigh, c.high);
+      intradayDayLow = Math.min(intradayDayLow, c.low);
+    }
+    const ma200 = ma200ByDate.get(dateKey) ?? null;
+    const slope200dMa = slope200dMaByDate.get(dateKey) ?? null;
+    const avgDailyRange20 = avgDailyRange20ByDate.get(dateKey) ?? null;
+    const dailyOpen = dailyOpenByDate.get(dateKey) ?? null;
+    const priceVs200dMa =
+      ma200 != null ? (close > ma200 ? 1 : 0) : null;
+    const distanceFrom200dMaPct =
+      ma200 != null && ma200 !== 0 ? (close - ma200) / Math.abs(ma200) : null;
+    if (priceVs200dMa == null) {
+      sessionsAboveBelow200d = 0;
+      priorPriceVs200dMa = null;
+    } else if (priorPriceVs200dMa === priceVs200dMa) {
+      sessionsAboveBelow200d += 1;
+    } else {
+      sessionsAboveBelow200d = 1;
+      priorPriceVs200dMa = priceVs200dMa;
+    }
+    const dailyRet =
+      dailyOpen != null ? pctChange(close, dailyOpen) : null;
+    const dailyRangeVsAvg =
+      avgDailyRange20 != null && avgDailyRange20 > 0
+        ? (intradayDayHigh - intradayDayLow) / avgDailyRange20
+        : null;
 
     // MES technicals
     const ret1h = i >= 1 ? pctChange(close, candles[i - 1].close) : null;
@@ -2520,10 +2735,14 @@ async function run(): Promise<void> {
 
     // Derived — macro context
     const y2y = fredValues[IDX_Y2Y];
+    const y5y = fredValues[IDX_Y5Y];
     const y10y = fredValues[IDX_Y10Y];
+    const y30y = fredValues[IDX_Y30Y];
     const igOas = fredValues[IDX_IG_OAS];
     const hyOas = fredValues[IDX_HY_OAS];
     const vix = fredValues[IDX_VIX];
+    const vxv = fredValues[IDX_VXV];
+    const tips5y = fredValues[IDX_TIPS5Y];
     const tips10y = fredValues[IDX_TIPS10Y];
     const fedAssets = fredValues[IDX_FED_ASSETS];
     const rrp = fredValues[IDX_RRP];
@@ -2541,12 +2760,20 @@ async function run(): Promise<void> {
     const emvMacro = fredValues[IDX_EMV_MACRO];
 
     const yieldCurveSlope = y10y != null && y2y != null ? y10y - y2y : null;
+    const yieldCurve2s10s = yieldCurveSlope;
+    const yieldCurve10s30s =
+      y30y != null && y10y != null ? y30y - y10y : null;
     const creditSpreadDiff =
       hyOas != null && igOas != null ? hyOas - igOas : null;
+    const creditSpreadHyIg = creditSpreadDiff;
+    const realRate5y = y5y != null && tips5y != null ? y5y - tips5y : null;
     // Real rate 10y: nominal 10Y minus TIPS 10Y
     const realRate10y = y10y != null && tips10y != null ? y10y - tips10y : null;
+    const vixTermStructure =
+      vxv != null && vix != null && vix > 0 ? vxv / vix : null;
     const fedLiquidity =
       fedAssets != null && rrp != null ? fedAssets - rrp * 1000 : null;
+    const fedLiquidityProxy = fedLiquidity;
     const breakeven10yMinus5y =
       breakeven10y != null && breakeven5y != null
         ? breakeven10y - breakeven5y
@@ -2575,6 +2802,7 @@ async function run(): Promise<void> {
     const eurusdMomentum5d = pctDeltaBack(eurusdArr, i, velocityLookback);
     const jpyusdMomentum5d = pctDeltaBack(jpyusdArr, i, velocityLookback);
     const wtiMomentum5d = pctDeltaBack(wtiArr, i, velocityLookback);
+    const oilMomentum5d = wtiMomentum5d;
     // Percentiles (regime context)
     const vixPercentile20d = rollingPercentile(vixArr, i, 20 * barsPerDay);
     const claimsPercentile20d = rollingPercentile(
@@ -2678,6 +2906,11 @@ async function run(): Promise<void> {
         ? (highImpactReleaseTimesMs[nextHighImpactIdx] - tsMs) /
           (60 * 60 * 1000)
         : null;
+    const hoursSinceLastHighImpact =
+      nextHighImpactIdx > 0
+        ? (tsMs - highImpactReleaseTimesMs[nextHighImpactIdx - 1]) /
+          (60 * 60 * 1000)
+        : null;
 
     // Release signal proxies (z-scored release deltas from econ_calendar actuals)
     const releaseSignalValues = EVENT_SIGNAL_CONFIGS.map((config) => {
@@ -2769,6 +3002,13 @@ async function run(): Promise<void> {
       isUsSession,
       isAsiaSession,
       isEuropeSession,
+      // Daily 200d shadow context (6)
+      priceVs200dMa,
+      distanceFrom200dMaPct,
+      slope200dMa,
+      priceVs200dMa != null ? sessionsAboveBelow200d : null,
+      dailyRet,
+      dailyRangeVsAvg,
       // MES technicals (19) — no raw price levels
       ret1h,
       ret4h,
@@ -2806,11 +3046,17 @@ async function run(): Promise<void> {
       volAccel,
       volRegime,
       volOfVolVal,
-      // FRED stationary — macro context (5)
+      // FRED stationary — macro context (11)
       yieldCurveSlope,
+      yieldCurve2s10s,
+      yieldCurve10s30s,
       creditSpreadDiff,
+      creditSpreadHyIg,
+      realRate5y,
       realRate10y,
+      vixTermStructure,
       fedLiquidity,
+      fedLiquidityProxy,
       breakeven10yMinus5y,
       // FRED stationary — bounded levels (2)
       fedMidpoint,
@@ -2826,13 +3072,14 @@ async function run(): Promise<void> {
       tips10y1dChange,
       breakeven5y1dChange,
       breakeven10y1dChange,
-      // FRED stationary — 5d momentum (6)
+      // FRED stationary — 5d momentum (7)
       dgs10Velocity5d,
       dollarMomentum5d,
       hySpreadMomentum5d,
       eurusdMomentum5d,
       jpyusdMomentum5d,
       wtiMomentum5d,
+      oilMomentum5d,
       // FRED stationary — regime percentiles (2)
       vixPercentile20d,
       claimsPercentile20d,
@@ -2878,13 +3125,14 @@ async function run(): Promise<void> {
       epuFiscalMinusOverall,
       emvMacroMinusOverall,
       epuOverallPercentile6m,
-      // Calendar + event timing (6)
+      // Calendar + event timing (7)
       isFomcDay,
       isHighImpactDay,
       isCpiDay,
       isNfpDay,
       eventsThisWeekCount,
       hoursToNextHighImpact,
+      hoursSinceLastHighImpact,
       // Release signal proxies (7)
       nfpReleaseZ,
       cpiReleaseZ,

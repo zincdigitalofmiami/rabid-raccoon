@@ -2,7 +2,7 @@
 
 Rabid Raccoon is a MES futures trading intelligence platform. It combines production ingestion and trigger execution in a Next.js/Inngest cloud runtime with local training, backtesting, dataset building, and research workflows.
 
-If you are an AI agent, read [AGENTS.md](AGENTS.md) first. System design lives in [ARCHITECTURE.md](ARCHITECTURE.md). Coding standards live in [CONVENTIONS.md](CONVENTIONS.md).
+If you are an AI agent, read [AGENTS.md](AGENTS.md) first. System/runtime design references live in [docs/plans/2026-03-14-warbird-canonical-teardown-spec.md](docs/plans/2026-03-14-warbird-canonical-teardown-spec.md) and [docs/plans/2026-03-09-runtime-data-flow-audit.md](docs/plans/2026-03-09-runtime-data-flow-audit.md). Coding standards live in [CONVENTIONS.md](CONVENTIONS.md).
 
 ## Current Operating Model
 
@@ -55,7 +55,8 @@ npm run build
 ## Documentation Map
 
 - [AGENTS.md](AGENTS.md): agent governance and workflow rules
-- [ARCHITECTURE.md](ARCHITECTURE.md): system and runtime boundaries
+- [docs/plans/2026-03-14-warbird-canonical-teardown-spec.md](docs/plans/2026-03-14-warbird-canonical-teardown-spec.md): canonical Warbird architecture and teardown target
+- [docs/plans/2026-03-09-runtime-data-flow-audit.md](docs/plans/2026-03-09-runtime-data-flow-audit.md): verified runtime/data-flow baseline and ingress topology
 - [CONVENTIONS.md](CONVENTIONS.md): coding standards
-- [docs/handoffs/2026-03-08-pre-phase1-trigger-governance-approval.md](docs/handoffs/2026-03-08-pre-phase1-trigger-governance-approval.md): current governance checkpoint
-- [docs/handoffs/2026-03-08-fresh-session-prisma-ops-handoff.md](docs/handoffs/2026-03-08-fresh-session-prisma-ops-handoff.md): historical parked sidetrack, not active baseline
+- [docs/plans/2026-03-13-warbird-master-tasklist.md](docs/plans/2026-03-13-warbird-master-tasklist.md): live Warbird execution surface
+- [docs/legacy/README.md](docs/legacy/README.md): archived historical docs and superseded plans

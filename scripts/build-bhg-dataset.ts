@@ -789,7 +789,7 @@ async function main() {
   loadDotEnvFiles()
 
   const daysBack = parseInt(parseArg('days-back', '730'), 10)
-  const outPath = safeOutputPath(parseArg('out', 'datasets/autogluon/bhg_setups.csv'), path.resolve(__dirname, '..'))
+  const outPath = safeOutputPath(parseArg('out', 'datasets/autogluon/warbird_setups.csv'), path.resolve(__dirname, '..'))
   const shouldPersist = parseArg('persist', 'true').toLowerCase() !== 'false'
 
   console.log(`Building BHG setup dataset (last ${daysBack} days)`)

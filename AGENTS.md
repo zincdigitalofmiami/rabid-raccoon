@@ -277,8 +277,12 @@ Options market data is pulled via the **Databento Python SDK** (`databento` pack
 ```
 rabid-raccoon/
 ├── AGENTS.md                    ← You are here. The only agent instruction file.
-├── ARCHITECTURE.md              ← System design, data flow, domain boundaries
 ├── CONVENTIONS.md               ← Detailed coding standards and patterns
+├── docs/                        ← Active specs/audits + legacy archive index
+│   ├── plans/
+│   │   ├── 2026-03-14-warbird-canonical-teardown-spec.md ← Canonical Warbird target-state spec
+│   │   └── 2026-03-09-runtime-data-flow-audit.md          ← Verified runtime/data-flow baseline
+│   └── legacy/README.md         ← Archived/superseded docs index
 ├── prisma/
 │   ├── schema.prisma            ← Source of truth for data model
 │   └── migrations/              ← Ordered, documented migrations
@@ -368,16 +372,33 @@ These are Kirk's decisions. They override any conflicting information in plan fi
 
 ### Architecture
 
-- **ONE unified MES model** — NOT separate models per symbol. MES is the ONLY prediction target.
-- All other symbols (63 in the DB, 39 active) are **features** — same as FRED, news, GPR, Trump data. They are inputs, not targets.
-- One flat dataset per horizon/target. One row per timestamp. All data sources as columns.
+- **Canonical reference**: [docs/plans/2026-03-14-warbird-canonical-teardown-spec.md](docs/plans/2026-03-14-warbird-canonical-teardown-spec.md)
+- **Warbird v1 = ONE model family** — the 1H core forecaster. This is NOT the legacy 12-model multi-horizon architecture.
+- The Warbird v1 model family contains **6 target-specific predictors** trained on the same canonical 1H dataset:
+  - `price_1h`
+  - `price_4h`
+  - `mae_1h`
+  - `mae_4h`
+  - `mfe_1h`
+  - `mfe_4h`
+- MES is the ONLY prediction target. Other symbols, macro series, news, GPR, TrumpEffect, calendar, and volatility inputs are features.
+- 15M ML model and setup-outcome scorer are **deferred** beyond Warbird v1.
 
 ### Dataset
 
-- **EVERYTHING in the database goes into the dataset.** All 63 symbols, all 10 econ tables, all FRED series, all news/GPR/Trump, calendar, options — no pre-filtering.
-- Feature count will be 400-600+ columns. The IC ranking + cluster dedup (top 30 per fold) handles pruning.
-- Feature priority: macro baselines (yields, rates, gold, credit, VIX) are mandatory for regime context. Reaction features (news shocks, vol spikes, policy actions, cross-asset velocity) provide the intraday edge.
+- The canonical Warbird v1 training dataset is the **1H core forecaster dataset** built from `build-lean-dataset.ts`.
+- Training window is **2 full years** of 1H MES rows, with regime-anchored features from **January 20, 2025** layered onto that full-history base.
+- Feature surface is broad and reconciled through the canonical spec: technicals, daily shadow, 4H context, cross-asset, macro, news, calendar, GPR, TrumpEffect, GARCH, and trade-feedback features.
+- Train-serve skew is forbidden: if a feature is used at inference time, it must either exist in the training dataset or be explicitly classified as a post-model rule-based adjustment.
 - Cross-asset symbols are features for their **intraday reactions**, not long-term trends. How NQ/CL/ZN/GC move in the same hour tells the model what regime MES is in.
+
+### Feature Boundaries
+
+- **Pre-entry features** are only what is knowable when the 15M trigger fires. These are valid inputs to trigger detection and the 1H core forecaster.
+- Valid pre-entry volume features include `vol_ratio`, `vol_relative_to_session`, and `vol_expansion_trigger`.
+- **Post-entry features** must not enter the v1 core-forecaster training dataset. This includes `micropullback_vol_pattern`, `vol_profile_at_tp1`, `vol_trend_post_trigger`, and pullback-depth-vs-expected-MAE logic.
+- In Warbird v1, those post-entry sequence features belong to the **rule-based trade-management / panic-guard layer**.
+- In Warbird v2, those post-entry features may feed a dedicated runner / trade-management model.
 
 ### AutoGluon Settings
 
@@ -385,9 +406,9 @@ These are Kirk's decisions. They override any conflicting information in plan fi
 AG_SETTINGS = {
     'presets': 'best_quality',
     'num_bag_folds': 5,                    # MAX 5 — not 8
-    'num_stack_levels': 2,
+    'num_stack_levels': 1,
     'dynamic_stacking': 'auto',
-    'excluded_model_types': [],            # ALL model types included
+    'excluded_model_types': ['KNN', 'FASTAI', 'RF'],
     'ag_args_fit': {
         'num_early_stopping_rounds': 50,
         'ag.max_memory_usage_ratio': 0.8,
@@ -403,16 +424,24 @@ AG_SETTINGS = {
 - **Machine**: Mac Mini M4 Pro, 24GB RAM, 12 CPU cores
 - **Peak RAM**: 8-10GB (NOT 2-4GB)
 - **Bottleneck**: CPU, NOT RAM
-- **Training sequence**: 1 horizon → 1 target → 1 fold at a time (strictly sequential)
+- **Training sequence**: 1 target → 1 fold at a time (strictly sequential)
 - **Time limits**: 14400s (4h) per fold for price, 7200s (2h) for MAE/MFE
 - **NEVER run Ollama or local AI during training** — M4 Pro reserved for AutoGluon
 
 ### Targets
 
 - **Regression** (price prediction), NOT classification
-- 3 targets: price, MAE (max adverse excursion), MFE (max favorable excursion)
-- 4 horizons: 1h, 4h, 1d, 1w → 12 models total (3 targets × 4 horizons)
-- Targets derived from MES data: `close.shift(-N)` for price, trailing high/low for MAE/MFE
+- Warbird v1 target set is:
+  - `target_price_1h`
+  - `target_price_4h`
+  - `target_mae_1h`
+  - `target_mae_4h`
+  - `target_mfe_1h`
+  - `target_mfe_4h`
+- Price-levels vs returns is resolved as **ablation**:
+  - trainer may compare return-space and price-space target representations on identical folds/features
+  - **inference output remains in price-space regardless**
+- Setup-outcome labels (`tp1_hit`, `tp2_hit`, `runner_qualified`, time-to-target, pullback depth, R-multiple) remain part of the broader Warbird system, but the dedicated setup-outcome ML scorer is deferred beyond v1.
 
 ### Feature Selection (per fold)
 

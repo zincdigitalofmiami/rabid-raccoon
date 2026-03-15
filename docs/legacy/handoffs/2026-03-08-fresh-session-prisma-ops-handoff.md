@@ -20,8 +20,8 @@ Verified at handoff time:
 - `origin/main`: `8c7816a`
 - `8c7816a` commit message: `docs(handoff): checkpoint pre-phase1 trigger governance`
 - `8c7816a` changed files (docs-only):
-  - `docs/handoffs/2026-03-07-pre-phase1-trigger-governance-handoff.md`
-  - `docs/handoffs/2026-03-08-pre-phase1-trigger-governance-approval.md`
+  - `docs/legacy/handoffs/2026-03-07-pre-phase1-trigger-governance-handoff.md`
+  - `docs/legacy/handoffs/2026-03-08-pre-phase1-trigger-governance-approval.md`
 
 Current dirty/untracked working tree:
 - Modified:
@@ -29,7 +29,7 @@ Current dirty/untracked working tree:
   - `src/inngest/functions/compute-signal.ts`
   - `src/lib/trade-features.ts`
 - Untracked:
-  - `docs/handoffs/2026-03-08-fresh-session-prisma-ops-handoff.md` (this handoff file itself)
+  - `docs/legacy/handoffs/2026-03-08-fresh-session-prisma-ops-handoff.md` (this handoff file itself)
   - `docs/volume-feature-contract.md`
   - `src/lib/runtime-volume-features.ts`
   - `src/lib/volume-contract.ts`
@@ -49,7 +49,7 @@ These files are not present in HEAD:
 - `src/lib/volume-contract.ts` (missing)
 
 ### Approval-doc mismatch in HEAD
-`docs/handoffs/2026-03-08-pre-phase1-trigger-governance-approval.md` currently references runtime-volume/volume-contract files and a Node runtime-volume path that are not committed in HEAD.
+`docs/legacy/handoffs/2026-03-08-pre-phase1-trigger-governance-approval.md` currently references runtime-volume/volume-contract files and a Node runtime-volume path that are not committed in HEAD.
 
 ## 4. Local candidate truth
 Local working tree contains candidate (not committed) runtime-volume migration pieces:
@@ -251,9 +251,9 @@ You are working in /Volumes/Satechi Hub/rabid-raccoon.
 
 Read first:
 1) AGENTS.md
-2) docs/handoffs/2026-03-08-fresh-session-prisma-ops-handoff.md
-3) docs/handoffs/2026-03-08-pre-phase1-trigger-governance-approval.md
-4) docs/handoffs/2026-03-07-pre-phase1-trigger-governance-handoff.md
+2) docs/legacy/handoffs/2026-03-08-fresh-session-prisma-ops-handoff.md
+3) docs/legacy/handoffs/2026-03-08-pre-phase1-trigger-governance-approval.md
+4) docs/legacy/handoffs/2026-03-07-pre-phase1-trigger-governance-handoff.md
 
 Hard rules:
 - Do not mix HEAD/main truth with local working-tree candidate truth.

@@ -4,6 +4,7 @@ import { Timeframe } from '@prisma/client'
 import { Decimal } from '@prisma/client/runtime/client'
 import { prisma } from '../src/lib/prisma'
 import { toNum } from '../src/lib/decimal'
+import { hasRuntimeDatabaseUrl } from '../src/lib/server-env'
 import { loadDotEnvFiles, neutralizeFormula, parseArg, safeOutputPath } from './ingest-utils'
 import { dateKeyUtc, laggedWindowKeys, shiftUtcDays } from './feature-availability'
 
@@ -166,8 +167,8 @@ function writeCsv(filePath: string, rows: OutputRow[]): void {
 async function run(): Promise<void> {
   loadDotEnvFiles()
 
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL is required')
+  if (!hasRuntimeDatabaseUrl()) {
+    throw new Error('No database URL configured (set DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL)')
   }
 
   const daysBack = Number(parseArg('days-back', '730'))

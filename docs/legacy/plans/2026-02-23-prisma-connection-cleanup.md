@@ -8,7 +8,7 @@
 
 **Tech Stack:** Prisma 7.4.0, @prisma/adapter-pg 7.4.0, @prisma/extension-accelerate 3.0.1, PostgreSQL, Prisma Accelerate, Vercel CLI
 
-**Reference:** Corrected design at `docs/plans/2026-02-23-prisma-connection-cleanup-design.md`
+**Reference:** Corrected design at `docs/legacy/plans/2026-02-23-prisma-connection-cleanup-design.md`
 
 **CRITICAL — what Prisma 7 changed from 5/6:**
 - `url` and `directUrl` REMOVED from `schema.prisma` — use `prisma.config.ts` instead

@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client'
 import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma'
 import { fetchOhlcv, toCandles } from '../src/lib/databento'
+import { resolveDirectDatabaseUrl } from '../src/lib/server-env'
 import {
   aggregateCandles,
   asUtcDateFromUnixSeconds,
@@ -136,7 +137,8 @@ async function ingestOnce(lookbackMinutes: number): Promise<LiveIngestSummary> {
 export async function runMesLiveIngestion15m(): Promise<void> {
   loadDotEnvFiles()
 
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required')
+  if (!resolveDirectDatabaseUrl() && !/^postgres(ql)?:\/\//i.test(process.env.DATABASE_URL ?? ''))
+    throw new Error('Direct postgres URL required (set DIRECT_URL, LOCAL_DATABASE_URL, or a postgres:// DATABASE_URL)')
   if (!process.env.DATABENTO_API_KEY) throw new Error('DATABENTO_API_KEY is required')
 
   const once = parseBoolean(parseArg('once', 'false'))

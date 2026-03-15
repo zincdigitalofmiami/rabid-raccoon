@@ -6,7 +6,7 @@
  * a TradeFeatureVector to the nearest regime bucket.
  *
  * The lookup table is built by scripts/build-regime-lookup.ts from
- * actual BHG setup outcomes in bhg_setups.csv.
+ * actual setup outcomes in warbird_setups.csv.
  *
  * Baseline source: exact historical regime bucket only.
  */

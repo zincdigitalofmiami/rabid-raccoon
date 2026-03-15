@@ -3,20 +3,29 @@
 WARBIRD MES Trainer (AGENTS-compliant)
 
 Purpose:
-  - Train MES-only regression models for 4 horizons (1h, 4h, 1d, 1w)
-  - For each horizon, train 3 targets: price return, MAE, MFE
+  - Train the Warbird v1 core forecaster model family on the canonical 1H dataset
+  - Produce 6 target-specific regression predictors across 2 horizons (1h, 4h):
+      target_price_1h, target_price_4h,
+      target_mae_1h, target_mae_4h,
+      target_mfe_1h, target_mfe_4h
   - Preserve strict time ordering via walk-forward CV + purge/embargo
-  - Use AutoGluon best-quality settings with 5 bag folds
-  - Emit horizon/model metrics + overall summary
+  - Use the canonical AutoGluon v1 settings:
+      best_quality, 5 bag folds, 1 stack level,
+      dynamic_stacking=auto, exclude KNN/FASTAI/RF,
+      sequential_local fold fitting
+  - Support explicit target representation choice for price-vs-return ablation
+  - Emit per-target metrics and an overall training summary
 
 Outputs:
-  models/warbird/{horizon}/{target}/fold_{k}/
-  models/warbird/{horizon}/{target}/oof_predictions.csv
+  models/warbird/{representation}_space/{horizon}/{target}/fold_{k}/
+  models/warbird/{representation}_space/{horizon}/{target}/oof_predictions.csv
   models/reports/warbird_training_summary.json
 
 Notes:
   - This script uses the full dataset rows (no row subsampling).
-  - Feature pruning is per AGENTS hard rules: IC ranking + cluster dedup + top-N.
+  - "One model family" means 6 sequential TabularPredictor artifacts sharing one dataset/config.
+  - IC ranking + cluster dedup remain an existing repo approach to validate, not a locked contract rule.
+  - Deferred diagnostics (pinball / Monte Carlo summaries) are off by default.
 """
 
 from __future__ import annotations
@@ -29,7 +38,7 @@ import pickle
 import random
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -51,8 +60,6 @@ ROOT = Path(__file__).resolve().parent.parent
 HORIZONS: dict[str, int] = {
     "1h": 1,
     "4h": 4,
-    "1d": 24,
-    "1w": 120,
 }
 
 TARGET_TYPES = ("price", "mae", "mfe")
@@ -66,9 +73,9 @@ DEFAULT_SUMMARY = ROOT / "models" / "reports" / "warbird_training_summary.json"
 class AgConfig:
     presets: str = "best_quality"
     num_bag_folds: int = 5
-    num_stack_levels: int = 2
+    num_stack_levels: int = 1
     dynamic_stacking: str = "auto"
-    excluded_model_types: list[str] | None = None
+    excluded_model_types: list[str] = field(default_factory=lambda: ["KNN", "FASTAI", "RF"])
     early_stopping_rounds: int = 50
     max_memory_ratio: float = 0.8
     fold_fitting_strategy: str = "sequential_local"
@@ -87,9 +94,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--risk-time-limit", type=int, default=7_200)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--num-cpus", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    p.add_argument(
+        "--target-representation",
+        choices=["price", "return"],
+        default="price",
+        help=(
+            "Representation for core forecaster labels. "
+            "'price' uses absolute future price levels plus point-space MAE/MFE bands; "
+            "'return' keeps the current return-space labels for ablation."
+        ),
+    )
     p.add_argument("--mc-paths", type=int, default=10_000)
     p.add_argument("--preflight-only", action="store_true")
     p.add_argument("--skip-shap", action="store_true")
+    p.add_argument(
+        "--include-deferred-diagnostics",
+        action="store_true",
+        help="Include deferred pinball and Monte Carlo diagnostics. Off by default for Warbird v1.",
+    )
     p.add_argument("--clean", action="store_true")
     p.add_argument(
         "--model-determined-folds",
@@ -134,13 +156,13 @@ def walk_forward_splits(n: int, n_folds: int, purge: int, embargo: int) -> list[
     return splits
 
 
-def derive_targets(df: pd.DataFrame) -> pd.DataFrame:
+def derive_targets(df: pd.DataFrame, representation: str) -> pd.DataFrame:
     out = df.copy()
     close = out["target"].astype(float).to_numpy()
     n = len(close)
 
     for h_name, h_bars in HORIZONS.items():
-        ret = np.full(n, np.nan, dtype=float)
+        target_price = np.full(n, np.nan, dtype=float)
         mae = np.full(n, np.nan, dtype=float)
         mfe = np.full(n, np.nan, dtype=float)
 
@@ -152,11 +174,17 @@ def derive_targets(df: pd.DataFrame) -> pd.DataFrame:
             future = close[i + 1 : i + h_bars + 1]
             if future.size == 0 or not np.all(np.isfinite(future)):
                 continue
-            ret[i] = (close[i + h_bars] - c0) / c0
-            mae[i] = (float(np.min(future)) - c0) / c0
-            mfe[i] = (float(np.max(future)) - c0) / c0
 
-        out[f"target_price_{h_name}"] = ret
+            if representation == "price":
+                target_price[i] = close[i + h_bars]
+                mae[i] = c0 - float(np.min(future))
+                mfe[i] = float(np.max(future)) - c0
+            else:
+                target_price[i] = (close[i + h_bars] - c0) / c0
+                mae[i] = (float(np.min(future)) - c0) / c0
+                mfe[i] = (float(np.max(future)) - c0) / c0
+
+        out[f"target_price_{h_name}"] = target_price
         out[f"target_mae_{h_name}"] = mae
         out[f"target_mfe_{h_name}"] = mfe
 
@@ -234,18 +262,19 @@ def fit_garch_sigma(returns: np.ndarray, horizon_bars: int) -> dict[str, Any]:
     try:
         from arch import arch_model  # type: ignore
 
-        am = arch_model(clean * 100.0, mean="Zero", vol="GARCH", p=1, q=1, dist="t")
+        am = arch_model(clean * 100.0, mean="Zero", vol="GARCH", p=1, o=1, q=1, dist="t")
         res = am.fit(disp="off")
         forecast = res.forecast(horizon=1, reindex=False)
         var1 = float(forecast.variance.values[-1, 0]) / (100.0 * 100.0)
         sigma_1 = math.sqrt(max(var1, 1e-12))
         params = res.params.to_dict()
         return {
-            "method": "garch11_t",
+            "method": "gjr_garch11_t",
             "sigma_1bar": sigma_1,
             "sigma_horizon": sigma_1 * math.sqrt(max(1, horizon_bars)),
             "omega": float(params.get("omega", np.nan)),
             "alpha1": float(params.get("alpha[1]", np.nan)),
+            "gamma1": float(params.get("gamma[1]", np.nan)),
             "beta1": float(params.get("beta[1]", np.nan)),
         }
     except Exception:
@@ -350,6 +379,10 @@ def main() -> None:
     summary_path = Path(args.summary_out)
     if not summary_path.is_absolute():
         summary_path = (ROOT / summary_path).resolve()
+    if args.summary_out == str(DEFAULT_SUMMARY) and args.target_representation != "price":
+        summary_path = summary_path.with_name(
+            f"{summary_path.stem}_{args.target_representation}{summary_path.suffix}"
+        )
 
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
@@ -370,27 +403,30 @@ def main() -> None:
             "[warbird] model-determined folds requested; using leakage-safe walk-forward CV as robust default."
         )
 
-    df = derive_targets(df)
+    df = derive_targets(df, args.target_representation)
 
     excluded_cols = {"item_id", "timestamp", "target"}
     feature_cols = [c for c in df.columns if c not in excluded_cols and not c.startswith("target_")]
 
     print(f"[warbird] feature candidates={len(feature_cols)}")
 
-    ag = AgConfig(excluded_model_types=[])
-    if args.clean and out_root.exists():
-        shutil.rmtree(out_root)
-    out_root.mkdir(parents=True, exist_ok=True)
+    ag = AgConfig()
+    run_out_root = out_root / f"{args.target_representation}_space"
+    if args.clean and run_out_root.exists():
+        shutil.rmtree(run_out_root)
+    run_out_root.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 
     if args.preflight_only:
         preflight = {
             "dataset": str(dataset_path),
+            "target_representation": args.target_representation,
             "rows": int(len(df)),
             "cols": int(len(df.columns)),
             "feature_count": int(len(feature_cols)),
             "horizons": HORIZONS,
             "targets": list(TARGET_TYPES),
+            "predictor_count": int(len(HORIZONS) * len(TARGET_TYPES)),
             "hash": data_hash,
             "status": "preflight_ok",
         }
@@ -402,6 +438,8 @@ def main() -> None:
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "dataset": str(dataset_path),
         "dataset_hash": data_hash,
+        "target_representation": args.target_representation,
+        "output_root": str(run_out_root),
         "rows": int(len(df)),
         "cols": int(len(df.columns)),
         "feature_count": int(len(feature_cols)),
@@ -484,7 +522,7 @@ def main() -> None:
                 for f in selected:
                     fold_feature_usage[f] = fold_feature_usage.get(f, 0) + 1
 
-                fold_dir = out_root / horizon / target_type / f"fold_{fold_idx}"
+                fold_dir = run_out_root / horizon / target_type / f"fold_{fold_idx}"
                 fold_dir.mkdir(parents=True, exist_ok=True)
 
                 predictor = TabularPredictor(
@@ -534,11 +572,12 @@ def main() -> None:
                     "rmse": float(math.sqrt(mean_squared_error(actual, preds))),
                     "r2": float(r2_score(actual, preds)),
                     "ic": float(spearmanr(actual, preds)[0]) if len(actual) > 1 else float("nan"),
-                    "pinball_q10": float(pinball_loss(actual, q10, 0.1)),
-                    "pinball_q50": float(pinball_loss(actual, q50, 0.5)),
-                    "pinball_q90": float(pinball_loss(actual, q90, 0.9)),
                     "residual_sigma": resid_sigma,
                 }
+                if args.include_deferred_diagnostics:
+                    m["pinball_q10"] = float(pinball_loss(actual, q10, 0.1))
+                    m["pinball_q50"] = float(pinball_loss(actual, q50, 0.5))
+                    m["pinball_q90"] = float(pinball_loss(actual, q90, 0.9))
                 fold_metrics.append(m)
 
                 if shap_snapshot is None and not args.skip_shap:
@@ -588,9 +627,6 @@ def main() -> None:
                 "rmse": float(math.sqrt(mean_squared_error(actual_oof, pred_oof))),
                 "r2": float(r2_score(actual_oof, pred_oof)),
                 "ic": float(spearmanr(actual_oof, pred_oof)[0]) if len(actual_oof) > 1 else float("nan"),
-                "pinball_q10": float(pinball_loss(actual_oof, pred_oof + norm.ppf(0.1) * resid_sigma, 0.1)),
-                "pinball_q50": float(pinball_loss(actual_oof, pred_oof, 0.5)),
-                "pinball_q90": float(pinball_loss(actual_oof, pred_oof + norm.ppf(0.9) * resid_sigma, 0.9)),
                 "residual_sigma": resid_sigma,
                 "fold_metrics": fold_metrics,
                 "feature_stability": {
@@ -598,18 +634,37 @@ def main() -> None:
                 },
                 "shap": shap_snapshot,
             }
+            if args.include_deferred_diagnostics:
+                agg["pinball_q10"] = float(pinball_loss(actual_oof, pred_oof + norm.ppf(0.1) * resid_sigma, 0.1))
+                agg["pinball_q50"] = float(pinball_loss(actual_oof, pred_oof, 0.5))
+                agg["pinball_q90"] = float(pinball_loss(actual_oof, pred_oof + norm.ppf(0.9) * resid_sigma, 0.9))
 
             if target_type == "price":
+                current_price_oof = work.loc[mask, "target"].to_numpy(dtype=float)
+                if args.target_representation == "price":
+                    pred_direction_basis = pred_oof - current_price_oof
+                    actual_direction_basis = actual_oof - current_price_oof
+                    realized_move = np.divide(
+                        actual_direction_basis,
+                        current_price_oof,
+                        out=np.zeros_like(actual_direction_basis),
+                        where=current_price_oof != 0,
+                    )
+                else:
+                    pred_direction_basis = pred_oof
+                    actual_direction_basis = actual_oof
+                    realized_move = actual_oof
+
                 # Probability and strategy-style Sharpe from predicted direction.
                 scale = max(resid_sigma, 1e-8)
-                prob_up = 1.0 / (1.0 + np.exp(-(pred_oof / scale)))
-                y_cls = (actual_oof > 0).astype(int)
+                prob_up = 1.0 / (1.0 + np.exp(-(pred_direction_basis / scale)))
+                y_cls = (actual_direction_basis > 0).astype(int)
                 if len(np.unique(y_cls)) > 1:
                     agg["auc_prob_up"] = float(roc_auc_score(y_cls, prob_up))
                 else:
                     agg["auc_prob_up"] = None
                 agg["brier_prob_up"] = float(np.mean((prob_up - y_cls) ** 2))
-                strat = np.sign(pred_oof) * actual_oof
+                strat = np.sign(pred_direction_basis) * realized_move
                 strat_std = float(np.std(strat))
                 ann = math.sqrt((252.0 * 24.0) / max(1, h_bars))
                 agg["sharpe"] = float((np.mean(strat) / strat_std) * ann) if strat_std > 0 else None
@@ -620,7 +675,7 @@ def main() -> None:
             out_df.rename(columns={"target": "current_price"}, inplace=True)
             out_df["actual"] = actual_oof
             out_df["pred"] = pred_oof
-            out_path = out_root / horizon / target_type / "oof_predictions.csv"
+            out_path = run_out_root / horizon / target_type / "oof_predictions.csv"
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_df.to_csv(out_path, index=False)
             oof_by_target[target_type] = out_df
@@ -630,14 +685,15 @@ def main() -> None:
                 calib = {
                     "method": "logistic_from_residual_sigma",
                     "sigma": resid_sigma,
+                    "target_representation": args.target_representation,
                 }
-                with open(out_root / horizon / target_type / "calibrator.pkl", "wb") as f:
+                with open(run_out_root / horizon / target_type / "calibrator.pkl", "wb") as f:
                     pickle.dump(calib, f)
 
             horizon_block["targets"][target_type] = agg
 
         # Horizon-level zones + Monte Carlo summary
-        if all(k in oof_by_target for k in TARGET_TYPES):
+        if args.include_deferred_diagnostics and all(k in oof_by_target for k in TARGET_TYPES):
             merged = oof_by_target["price"].merge(
                 oof_by_target["mae"][["timestamp", "pred", "actual"]].rename(
                     columns={"pred": "pred_mae", "actual": "actual_mae"}
@@ -690,9 +746,11 @@ def main() -> None:
         "horizons_completed": int(len(summary["horizons"])),
         "mean_model_mae": float(np.mean(overall_mae)) if overall_mae else None,
         "notes": [
-            "MES-only targets trained across 4 horizons in one run.",
+            "Warbird v1 core forecaster uses 2 horizons (1h, 4h) and 6 target-specific predictors.",
             "Cross-validation uses strict walk-forward time splits with purge/embargo.",
-            "AutoGluon bagging fixed at 5 per AGENTS hard rules.",
+            "AutoGluon bagging is fixed at 5 with 1 stack level and KNN/FASTAI/RF excluded.",
+            "Target representation is explicit so price-space vs return-space can be ablated in separate runs.",
+            "Deferred diagnostics remain off unless --include-deferred-diagnostics is set.",
         ],
     }
 
@@ -702,4 +760,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
