@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { VercelToolbar } from '@vercel/toolbar/next'
 import Header from '@/components/Header'
 import './globals.css'
 
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Header />
         </div>
         {children}
+        <VercelToolbar />
       </body>
     </html>
   )
