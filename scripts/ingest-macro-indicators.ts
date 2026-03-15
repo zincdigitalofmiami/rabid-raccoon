@@ -7,7 +7,7 @@ import {
   fetchTenYearYieldCandles,
   fetchVixCandles,
 } from '../src/lib/fred'
-import { resolveDirectDatabaseUrl } from '../src/lib/server-env'
+import { hasRuntimeDatabaseUrl } from '../src/lib/server-env'
 import { CandleData } from '../src/lib/types'
 import { asUtcDateFromUnixSeconds, isMainModule, loadDotEnvFiles, parseArg } from './ingest-utils'
 
@@ -260,8 +260,7 @@ export async function runIngestMacroIndicators(options?: MacroIngestOptions): Pr
   loadDotEnvFiles()
 
   const { daysBack, dryRun } = resolveMacroOptions(options)
-  if (!resolveDirectDatabaseUrl() && !/^postgres(ql)?:\/\//i.test(process.env.DATABASE_URL ?? ''))
-    throw new Error('Direct postgres URL required (set DIRECT_URL, LOCAL_DATABASE_URL, or a postgres:// DATABASE_URL)')
+  if (!hasRuntimeDatabaseUrl()) throw new Error('No database URL configured (set DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL)')
   if (!process.env.FRED_API_KEY) throw new Error('FRED_API_KEY is required')
   if (!Number.isFinite(daysBack) || daysBack <= 0) {
     throw new Error(`Invalid --days-back '${daysBack}'`)

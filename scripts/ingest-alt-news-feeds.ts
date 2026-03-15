@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Prisma, ReportCategory } from '@prisma/client'
 import { prisma } from '../src/lib/prisma'
-import { resolveDirectDatabaseUrl } from '../src/lib/server-env'
+import { hasRuntimeDatabaseUrl } from '../src/lib/server-env'
 import { isMainModule, loadDotEnvFiles } from './ingest-utils'
 
 type FeedKind = 'econ' | 'policy'
@@ -457,8 +457,7 @@ async function finalizeAltNewsRun(
 
 export async function runIngestAltNewsFeeds(): Promise<RunStats> {
   loadDotEnvFiles()
-  if (!resolveDirectDatabaseUrl() && !/^postgres(ql)?:\/\//i.test(process.env.DATABASE_URL ?? ''))
-    throw new Error('Direct postgres URL required (set DIRECT_URL, LOCAL_DATABASE_URL, or a postgres:// DATABASE_URL)')
+  if (!hasRuntimeDatabaseUrl()) throw new Error('No database URL configured (set DIRECT_URL, LOCAL_DATABASE_URL, or DATABASE_URL)')
 
   await upsertRegistry()
 
