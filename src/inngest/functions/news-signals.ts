@@ -11,7 +11,7 @@ const NEWS_LAYERS = ['trump_policy', 'volatility', 'banking', 'econ_report'] as 
  */
 export const ingestNewsSignals = inngest.createFunction(
   { id: 'ingest-news-signals', retries: 2 },
-  { cron: '0 16 * * *' },
+  /* PAUSED: { cron: '0 16 * * *' } */ { event: "manual/paused" },
   async ({ step }) => {
     const run = await step.run('create-ingestion-run', async () => {
       const record = await prisma.ingestionRun.create({

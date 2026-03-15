@@ -304,7 +304,7 @@ export const computeSignal = inngest.createFunction(
     },
   },
   [
-    { cron: '13,28,43,58 * * * 1-5' },
+    /* PAUSED: { cron: '13,28,43,58 * * * 1-5' } */ { event: "manual/paused" },
     { event: 'econ/event.approaching' },
   ],
   async ({ step }) => {

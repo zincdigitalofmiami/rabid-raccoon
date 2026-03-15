@@ -15,7 +15,7 @@ import { getMesHigherTfOwner, shouldSkipMesHigherTfInngest } from './mes-owner'
  */
 export const ingestMktMes1h = inngest.createFunction(
   { id: 'ingest-mkt-mes-1h', retries: 2 },
-  { cron: '10 * * * 0-5' },
+  /* PAUSED: { cron: '10 * * * 0-5' } */ { event: "manual/paused" },
   async ({ step }) => {
     const now = new Date()
     const owner = getMesHigherTfOwner()

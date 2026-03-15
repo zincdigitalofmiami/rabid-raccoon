@@ -8,7 +8,7 @@ import { runIngestAltNewsFeeds } from '../../../scripts/ingest-alt-news-feeds'
  */
 export const ingestAltNews = inngest.createFunction(
   { id: 'ingest-alt-news', retries: 2 },
-  { cron: '0 17 * * *' },
+  /* PAUSED: { cron: '0 17 * * *' } */ { event: "manual/paused" },
   async ({ step }) => {
     const result = await step.run('alt-news-rss-daily', async () =>
       runIngestAltNewsFeeds()

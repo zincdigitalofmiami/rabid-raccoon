@@ -21,7 +21,7 @@ import { getMes1mOwner, shouldSkipMes1mInngest } from './mes-owner'
  */
 export const ingestMktMes1m = inngest.createFunction(
   { id: 'ingest-mkt-mes-1m', retries: 2 },
-  { cron: '* * * * 0-5' },
+  /* PAUSED: { cron: '* * * * 0-5' } */ { event: "manual/paused" },
   async ({ step }) => {
     const now = new Date()
     const owner = getMes1mOwner()

@@ -8,7 +8,7 @@ import { runIngestFredNews } from '../../../scripts/ingest-fred-news'
  */
 export const ingestFredNews = inngest.createFunction(
   { id: 'ingest-fred-news', retries: 2 },
-  { cron: '15 17 * * *' },
+  /* PAUSED: { cron: '15 17 * * *' } */ { event: "manual/paused" },
   async ({ step }) => {
     const result = await step.run('fred-news-rss-daily', async () =>
       runIngestFredNews()

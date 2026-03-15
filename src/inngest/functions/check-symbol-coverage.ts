@@ -101,7 +101,7 @@ async function tryActivateSymbol(symbolCode: string): Promise<boolean> {
  */
 export const checkSymbolCoverage = inngest.createFunction(
   { id: 'check-symbol-coverage', retries: 1 },
-  { cron: '0 6 * * 0' },
+  /* PAUSED: { cron: '0 6 * * 0' } */ { event: "manual/paused" },
   async ({ step }) => {
     const inactiveSymbols = getInactiveDatabentoSymbols()
 
