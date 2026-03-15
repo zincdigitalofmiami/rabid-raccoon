@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Header />
         </div>
         {children}
-        <VercelToolbar />
+        {process.env.NODE_ENV === 'production' ? <VercelToolbar /> : null}
       </body>
     </html>
   )

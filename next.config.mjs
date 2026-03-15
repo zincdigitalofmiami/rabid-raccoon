@@ -1,3 +1,5 @@
+import { withVercelToolbar } from '@vercel/toolbar/plugins/next'
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
@@ -30,11 +32,12 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://vercel.live",
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob:",
+              "img-src 'self' data: blob: https://vercel.live",
               "font-src 'self' data:",
-              "connect-src 'self' https://*.vercel.app https://*.prisma.io https://*.inngest.com wss:",
+              "connect-src 'self' https://*.vercel.app https://*.prisma.io https://*.inngest.com https://vercel.live wss:",
+              "frame-src 'self' https://vercel.live",
               "frame-ancestors 'none'",
             ].join('; '),
           },
@@ -44,4 +47,4 @@ const nextConfig = {
   },
 }
 
-export default nextConfig
+export default withVercelToolbar({ enableInProduction: true })(nextConfig)
