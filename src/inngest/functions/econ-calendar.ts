@@ -41,7 +41,8 @@ const DAILY_RATES_WINDOWS: Array<{
  */
 export const ingestEconCalendar = inngest.createFunction(
   { id: "ingest-econ-calendar", retries: 2 },
-  /* PAUSED: { cron: "0 15 * * *" } */ { event: "manual/paused" },
+  // PAUSED: { cron: "0 15 * * *" }
+  { event: "manual/paused" },
   async ({ step }) => {
     const run = await step.run("create-ingestion-run", async () => {
       const record = await prisma.ingestionRun.create({

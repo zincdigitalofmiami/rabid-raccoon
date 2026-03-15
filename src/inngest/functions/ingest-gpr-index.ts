@@ -8,7 +8,8 @@ import { runIngestGprIndex } from "../../../scripts/ingest-gpr-index";
  */
 export const ingestGprIndex = inngest.createFunction(
   { id: "ingest-gpr-index", retries: 2 },
-  /* PAUSED: { cron: "0 19 * * *" } */ { event: "manual/paused" },
+  // PAUSED: { cron: "0 19 * * *" }
+  { event: "manual/paused" },
   async ({ step }) => {
     const result = await step.run("ingest-gpr-index", async () =>
       runIngestGprIndex({ daysBack: 30 }),

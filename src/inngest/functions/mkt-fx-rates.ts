@@ -8,6 +8,7 @@ import { runDailyMarketIngestByRole } from './daily-market-role-ingest'
  */
 export const ingestMktFxRates = inngest.createFunction(
   { id: 'ingest-mkt-fx-rates', retries: 2 },
-  /* PAUSED: { cron: '0 4 * * *' } */ { event: "manual/paused" },
+  // PAUSED: { cron: '0 4 * * *' }
+  { event: "manual/paused" },
   async ({ step }) => runDailyMarketIngestByRole(step, 'INNGEST_FX_RATES')
 )

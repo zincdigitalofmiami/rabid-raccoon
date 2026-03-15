@@ -8,7 +8,8 @@ import { runIngestTrumpEffect } from "../../../scripts/ingest-trump-effect";
  */
 export const ingestTrumpEffect = inngest.createFunction(
   { id: "ingest-trump-effect", retries: 2 },
-  /* PAUSED: { cron: "30 19 * * *" } */ { event: "manual/paused" },
+  // PAUSED: { cron: "30 19 * * *" }
+  { event: "manual/paused" },
   async ({ step }) => {
     const result = await step.run("ingest-trump-effect", async () =>
       runIngestTrumpEffect({ daysBack: 30 }),

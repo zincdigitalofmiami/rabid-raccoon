@@ -8,6 +8,7 @@ import { runDailyMarketIngestByRole } from './daily-market-role-ingest'
  */
 export const ingestMktCommodities = inngest.createFunction(
   { id: 'ingest-mkt-commodities', retries: 2 },
-  /* PAUSED: { cron: '0 3 * * *' } */ { event: "manual/paused" },
+  // PAUSED: { cron: '0 3 * * *' }
+  { event: "manual/paused" },
   async ({ step }) => runDailyMarketIngestByRole(step, 'INNGEST_COMMODITIES')
 )

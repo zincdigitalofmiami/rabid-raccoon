@@ -13,7 +13,8 @@ import { checkTradeOutcomes } from '../../lib/outcome-tracker'
 
 export const checkOutcomes = inngest.createFunction(
   { id: 'check-trade-outcomes', retries: 2 },
-  /* PAUSED: { cron: '*/15 * * * 1-5' } */ { event: "manual/paused" }, // Every 15 min, Mon-Fri
+  // PAUSED: { cron: '*/15 * * * 1-5' }
+  { event: "manual/paused" }, // Every 15 min, Mon-Fri
   async ({ step }) => {
     const resolved = await step.run('resolve-outcomes', async () => {
       return checkTradeOutcomes()
