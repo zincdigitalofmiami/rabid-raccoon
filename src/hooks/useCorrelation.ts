@@ -57,13 +57,19 @@ export function useCorrelation(pollInterval = 60_000) {
   const fetchCorrelation = useCallback(async () => {
     try {
       const res = await fetch("/api/correlation");
+      const body = await res
+        .json()
+        .catch(() => ({ error: `HTTP ${res.status}` }));
+
       if (!res.ok) {
-        const err = await res
-          .json()
-          .catch(() => ({ error: `HTTP ${res.status}` }));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        throw new Error(body.error || `HTTP ${res.status}`);
       }
-      const json: CorrelationResponse = await res.json();
+
+      if (body.error) {
+        throw new Error(body.error);
+      }
+
+      const json: CorrelationResponse = body;
       setData(json);
       setError(null);
     } catch (err) {

@@ -17,12 +17,17 @@ import {
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+const SETUPS_PAUSED = process.env.PAUSE_SETUPS === '1'
+const SETUPS_PAUSE_REASON =
+  process.env.PAUSE_SETUPS_REASON || 'temporarily paused'
+
 type SetupsRouteStatus =
   | 'full-success'
   | 'empty-success'
   | 'insufficient-source-data'
   | 'derivation-failure'
   | 'trigger-generation-failure'
+  | 'paused'
   | 'runtime-failure'
 
 const ENGINE_META = {
@@ -311,6 +316,22 @@ async function buildResponseBody(): Promise<BuildSetupsResult> {
 
 export async function GET(): Promise<Response> {
   try {
+    if (SETUPS_PAUSED) {
+      const body = buildBody({
+        status: 'paused',
+        reason: 'pause-flag-enabled',
+        derivedBars: 0,
+        setups: [],
+        fibResult: null,
+        currentPrice: null,
+        error: `Setups endpoint paused: ${SETUPS_PAUSE_REASON}`,
+      })
+      return NextResponse.json(body, {
+        status: 503,
+        headers: NO_STORE_HEADERS,
+      })
+    }
+
     const cached = intradayCache.get<SetupsResponseBody>(CACHE_KEY)
     if (cached) {
       return NextResponse.json(cached, { headers: CACHE_HEADERS })

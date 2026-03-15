@@ -14,6 +14,10 @@ const NO_STORE_HEADERS = {
   "Cache-Control": "no-store",
 };
 
+const TRADES_UPCOMING_PAUSED = process.env.PAUSE_TRADES_UPCOMING === "1";
+const TRADES_UPCOMING_PAUSE_REASON =
+  process.env.PAUSE_TRADES_UPCOMING_REASON || "temporarily paused";
+
 const CACHE_KEY = "upcoming-trades";
 const EXPECTED_COMPUTE_CADENCE_SECONDS = 15 * 60;
 const RECOVERY_WINDOW_SECONDS = 60;
@@ -23,6 +27,7 @@ type UpcomingTradesRouteStatus =
   | "warm-cache"
   | "cold-cache"
   | "stale-cache"
+  | "paused"
   | "runtime-failure";
 
 interface UpcomingTradesMeta {
@@ -87,6 +92,20 @@ function buildMeta(params: {
 
 export async function GET(): Promise<Response> {
   try {
+    if (TRADES_UPCOMING_PAUSED) {
+      return NextResponse.json(
+        {
+          error: `Upcoming trades endpoint paused: ${TRADES_UPCOMING_PAUSE_REASON}`,
+          meta: buildMeta({
+            status: "paused",
+            cacheAgeSeconds: null,
+            reason: "pause-flag-enabled",
+          }),
+        },
+        { status: 503, headers: NO_STORE_HEADERS },
+      );
+    }
+
     const cached = signalCache.get<SignalPayload>(CACHE_KEY);
 
     if (!cached) {

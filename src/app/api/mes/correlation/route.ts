@@ -6,6 +6,10 @@ import type { CorrelationAlignment } from "@/lib/correlation-filter";
 export const runtime = "nodejs";
 export const revalidate = 300;
 
+const MES_CORRELATION_PAUSED = process.env.PAUSE_CORRELATIONS === "1";
+const MES_CORRELATION_PAUSE_REASON =
+  process.env.PAUSE_CORRELATIONS_REASON || "temporarily paused";
+
 type CorrelationCadence = "intraday" | "daily" | "unavailable";
 
 interface CorrelationMeta {
@@ -30,6 +34,18 @@ function clamp(n: number, min: number, max: number): number {
 
 export async function GET() {
   try {
+    if (MES_CORRELATION_PAUSED) {
+      return NextResponse.json(
+        {
+          error: `MES correlation endpoint paused: ${MES_CORRELATION_PAUSE_REASON}`,
+          status: "paused",
+          reason: "pause-flag-enabled",
+          timestamp: new Date().toISOString(),
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
     const jsonPath = path.join(
       process.cwd(),
       "public",

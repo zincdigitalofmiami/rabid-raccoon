@@ -20,6 +20,10 @@ import * as path from "path";
 export const runtime = "nodejs";
 export const revalidate = 300;
 
+const CORRELATION_PAUSED = process.env.PAUSE_CORRELATIONS === "1";
+const CORRELATION_PAUSE_REASON =
+  process.env.PAUSE_CORRELATIONS_REASON || "temporarily paused";
+
 // ── Types (authoritative for this route) ─────────────────────────────────────
 
 interface SymbolCorrelation {
@@ -159,6 +163,18 @@ function buildDetails(
 
 export async function GET() {
   try {
+    if (CORRELATION_PAUSED) {
+      return NextResponse.json(
+        {
+          error: `Correlation endpoint paused: ${CORRELATION_PAUSE_REASON}`,
+          status: "paused",
+          reason: "pause-flag-enabled",
+          timestamp: new Date().toISOString(),
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
     const jsonPath = path.join(
       process.cwd(),
       "public",
