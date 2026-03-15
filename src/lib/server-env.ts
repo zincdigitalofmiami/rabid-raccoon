@@ -8,7 +8,6 @@ const NORMALIZED_ENV_KEYS = [
   'LOCAL_DEV',
   'PRISMA_LOCAL',
   'PRISMA_TARGET',
-  'USE_ACCELERATE',
 ] as const
 
 const ENV_FILES = ['.env.production.local', '.env.local', '.env'] as const
@@ -94,9 +93,8 @@ export function resolveRuntimeDatabaseUrl(): string | undefined {
   const runtimeUrl = normalizeEnvValue(process.env.DATABASE_URL)
   if (!runtimeUrl) return undefined
 
-  const forceAccelerate = normalizeEnvValue(process.env.USE_ACCELERATE) === '1'
   if (isAccelerateUrl(runtimeUrl)) {
-    return forceAccelerate ? runtimeUrl : undefined
+    return undefined
   }
 
   return runtimeUrl
